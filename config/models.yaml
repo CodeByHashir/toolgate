@@ -1,0 +1,53 @@
+# Paths to the reused LLMShield detector artifacts.
+#
+# These are NOT vendored into this repository -- the trained weights are not
+# publishable. This file points at wherever they live locally. Override the
+# root with the LLMSHIELD_MODELS_ROOT environment variable.
+#
+# V0 was serialised by scikit-learn 1.8.0 and V3's config was written by
+# transformers 5.12.1; both are pinned exactly in pyproject.toml to match.
+
+root: "<LLMShield checkout>/evaluation/experiment2/models"
+
+v0:
+  # TF-IDF (word 1-2 + char_wb 3-5) FeatureUnion + logistic regression.
+  # 4-class, same label order as V3. Has no token limit, so it is the only
+  # detector that natively sees an entire tool result.
+  path: "v0_tfidf_lr.joblib"
+
+  # 1 - P(benign). Matches the dissertation's exp2_eval.py:74.
+  score_mode: "not_benign"
+
+v3:
+  # DeBERTa-v3-base, 4-class sequence classification.
+  # Class map is fixed by the training script (exp2_data.py):
+  #   0=benign  1=injection  2=jailbreak  3=harmful
+  path: "v3_deberta_base"
+  device: "cpu"
+  max_length: 512
+
+  # P(injection). Matches the dissertation's exp2_eval.py:90, which resolved
+  # the positive class to LABEL_1. NOTE this differs from V0's "not_benign"
+  # above; see config.py SCORE_MODES for why that asymmetry matters on
+  # threat-type disaggregation. All four class probabilities are always
+  # recorded regardless, so either mode can be re-cut from scores.csv.
+  score_mode: "injection"
+
+  # How to handle content longer than max_length tokens.
+  #   truncate  -- score the first max_length tokens only (dissertation setup;
+  #                an injection past that point is invisible by construction)
+  #   chunk_max -- sliding window over the whole text, take the max score
+  # Both are evaluated and reported; this sets the runtime default.
+  long_text_strategy: "chunk_max"
+
+  # Overlap between adjacent windows, in tokens. Prevents an injection that
+  # straddles a window boundary from being diluted in both halves.
+  chunk_stride: 128
+
+  # SEC-2 / FR-16: hard ceiling on windows scored per tool result, so an
+  # oversized result cannot exhaust CPU or memory. Content beyond the cap is
+  # not scored and the result is flagged truncated.
+  max_chunks: 64
+
+  # Windows per forward pass. Bounds peak memory on CPU.
+  batch_size: 16

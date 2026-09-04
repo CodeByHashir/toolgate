@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+build/
+dist/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Secrets
+.env
+
+# Reused LLMShield model artifacts. Never committed: the trained weights are
+# not publishable (see docs/PINNING.md and README "Reproducibility" section).
+models/
+*.joblib
+*.safetensors
+*.onnx
+
+# Runtime state
+*.sqlite
+*.sqlite3
+logs/
