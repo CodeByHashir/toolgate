@@ -51,6 +51,7 @@ packages = ["src/llmshield_mcp"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
+asyncio_mode = "auto"
 markers = [
     "models: requires the reused LLMShield V0/V3 artifacts on disk (slow, skipped in CI)",
 ]

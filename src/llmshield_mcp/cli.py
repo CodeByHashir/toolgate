@@ -6,10 +6,14 @@ import argparse
 import dataclasses
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from llmshield_mcp import __version__
 from llmshield_mcp.config import DETECTOR_CLASSES, load_models_config
 from llmshield_mcp.detectors.base import Detector, DetectorResult
+
+if TYPE_CHECKING:
+    from llmshield_mcp.chain import ChainRecord
 
 # Probe texts used by `verify-models`. These only demonstrate that the reused
 # artifacts load and produce sane, differentiated scores on CPU. They are not
@@ -105,6 +109,53 @@ def verify_models(config_path: Path | None, which: str) -> int:
     return 0 if ok else 1
 
 
+DEFAULT_TASK = (
+    "Summarise what the Acme internal tooling sandbox contains. Read the README, "
+    "the meeting notes, the config loader source and the quarterly data, then give "
+    "a short summary of each."
+)
+
+
+def run_agent(task: str, server_names: list[str], out: Path, config_path: Path | None) -> int:
+    """Record one tool-call chain by driving real MCP servers with a real model."""
+    import asyncio
+
+    from anthropic import AsyncAnthropic
+
+    from llmshield_mcp.agent import ReferenceAgent, open_servers
+    from llmshield_mcp.servers import load_servers_config
+    from llmshield_mcp.settings import Settings
+
+    config = load_servers_config(config_path)
+    specs = [config[name] for name in server_names]
+    api_key = Settings().require_anthropic_api_key()
+
+    print(f"sandbox   {config.sandbox}")
+    print(f"servers   {', '.join(server_names)}")
+
+    async def _run() -> ChainRecord:
+        async with open_servers(specs) as servers:
+            for server in servers.values():
+                names = ", ".join(t.name for t in server.tools)
+                print(f"  {server.name}: {len(server.tools)} tools ({names})")
+            agent = ReferenceAgent(AsyncAnthropic(api_key=api_key))
+            return await agent.run(task, servers)
+
+    record = asyncio.run(_run())
+
+    print(f"\n{len(record.calls)} tool calls")
+    for call in record.calls:
+        flag = " ERROR" if call.is_error else ""
+        print(
+            f"  [{call.index:>2}] {call.server}/{call.tool:<24} "
+            f"{len(call.result_text):>7} chars  {call.duration_ms:7.1f} ms{flag}"
+        )
+
+    record.write(out)
+    print(f"\nwrote {out}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mcp-shield")
     parser.add_argument("--version", action="version", version=f"llmshield-mcp {__version__}")
@@ -116,9 +167,20 @@ def main(argv: list[str] | None = None) -> int:
     verify.add_argument("--config", type=Path, default=None)
     verify.add_argument("--detector", choices=("v0", "v3", "all"), default="all")
 
+    agent = subparsers.add_parser(
+        "run-agent", help="drive the reference MCP servers and record a tool-call chain"
+    )
+    agent.add_argument("--task", default=DEFAULT_TASK)
+    agent.add_argument("--servers", default="filesystem,fetch")
+    agent.add_argument("--out", type=Path, default=Path("chains/baseline.json"))
+    agent.add_argument("--config", type=Path, default=None)
+
     args = parser.parse_args(argv)
     if args.command == "verify-models":
         return verify_models(args.config, args.detector)
+    if args.command == "run-agent":
+        names = [s.strip() for s in args.servers.split(",") if s.strip()]
+        return run_agent(args.task, names, args.out, args.config)
     parser.error(f"unhandled command {args.command}")
 
 

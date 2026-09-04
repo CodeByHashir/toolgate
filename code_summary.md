@@ -2,9 +2,9 @@
 
 Factual map of what exists in this repository. Updated when structure changes.
 
-**As of M0.** 612 lines of source, 340 lines of tests. There is no interception
-layer, no policy engine, no corpus and no evaluation harness yet — those are
-M2 onward.
+**As of M1.** 1139 lines of source, 807 lines of tests, 56 tests. There is no
+interception layer, no policy engine, no corpus and no evaluation harness yet —
+those are M2 onward.
 
 ---
 
@@ -22,24 +22,36 @@ D:\LLMSHIELD-MCP\
 ├── pyproject.toml               package metadata, exact pins, tool config
 ├── uv.lock                      full transitive lock (111 packages)
 ├── config/
-│   └── models.yaml              paths + runtime settings for reused detectors
+│   ├── models.yaml              paths + runtime settings for reused detectors
+│   └── servers.yaml             reference MCP server launch specs + sandbox
+├── sandbox/                     synthetic benign corpus; filesystem server is
+│                                confined to this directory (SEC-4)
+├── chains/
+│   └── baseline.json            recorded benign tool-call chain (M1 fixture)
 ├── docs/
 │   ├── PINNING.md               why scikit-learn and transformers are pinned
 │   └── M0-OBSERVATIONS.md       M0 probe observations (explicitly not results)
 ├── src/llmshield_mcp/
 │   ├── __init__.py              __version__ = "0.1.0"
 │   ├── __main__.py              python -m llmshield_mcp
-│   ├── cli.py                   CLI entry point (126 lines)
-│   ├── config.py                config loading + score-mode collapse (143)
+│   ├── agent.py                 reference Claude tool-use loop over MCP (230)
+│   ├── chain.py                 recorded tool-call chain format (107)
+│   ├── cli.py                   CLI entry point (188)
+│   ├── config.py                config loading + score-mode collapse (145)
+│   ├── servers.py               MCP server config + sandbox resolution (88)
+│   ├── settings.py              .env / environment secrets (38)
 │   └── detectors/
 │       ├── __init__.py          exports; V3 imported lazily (31)
 │       ├── base.py              detector contract (118)
 │       ├── v0_lexical.py        V0 adapter (79)
 │       └── v3_transformer.py    V3 adapter (108)
 ├── tests/
-│   ├── test_config.py           config + score-mode tests (15 tests)
-│   ├── test_detector_base.py    contract tests (7 tests)
-│   └── test_adapters_with_models.py  reuse audit, marked `models` (7 tests)
+│   ├── test_agent.py            tool-use loop, faked client + sessions (13)
+│   ├── test_chain.py            chain round-trip and schema (6)
+│   ├── test_config.py           config + score-mode tests (15)
+│   ├── test_detector_base.py    contract tests (7)
+│   ├── test_servers.py          server config + sandbox validation (8)
+│   └── test_adapters_with_models.py  reuse audit, marked `models` (7)
 └── .github/workflows/ci.yml     lint, format, type-check, test (CURRENTLY FAILING)
 ```
 
@@ -111,6 +123,64 @@ and the maximum scalar wins. `detail` carries the winning window's four class
 probabilities plus `n_windows_total`, `n_windows_scored`, `winning_window`.
 `truncated` is true when `scored < total`, i.e. content existed that was never
 scored.
+
+### `llmshield_mcp.servers`
+
+Reads `config/servers.yaml`. `ServerSpec` holds one server's stdio launch
+command; `ServersConfig` holds the resolved sandbox path and every spec.
+`load_servers_config()` substitutes the `{sandbox}` placeholder into arguments
+and **refuses to run if the sandbox directory does not exist** — creating it
+would silently hand the filesystem server an empty directory, which looks like
+a working run that happens to read nothing (SEC-4). `LLMSHIELD_SANDBOX_ROOT`
+overrides the configured path.
+
+### `llmshield_mcp.settings`
+
+`Settings` (pydantic-settings) reads `ANTHROPIC_API_KEY` from the process
+environment or `.env` at the repository root. `require_anthropic_api_key()`
+raises with a usable message rather than letting the SDK fail later. The key is
+never logged and never written to a chain record.
+
+### `llmshield_mcp.chain`
+
+The recorded tool-call chain format, `SCHEMA_VERSION = 1`.
+
+| Symbol | Purpose |
+|---|---|
+| `ToolCallRecord` | One call: `index`, `correlation_id`, `server`, `tool`, `arguments`, `result_text`, `result_block_types`, `is_error`, `duration_ms` |
+| `ChainRecord` | One agent run: `task`, `model`, `created_at`, `servers`, `calls`, `schema_version`; `to_json`/`write`/`read`/`from_dict` |
+
+`from_dict` rebuilds tuples explicitly — JSON has no tuple type, so without it
+a round-tripped record compares unequal to a freshly built one. An unknown
+`schema_version` is rejected rather than parsed optimistically.
+
+`result_text` is the concatenation of text blocks only. It is the field the
+gating layer will scan and the field adversarial payloads are injected into at
+evaluation time; payloads are never stored in the sandbox or in a fixture.
+
+### `llmshield_mcp.agent`
+
+The reference agent. Not a product — it exists only to produce realistic chains.
+
+| Symbol | Purpose |
+|---|---|
+| `qualified_tool_name` / `split_tool_name` | Flatten two servers into one Anthropic tool namespace as `server__tool`. Two servers may expose the same tool name, and Anthropic tool names allow only `[a-zA-Z0-9_-]`. |
+| `to_anthropic_tool` | `mcp_types.Tool` -> `ToolParam`. Note `mcp` 2.x exposes `input_schema` (wire alias `inputSchema`); the 1.x attribute name would fail. |
+| `flatten_result` | `CallToolResult` -> (text, block types). Only text and text-resource blocks contribute text; images and binary resources are recorded by type but never scanned (PROPOSAL.md section 19). |
+| `ConnectedServer` | A live session plus its declared tools |
+| `open_servers` | `AsyncExitStack` context manager launching every server and initialising sessions. Takes a `transport_factory`, defaulting to `stdio_client` — **this is the M2 seam**. |
+| `ReferenceAgent.run` | The manual tool-use loop |
+
+Loop invariants worth knowing:
+
+- Every `tool_result` for one assistant turn goes back in a **single** user
+  message. Splitting them across messages trains the model out of parallel
+  tool calls.
+- A tool that raises is still recorded, with `is_error=True` and the exception
+  text as the result. Dropping it would leave a hole in the sequence and
+  misalign later indices.
+- `pause_turn` re-sends the turn unchanged rather than ending the loop.
+- `max_iterations` (default 40) bounds a model that never stops calling tools.
 
 ### `llmshield_mcp.cli`
 
@@ -189,10 +259,10 @@ retained by default; a hash is stored instead.
 | Integration | Status |
 |---|---|
 | Reused LLMShield V0/V3 artifacts | Active. Read from an external path; never modified. |
-| Anthropic Claude API (`anthropic==0.86.0`) | Installed, unused. Reference agent is M1. |
-| MCP Python SDK (`mcp==2.1.1`) | Installed, unused. Interception is M2. |
-| Official MCP filesystem server (npm, Node v24.14.1 present) | M1 |
-| Official MCP fetch server (PyPI `mcp-server-fetch`) | M1 |
+| Anthropic Claude API (`anthropic==0.86.0`) | **Active** — `ReferenceAgent`, model `claude-opus-5` |
+| MCP Python SDK (`mcp==2.1.1`) | **Active** — client sessions over stdio. Transport interception is M2. |
+| Official MCP filesystem server (`@modelcontextprotocol/server-filesystem@2026.8.31`, via `npx`) | **Active** — 14 tools, confined to `sandbox/` |
+| Official MCP fetch server (`mcp-server-fetch==2026.8.18`, via `uvx`) | **Active** — 1 tool |
 | HuggingFace `transformers` / `torch` | Active (V3) |
 | `scikit-learn` / `joblib` | Active (V0) |
 | `datasketch` | Installed, unused. Decontamination is M6. |

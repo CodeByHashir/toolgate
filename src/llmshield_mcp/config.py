@@ -15,7 +15,9 @@ from typing import Any
 
 import yaml
 
-DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "models.yaml"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+DEFAULT_CONFIG_PATH = REPO_ROOT / "config" / "models.yaml"
 
 # Fixed by the LLMShield training script (evaluation/experiment2/exp2_train.py:25).
 # BOTH V0 and V3 are 4-class over exactly this label order, which is the model's

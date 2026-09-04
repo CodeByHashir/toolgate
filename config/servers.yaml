@@ -1,0 +1,26 @@
+# Reference MCP servers used to host realistic tool-call chains.
+#
+# Both are the official reference implementations named in PROPOSAL.md section
+# 10. Versions are pinned: an unpinned `npx @scope/pkg` or `uvx pkg` silently
+# upgrades between runs, which would make recorded chains irreproducible.
+
+# Directory the filesystem server is confined to (SEC-4). Everything under it
+# is synthetic and benign. Relative paths resolve against the repository root.
+# Override with LLMSHIELD_SANDBOX_ROOT.
+sandbox: "sandbox"
+
+servers:
+  filesystem:
+    # Node package. `npx -y` skips the install prompt; the MCP SDK resolves
+    # npx.cmd on Windows itself (mcp/os/win32/utilities.py).
+    command: "npx"
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-filesystem@2026.8.31"
+      - "{sandbox}"
+
+  fetch:
+    # Python package, run through uvx in an isolated environment.
+    command: "uvx"
+    args:
+      - "mcp-server-fetch==2026.8.18"

@@ -4,7 +4,7 @@ Companion to `prd.md` (what to build) and `whats_has_been_done.md` (what is
 built). This file holds the plan, the architecture decisions and their
 rationale, remaining work, and known risks.
 
-**Current position: M0 complete. M1 not started.**
+**Current position: M1 complete. M2 not started.**
 
 ---
 
@@ -15,7 +15,7 @@ Each milestone is independently testable and lands as its own commit.
 | # | Milestone | Requirements | Verification | Status |
 |---|---|---|---|---|
 | M0 | Scaffold, pinned CPU stack, reuse audit for V0/V3 | NFR-8, A1, A3 | `mcp-shield verify-models`; contract tests | **Done** |
-| M1 | Both reference MCP servers running + minimal Claude agent + committed tool-call chain fixture | SEC-4, [3.1] | Agent reads a file and fetches a URL; fixture committed | Not started |
+| M1 | Both reference MCP servers running + minimal Claude agent + committed tool-call chain fixture | SEC-4, [3.1] | Agent reads a file and fetches a URL; fixture committed | **Done** |
 | M2 | Interception layer, **logging only, zero detectors** | FR-1, FR-8, FR-15, FR-16, NFR-5 | 20-call chain produces 20 log rows; agent behaviour byte-identical to M1 | Not started |
 | M3 | Port rule engine and PII scanner as detector adapters | FR-2 (part), NFR-4, SEC-3, SEC-6 | Unit tests incl. explicit fail-closed test | Not started |
 | M4 | Fusion and policy engine; golden-set regression test begins | FR-4, FR-5, FR-6, FR-7, FR-9 | Table-driven decision tests; threshold change in YAML alters decision with no code edit | Not started |
@@ -126,6 +126,27 @@ the reused artifacts. The V0 adapter promotes scikit-learn's
 rather than depending on someone reading a comment. Rationale in
 `docs/PINNING.md`.
 
+### 2.7 Manual tool-use loop rather than the SDK's beta tool runner
+
+The Anthropic Python SDK offers `client.beta.messages.tool_runner`, and
+`anthropic.lib.tools.mcp.mcp_tool` converts an MCP tool declaration straight
+into a runner-compatible tool. The `anthropic[mcp]` extra requires only
+`mcp>=1.0`, already pinned, so that path would have cost no new dependency.
+
+`ReferenceAgent` uses an explicit loop anyway, for three reasons:
+
+1. The loop is the thing being instrumented. Every call needs a correlation ID,
+   timing and a recorded result; the runner keeps its own history and does not
+   expose it.
+2. From M2 the transport underneath is replaced by the gating decorator. An
+   explicit loop keeps that seam visible.
+3. The runner is beta and does not auto-resume `pause_turn`, which would end a
+   chain silently mid-recording. The evaluation path should not depend on that.
+
+Cost: roughly fifteen lines of schema conversion (`to_anthropic_tool`) written
+by hand. `mcp_tool` returns a `BetaFunctionTool` bound to the runner, so it was
+not reusable outside that path.
+
 ### 2.6 Reproducibility without weights
 
 Weights are not publishable (`prd.md` 7). Every evaluation run must emit a
@@ -213,3 +234,24 @@ is already implemented correctly.
 
 Not fixed yet: discovered while writing project memory, which is outside the
 scope of that task (CLAUDE.md section 5). Awaiting go-ahead.
+
+### D2 - Recorded chain fixtures embed absolute host paths
+
+**Status:** open, by design pending a decision.
+
+`chains/baseline.json` records tool arguments exactly as the model issued them,
+which for the filesystem server means absolute paths such as
+`D:\LLMSHIELD-MCP\sandbox\README.md`. That is a faithful record of the run,
+but it makes the committed fixture machine-specific and would disclose the
+author's directory layout if the repository were made public.
+
+Options, none applied:
+
+1. Store `sandbox_root` on `ChainRecord` and record sandbox-relative paths,
+   rehydrating at replay time. Keeps fixtures portable; the record is no longer
+   byte-identical to what the model sent.
+2. Normalise only at publication time, keeping local fixtures literal.
+3. Accept it and make the sandbox path itself non-identifying.
+
+Same class as Q4 (`config/models.yaml` absolute path); both should be settled
+together before the repository is made public.
