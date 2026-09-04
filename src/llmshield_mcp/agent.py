@@ -29,9 +29,10 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from llmshield_mcp.chain import ChainRecord, ToolCallRecord
+from llmshield_mcp.config import DEFAULT_AGENT_MODEL
 from llmshield_mcp.servers import ServerSpec
 
-DEFAULT_MODEL = "claude-opus-5"
+DEFAULT_MODEL = DEFAULT_AGENT_MODEL
 DEFAULT_MAX_TOKENS = 16000
 
 #: Guards against a model that keeps calling tools forever. PROPOSAL.md FR-14

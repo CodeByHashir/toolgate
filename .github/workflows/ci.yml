@@ -15,20 +15,28 @@ jobs:
         uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.11"
+          enable-cache: true
 
+      # `uv sync --frozen` installs exactly what uv.lock pins and fails if the
+      # lockfile is stale, which is stricter than a plain install (NFR-8).
+      #
+      # An earlier version used `uv pip install --system`, which fails with
+      # "No system Python installation found for Python 3.11": setup-uv
+      # provisions a uv-managed interpreter, not a system one, so --system has
+      # no target. Every check below therefore runs through `uv run`.
       - name: Install project
-        run: uv pip install --system -e ".[dev]"
+        run: uv sync --extra dev --frozen
 
       - name: Lint
-        run: ruff check src tests
+        run: uv run ruff check src tests
 
       - name: Format check
-        run: ruff format --check src tests
+        run: uv run ruff format --check src tests
 
       - name: Type check
-        run: mypy
+        run: uv run mypy
 
       # The `models` marker covers tests needing the reused LLMShield V0/V3
       # artifacts, which are not publishable and so are absent in CI.
       - name: Test
-        run: pytest -m "not models"
+        run: uv run pytest -m "not models"

@@ -17,6 +17,17 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
+# Model driving the reference agent. Lives here rather than in agent.py so the
+# CLI can show it in --help without importing anthropic and mcp.
+#
+# Chains that feed the evaluation are recorded with this model: PROPOSAL.md
+# section 3.1 wants *realistic* tool-call chains, and a weaker model produces a
+# thinner, less realistic call sequence. Because the agent records once and the
+# GAUGE evaluation then runs offline (assumption A2), this choice costs a
+# one-off spend rather than one that scales with corpus size. Use
+# claude-haiku-4-5 via --model for cheap smoke runs.
+DEFAULT_AGENT_MODEL = "claude-opus-5"
+
 DEFAULT_CONFIG_PATH = REPO_ROOT / "config" / "models.yaml"
 
 # Fixed by the LLMShield training script (evaluation/experiment2/exp2_train.py:25).

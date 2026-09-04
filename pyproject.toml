@@ -41,6 +41,19 @@ dev = [
     "types-PyYAML==6.0.12.20250915",
 ]
 
+# Constraint A3 is CPU-only inference. On Linux, PyPI's `torch` wheel is the
+# CUDA build (multi-gigabyte); the CPU wheel lives on PyTorch's own index. This
+# matches the dependency to the stated constraint rather than working around
+# slow CI. Windows and macOS PyPI wheels are already CPU-only, so the marker
+# keeps their resolution untouched.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

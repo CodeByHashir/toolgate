@@ -208,7 +208,8 @@ is already implemented correctly.
 | Both detectors false-positive heavily on benign non-instruction text | Observed in M0 at smoke-test level | Measured directly via the dual benign reference sets in M7, not tuned away. |
 | Transformer latency impractical for real agent loops | ~180-220 ms single window, ~5300 ms chunked at ~1500 tokens on CPU | Report honestly per NFR-2. Cascade detection is the documented deferred extension. |
 | MCP SDK 2.x churn | SDK recently moved 1.x to 2.x | `mcp==2.1.1` pinned; `uv.lock` committed. Transport Protocol is a narrow, stable surface. |
-| CI currently failing | Confirmed: run 33842868936 | Root cause identified, fix proposed. See section 6. |
+| ~~CI failing~~ | Fixed; see section 6 D1 | - |
+| Agent model choice affects chain realism | A weaker model produces a thinner call sequence (observed: opus 7 calls vs haiku 3 on comparable tasks) | Model is a `--model` flag; evaluation chains use the default, smoke runs use `claude-haiku-4-5` |
 
 ---
 
@@ -232,8 +233,16 @@ is already implemented correctly.
   torch from the PyTorch CPU index. This is a correctness match to A3, not a CI
   workaround.
 
-Not fixed yet: discovered while writing project memory, which is outside the
-scope of that task (CLAUDE.md section 5). Awaiting go-ahead.
+**Applied:** `uv sync --extra dev --frozen` plus `uv run` on every check step.
+`--frozen` also makes CI fail on a stale lockfile, which is stricter for NFR-8
+than the original workflow.
+
+**Also applied, same root concern:** `torch` now resolves from the PyTorch CPU
+index on Linux via `[tool.uv.sources]`. Re-locking removed every `nvidia-*`
+CUDA package and `triton`, and pinned `torch 2.14.0+cpu` -- confirming CI was
+about to download multi-gigabyte CUDA wheels on a project whose stated
+constraint (A3) is CPU-only. Windows and macOS resolution is unchanged
+(verified locally: `torch 2.14.0+cpu`, `torch.version.cuda is None`).
 
 ### D2 - Recorded chain fixtures embed absolute host paths
 

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from llmshield_mcp import __version__
-from llmshield_mcp.config import DETECTOR_CLASSES, load_models_config
+from llmshield_mcp.config import DEFAULT_AGENT_MODEL, DETECTOR_CLASSES, load_models_config
 from llmshield_mcp.detectors.base import Detector, DetectorResult
 
 if TYPE_CHECKING:
@@ -116,7 +116,13 @@ DEFAULT_TASK = (
 )
 
 
-def run_agent(task: str, server_names: list[str], out: Path, config_path: Path | None) -> int:
+def run_agent(
+    task: str,
+    server_names: list[str],
+    out: Path,
+    config_path: Path | None,
+    model: str,
+) -> int:
     """Record one tool-call chain by driving real MCP servers with a real model."""
     import asyncio
 
@@ -132,13 +138,14 @@ def run_agent(task: str, server_names: list[str], out: Path, config_path: Path |
 
     print(f"sandbox   {config.sandbox}")
     print(f"servers   {', '.join(server_names)}")
+    print(f"model     {model}")
 
     async def _run() -> ChainRecord:
         async with open_servers(specs) as servers:
             for server in servers.values():
                 names = ", ".join(t.name for t in server.tools)
                 print(f"  {server.name}: {len(server.tools)} tools ({names})")
-            agent = ReferenceAgent(AsyncAnthropic(api_key=api_key))
+            agent = ReferenceAgent(AsyncAnthropic(api_key=api_key), model=model)
             return await agent.run(task, servers)
 
     record = asyncio.run(_run())
@@ -171,6 +178,14 @@ def main(argv: list[str] | None = None) -> int:
         "run-agent", help="drive the reference MCP servers and record a tool-call chain"
     )
     agent.add_argument("--task", default=DEFAULT_TASK)
+    agent.add_argument(
+        "--model",
+        default=DEFAULT_AGENT_MODEL,
+        help=(
+            "model driving the agent. Chains that feed the evaluation should be "
+            "recorded with the default; use claude-haiku-4-5 for cheap smoke runs."
+        ),
+    )
     agent.add_argument("--servers", default="filesystem,fetch")
     agent.add_argument("--out", type=Path, default=Path("chains/baseline.json"))
     agent.add_argument("--config", type=Path, default=None)
@@ -180,7 +195,7 @@ def main(argv: list[str] | None = None) -> int:
         return verify_models(args.config, args.detector)
     if args.command == "run-agent":
         names = [s.strip() for s in args.servers.split(",") if s.strip()]
-        return run_agent(args.task, names, args.out, args.config)
+        return run_agent(args.task, names, args.out, args.config, args.model)
     parser.error(f"unhandled command {args.command}")
 
 
