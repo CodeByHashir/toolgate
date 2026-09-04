@@ -4,7 +4,7 @@ Companion to `prd.md` (what to build) and `whats_has_been_done.md` (what is
 built). This file holds the plan, the architecture decisions and their
 rationale, remaining work, and known risks.
 
-**Current position: M1 complete. M2 not started.**
+**Current position: M2 complete. M3 not started.**
 
 ---
 
@@ -16,7 +16,7 @@ Each milestone is independently testable and lands as its own commit.
 |---|---|---|---|---|
 | M0 | Scaffold, pinned CPU stack, reuse audit for V0/V3 | NFR-8, A1, A3 | `mcp-shield verify-models`; contract tests | **Done** |
 | M1 | Both reference MCP servers running + minimal Claude agent + committed tool-call chain fixture | SEC-4, [3.1] | Agent reads a file and fetches a URL; fixture committed | **Done** |
-| M2 | Interception layer, **logging only, zero detectors** | FR-1, FR-8, FR-15, FR-16, NFR-5 | 20-call chain produces 20 log rows; agent behaviour byte-identical to M1 | Not started |
+| M2 | Interception layer, **logging only, zero detectors** | FR-1, FR-8, FR-15, FR-16, NFR-5 | 10-call run produced exactly 10 log rows; gate overhead 0.03-0.06 ms | **Done** |
 | M3 | Port rule engine and PII scanner as detector adapters | FR-2 (part), NFR-4, SEC-3, SEC-6 | Unit tests incl. explicit fail-closed test | Not started |
 | M4 | Fusion and policy engine; golden-set regression test begins | FR-4, FR-5, FR-6, FR-7, FR-9 | Table-driven decision tests; threshold change in YAML alters decision with no code edit | Not started |
 | M5 | V0 and V3 wired into the live gating path | FR-2, FR-3 | Ablation by config alone | Not started |
@@ -125,6 +125,41 @@ the reused artifacts. The V0 adapter promotes scikit-learn's
 `InconsistentVersionWarning` to a hard load failure so the pin enforces itself
 rather than depending on someone reading a comment. Rationale in
 `docs/PINNING.md`.
+
+### 2.8 Stream wrappers rather than pump tasks
+
+The gate could have been built by creating fresh `anyio` memory streams and
+running two pump tasks that copy frames between them and the inner transport.
+It instead wraps the stream objects directly: `ReadStream` and `WriteStream`
+(`mcp/shared/_stream_protocols.py`) are five-method protocols, so a wrapper
+that delegates and observes satisfies them without any concurrency of its own.
+
+That removes an entire class of bug -- pump-task cancellation, shutdown
+ordering, backpressure between two stream pairs -- none of which would have
+bought anything, because M2 forwards every frame unchanged anyway.
+
+The wrappers define `__getattr__` delegating to the inner stream. The SDK reads
+`last_context` off a read stream, and a wrapper that hid attributes it did not
+know about would silently change session behaviour, which is the opposite of
+AC-1 transparency.
+
+### 2.9 The decision-log schema is fixed before detection exists
+
+`gating/audit.py` defines all four `Decision` values, the `Outcome`
+vocabulary, and every column in M2 -- even though M2 only ever writes
+`allow` with empty `detector_scores`. Fixing the schema now means the
+logging-only baseline is directly comparable to later runs rather than being a
+different format that shares a name.
+
+`Outcome.PROTOCOL_ERROR` is separate from `Outcome.RESULT` for a measurement
+reason, not a tidiness one: a JSON-RPC error carries no tool content (FR-15),
+so counting those rows as benign allows would quietly inflate the denominator
+of any later false-positive rate.
+
+`latency_ms` (time inside the gate) and `roundtrip_ms` (client to server and
+back) are separate columns. Conflating them would make NFR-1 unmeasurable --
+server time swamps gate time by four orders of magnitude, as the M2 numbers
+show.
 
 ### 2.7 Manual tool-use loop rather than the SDK's beta tool runner
 

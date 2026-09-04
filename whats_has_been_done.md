@@ -140,6 +140,113 @@ line: `allowed directories set from server args: [ 'D:\LLMSHIELD-MCP\sandbox' ]`
 
 ---
 
+## M2 — Interception layer (logging only, zero detectors)
+
+**What changed:**
+
+- `src/llmshield_mcp/gating/transport.py` — `Gate`, `GateConfig`,
+  `_ObservedReadStream`, `_ObservedWriteStream`, `gating_transport()`.
+- `src/llmshield_mcp/gating/audit.py` — `Decision`, `Outcome`,
+  `DecisionRecord`, `DecisionLog`, SQLite schema per PROPOSAL.md section 12.
+- `src/llmshield_mcp/gating/content.py` — `extract()`, the size policy, and
+  defined behaviour for every awkward case in section 19.
+- `src/llmshield_mcp/agent.py` — `open_servers()` gained `gate_factory`. This
+  is the seam left deliberately in M1; the agent code is otherwise unchanged.
+- `src/llmshield_mcp/cli.py` — `--db` enables interception, `--max-result-chars`
+  makes the FR-16 ceiling configurable without a code change.
+- `tests/test_gating_transport.py` (20), `tests/test_gating_content.py` (18),
+  `tests/test_gating_audit.py` (7).
+
+**Why no detectors:** M2 ships logging-only on purpose. Interception
+transparency has to be demonstrable on its own, so that when detection arrives
+in M3-M5 any change in agent behaviour is attributable to the detectors rather
+than to the plumbing.
+
+### Design decisions
+
+**Stream wrappers, not pump tasks.** `ReadStream`/`WriteStream`
+(`mcp/shared/_stream_protocols.py`) are five-method protocols, so a delegating
+wrapper satisfies them with no concurrency of its own. The alternative — fresh
+memory streams plus two copy tasks — would have added cancellation, shutdown
+ordering and backpressure concerns for no benefit, since every frame is
+forwarded unchanged anyway.
+
+**`__getattr__` delegates to the inner stream.** The SDK reads `last_context`
+off a read stream; a wrapper that hid unknown attributes would silently change
+session behaviour, which is the opposite of AC-1.
+
+**The whole log schema is fixed now**, including all four `Decision` values and
+`detector_scores`, even though M2 only writes `allow` with `{}`. A later
+milestone must not need a schema change, or the logging-only baseline stops
+being comparable.
+
+**`Outcome.PROTOCOL_ERROR` is separate from `RESULT`** for a measurement
+reason: a JSON-RPC error carries no tool content (FR-15), so counting those
+rows as benign allows would inflate the denominator of any later
+false-positive rate.
+
+**`latency_ms` and `roundtrip_ms` are separate columns.** The M2 numbers show
+why — gate time is ~0.04 ms against a 467 ms fetch round trip. One column would
+have made NFR-1 unmeasurable.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `uv run ruff check src tests` | All checks passed |
+| `uv run ruff format --check src tests` | Clean |
+| `uv run mypy` | Success, 16 source files |
+| `uv run pytest` | **114 passed** |
+| End-to-end with `--db` | **10 tool calls -> exactly 10 log rows** |
+
+End-to-end run used `--model claude-haiku-4-5` (a verification run, not an
+evaluation fixture; cost 8 API calls, 29,208 in / 714 out).
+
+Log contents confirmed by direct query:
+
+- 10 rows, **10 unique correlation IDs** — interleaving is attributable.
+- All `fused_decision = allow`, all `detector_scores = {}`. If either ever
+  differs in M2, detection leaked in early.
+- **Gate overhead 0.029–0.055 ms** against round trips of 1.9–466.9 ms. Well
+  inside the NFR-1 ~5 ms budget, though NFR-1 is really about the detector path
+  that M5 adds.
+- Two rows have `tool_is_error = 1` with `outcome = result` — tool-level
+  failures, correctly *not* classified as protocol errors.
+- Two rows share a `raw_result_hash` because their content was identical.
+- **Zero raw content in the database.** Verified by scanning the SQLite file
+  for four distinctive strings from the sandbox and the fetched page; all
+  returned 0 occurrences (section 12).
+
+### On "byte-identical agent behaviour"
+
+The milestone's original wording was that gated agent behaviour should be
+byte-identical to M1. That is not testable as stated: the model is
+non-deterministic, and three recordings of one task already produced 7, 8 and 9
+calls. What *is* established:
+
+1. `test_read_wrapper_forwards_the_identical_object` and its write-side twin
+   assert object **identity** (`is`), not equality — the session receives
+   exactly the frame that arrived.
+2. Tool results through the gate were byte-for-byte the same sizes as in
+   ungated runs (330 / 572 / 597 / 151 characters for the four sandbox files).
+3. All 15 tools across both servers functioned normally.
+
+### Known limitations
+
+- Chain length is 10 calls. FR-14 needs 20+ sequential calls; that fixture is
+  recorded in M9.
+- FR-15 is covered by unit tests but was not observed against a real
+  server-generated JSON-RPC error, since neither reference server produced one.
+  Tool-level `isError` was exercised for real.
+- `max_result_chars` is a CLI flag, not yet part of a versioned policy file.
+  FR-9 moves it there in M4.
+- Gate latency was measured incidentally, not benchmarked. FR-13/NFR-1 proper
+  measurement is M9.
+- The gate logs but cannot yet modify a frame. Redact and Block need the policy
+  engine (M4) and are unreachable in M2 by construction.
+
+---
+
 ## M0/M1 finalisation — D1, D2, Q4, model selection, cost visibility
 
 Closes every open defect and question from M0 and M1 before M2 begins.

@@ -2,9 +2,9 @@
 
 Factual map of what exists in this repository. Updated when structure changes.
 
-**As of M1.** 1139 lines of source, 807 lines of tests, 56 tests. There is no
-interception layer, no policy engine, no corpus and no evaluation harness yet —
-those are M2 onward.
+**As of M2.** 1976 lines of source, 1596 lines of tests, 114 tests. The
+interception layer exists and logs every tool result, but runs **no detectors**.
+There is no policy engine, no corpus and no evaluation harness yet — M3 onward.
 
 ---
 
@@ -40,6 +40,10 @@ D:\LLMSHIELD-MCP\
 │   ├── config.py                config loading + score-mode collapse (145)
 │   ├── servers.py               MCP server config + sandbox resolution (88)
 │   ├── settings.py              .env / environment secrets (38)
+│   ├── gating/
+│   │   ├── audit.py             SQLite decision log, Decision/Outcome (173)
+│   │   ├── content.py           result extraction + size policy (133)
+│   │   └── transport.py         Gate + stream wrappers (281)
 │   └── detectors/
 │       ├── __init__.py          exports; V3 imported lazily (31)
 │       ├── base.py              detector contract (118)
@@ -50,6 +54,9 @@ D:\LLMSHIELD-MCP\
 │   ├── test_chain.py            chain round-trip and schema (6)
 │   ├── test_config.py           config + score-mode tests (15)
 │   ├── test_detector_base.py    contract tests (7)
+│   ├── test_gating_audit.py     decision log store (7)
+│   ├── test_gating_content.py   extraction, size policy, section 19 cases (18)
+│   ├── test_gating_transport.py gate behaviour + stream wrappers (20)
 │   ├── test_servers.py          server config + sandbox validation (8)
 │   └── test_adapters_with_models.py  reuse audit, marked `models` (7)
 └── .github/workflows/ci.yml     lint, format, type-check, test (CURRENTLY FAILING)
@@ -196,6 +203,36 @@ Loop invariants worth knowing:
   misalign later indices.
 - `pause_turn` re-sends the turn unchanged rather than ending the loop.
 - `max_iterations` (default 40) bounds a model that never stops calling tools.
+
+### `llmshield_mcp.gating`
+
+The interception layer (M2). Observes every frame and logs a decision per tool
+result; **runs no detectors**.
+
+| Symbol | Purpose |
+|---|---|
+| `Decision` | `allow` / `redact` / `block` / `escalate` (FR-4). M2 only emits `allow`. |
+| `Outcome` | `result` / `protocol_error` / `detector_failure` — what kind of frame the row is about |
+| `DecisionRecord` | One log row. `latency_ms` is time inside the gate; `roundtrip_ms` is client-to-server-and-back, kept separate so NFR-1 stays measurable |
+| `DecisionLog` | Append-only SQLite store. Content is **hashed, never stored** (section 12) |
+| `extract(result, max_chars)` | Raw `tools/call` result -> scannable text, block types, truncation flag, SHA-256 of the *full* pre-truncation text |
+| `GateConfig` | `max_result_chars` (FR-16/SEC-2), `max_pending` (NFR-5) |
+| `Gate` | Correlates requests to responses, logs one row per tool result |
+| `gating_transport(inner, gate)` | Wraps any `Transport`, satisfying the same protocol |
+
+Behaviours worth knowing:
+
+- Frames are forwarded **byte-identical** — the wrappers return the same object
+  they received. Truncation bounds *detection input only* and never alters what
+  the agent sees.
+- A JSON-RPC error is logged as `protocol_error` with no content extraction
+  (FR-15). A tool-level failure (`isError`) is a normal `result` row with
+  `tool_is_error` set — a different thing entirely.
+- The pending-request map is bounded. A call whose response never arrives is
+  evicted and the eviction is logged, so lost calls are visible rather than
+  growing state (NFR-5).
+- Only `tools/call` is tracked. `initialize`, `tools/list` and server-initiated
+  requests produce no rows.
 
 ### `llmshield_mcp.cli`
 

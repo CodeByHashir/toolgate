@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from llmshield_mcp import __version__
 from llmshield_mcp.config import DEFAULT_AGENT_MODEL, DETECTOR_CLASSES, load_models_config
 from llmshield_mcp.detectors.base import Detector, DetectorResult
+from llmshield_mcp.gating import GateConfig
 
 if TYPE_CHECKING:
     from llmshield_mcp.chain import ChainRecord
@@ -122,13 +123,17 @@ def run_agent(
     out: Path,
     config_path: Path | None,
     model: str,
+    db: Path | None,
+    max_result_chars: int,
 ) -> int:
     """Record one tool-call chain by driving real MCP servers with a real model."""
     import asyncio
+    from contextlib import ExitStack
 
     from anthropic import AsyncAnthropic
 
     from llmshield_mcp.agent import ReferenceAgent, open_servers
+    from llmshield_mcp.gating import Gate, GateConfig, decision_log
     from llmshield_mcp.servers import load_servers_config
     from llmshield_mcp.settings import Settings
 
@@ -139,16 +144,22 @@ def run_agent(
     print(f"sandbox   {config.sandbox}")
     print(f"servers   {', '.join(server_names)}")
     print(f"model     {model}")
+    print(f"gating    {db if db else 'off'}")
 
-    async def _run() -> ChainRecord:
-        async with open_servers(specs) as servers:
+    async def _run(gate_factory: object) -> ChainRecord:
+        async with open_servers(specs, gate_factory=gate_factory) as servers:  # type: ignore[arg-type]
             for server in servers.values():
                 names = ", ".join(t.name for t in server.tools)
                 print(f"  {server.name}: {len(server.tools)} tools ({names})")
             agent = ReferenceAgent(AsyncAnthropic(api_key=api_key), model=model)
             return await agent.run(task, servers, config.sandbox)
 
-    record = asyncio.run(_run())
+    with ExitStack() as stack:
+        log = stack.enter_context(decision_log(db)) if db else None
+        gate_config = GateConfig(max_result_chars=max_result_chars)
+        gate_factory = (lambda spec: Gate(spec.name, log, gate_config)) if log else None
+        record = asyncio.run(_run(gate_factory))
+        logged = log.count() if log else 0
 
     print(f"\n{len(record.calls)} tool calls")
     for call in record.calls:
@@ -163,6 +174,9 @@ def run_agent(
         f"\nusage     {u.api_calls} API calls, "
         f"{u.input_tokens:,} in / {u.output_tokens:,} out tokens"
     )
+
+    if db:
+        print(f"logged    {logged} gating decisions to {db}")
 
     record.write(out)
     print(f"wrote {out}")
@@ -195,13 +209,40 @@ def main(argv: list[str] | None = None) -> int:
     agent.add_argument("--servers", default="filesystem,fetch")
     agent.add_argument("--out", type=Path, default=Path("chains/baseline.json"))
     agent.add_argument("--config", type=Path, default=None)
+    agent.add_argument(
+        "--db",
+        type=Path,
+        default=None,
+        help=(
+            "enable the gating interception layer and write every decision to this "
+            "SQLite database. Omit to run the agent without interception."
+        ),
+    )
+    agent.add_argument(
+        "--max-result-chars",
+        type=int,
+        default=GateConfig().max_result_chars,
+        help=(
+            "FR-16/SEC-2 ceiling on how much of a tool result would be handed to a "
+            "detector. Bounds detection input only; the result forwarded to the "
+            "agent is never modified. Moves into the policy file in M4."
+        ),
+    )
 
     args = parser.parse_args(argv)
     if args.command == "verify-models":
         return verify_models(args.config, args.detector)
     if args.command == "run-agent":
         names = [s.strip() for s in args.servers.split(",") if s.strip()]
-        return run_agent(args.task, names, args.out, args.config, args.model)
+        return run_agent(
+            args.task,
+            names,
+            args.out,
+            args.config,
+            args.model,
+            args.db,
+            args.max_result_chars,
+        )
     parser.error(f"unhandled command {args.command}")
 
 

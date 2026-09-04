@@ -31,6 +31,7 @@ from mcp.client.stdio import stdio_client
 
 from llmshield_mcp.chain import ChainRecord, ToolCallRecord, UsageRecord, normalise
 from llmshield_mcp.config import DEFAULT_AGENT_MODEL
+from llmshield_mcp.gating import Gate, gating_transport
 from llmshield_mcp.servers import ServerSpec
 
 DEFAULT_MODEL = DEFAULT_AGENT_MODEL
@@ -108,13 +109,22 @@ class ConnectedServer:
 async def open_servers(
     specs: Sequence[ServerSpec],
     transport_factory: TransportFactory = stdio_client,
+    gate_factory: Callable[[ServerSpec], Gate] | None = None,
 ) -> AsyncIterator[dict[str, ConnectedServer]]:
-    """Launch each server over stdio and initialise an MCP session for it."""
+    """Launch each server over stdio and initialise an MCP session for it.
+
+    With `gate_factory`, each server's transport is wrapped by the gating
+    decorator (M2). The agent code below is identical either way -- that is the
+    point of intercepting at the transport boundary rather than in the agent.
+    """
     async with AsyncExitStack() as stack:
         connected: dict[str, ConnectedServer] = {}
         for spec in specs:
             params = StdioServerParameters(command=spec.command, args=list(spec.args))
-            read, write = await stack.enter_async_context(transport_factory(params))
+            transport: Any = transport_factory(params)
+            if gate_factory is not None:
+                transport = gating_transport(transport, gate_factory(spec))
+            read, write = await stack.enter_async_context(transport)
             session = await stack.enter_async_context(ClientSession(read, write))
             await session.initialize()
             listed = await session.list_tools()
