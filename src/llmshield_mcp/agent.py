@@ -20,6 +20,7 @@ from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import mcp_types
@@ -28,7 +29,7 @@ from anthropic.types import MessageParam, ToolParam, ToolResultBlockParam
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from llmshield_mcp.chain import ChainRecord, ToolCallRecord
+from llmshield_mcp.chain import ChainRecord, ToolCallRecord, UsageRecord, normalise
 from llmshield_mcp.config import DEFAULT_AGENT_MODEL
 from llmshield_mcp.servers import ServerSpec
 
@@ -147,6 +148,7 @@ class ReferenceAgent:
         index: int,
         qualified: str,
         arguments: dict[str, Any],
+        sandbox_root: str,
     ) -> tuple[ToolCallRecord, bool]:
         server_name, tool_name = split_tool_name(qualified)
         started = time.perf_counter()
@@ -162,20 +164,28 @@ class ReferenceAgent:
             block_types = ()
             is_error = True
 
+        # The tool actually ran against the real path; only the *stored* form
+        # is normalised, so the fixture stays portable and does not disclose
+        # the host's directory layout. Restored on read via with_sandbox().
         record = ToolCallRecord(
             index=index,
             correlation_id=uuid.uuid4().hex,
             server=server_name,
             tool=tool_name,
-            arguments=arguments,
-            result_text=text,
+            arguments=normalise(arguments, sandbox_root),
+            result_text=normalise(text, sandbox_root),
             result_block_types=block_types,
             is_error=is_error,
             duration_ms=(time.perf_counter() - started) * 1000.0,
         )
         return record, is_error
 
-    async def run(self, task: str, servers: dict[str, ConnectedServer]) -> ChainRecord:
+    async def run(
+        self,
+        task: str,
+        servers: dict[str, ConnectedServer],
+        sandbox_root: str | Path = "",
+    ) -> ChainRecord:
         """Run the loop until the model stops calling tools."""
         tools: list[ToolParam] = [
             to_anthropic_tool(server.name, tool)
@@ -184,6 +194,8 @@ class ReferenceAgent:
         ]
         messages: list[MessageParam] = [{"role": "user", "content": task}]
         calls: list[ToolCallRecord] = []
+        usage = UsageRecord()
+        sandbox = str(sandbox_root)
 
         for _ in range(self._max_iterations):
             response = await self._client.messages.create(
@@ -193,6 +205,7 @@ class ReferenceAgent:
                 tools=tools,
                 messages=messages,
             )
+            usage = usage.plus(response.usage)
             messages.append({"role": "assistant", "content": response.content})
 
             if response.stop_reason == "pause_turn":
@@ -209,7 +222,7 @@ class ReferenceAgent:
                 if block.type != "tool_use":
                     continue
                 record, is_error = await self._call_tool(
-                    servers, len(calls), block.name, dict(block.input)
+                    servers, len(calls), block.name, dict(block.input), sandbox
                 )
                 calls.append(record)
                 results.append(
@@ -228,4 +241,5 @@ class ReferenceAgent:
             created_at=datetime.now(UTC).isoformat(),
             servers=tuple(servers),
             calls=tuple(calls),
+            usage=usage,
         )

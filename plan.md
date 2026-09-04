@@ -195,7 +195,7 @@ is already implemented correctly.
 | Q1 | Anthropic API key location — existing env var / `.env`, or to be supplied? The LLMShield repo's `.env` is deliberately not read. | M1 |
 | Q2 | Filesystem sandbox directory (SEC-4). Proposed default `D:\LLMSHIELD-MCP\sandbox\`, gitignored, with synthetic files. | M1 |
 | Q3 | Corpus source families for leave-one-source-out. Needs >= 3, ideally 4, distinct families. Target corpus size within "low hundreds". | M6, M8 |
-| Q4 | Should `config/models.yaml` switch to a relative default path before the repository is made public? It currently embeds an absolute local path. | M10 |
+| ~~Q4~~ | ~~`config/models.yaml` absolute path~~ **RESOLVED**: root is now the repository-relative `models/` (gitignored), resolved against `REPO_ROOT`, with `LLMSHIELD_MODELS_ROOT` as override. Settled with D2. | - |
 
 ---
 
@@ -246,7 +246,7 @@ constraint (A3) is CPU-only. Windows and macOS resolution is unchanged
 
 ### D2 - Recorded chain fixtures embed absolute host paths
 
-**Status:** open, by design pending a decision.
+**Status:** FIXED (option 1).
 
 `chains/baseline.json` records tool arguments exactly as the model issued them,
 which for the filesystem server means absolute paths such as
@@ -254,13 +254,27 @@ which for the filesystem server means absolute paths such as
 but it makes the committed fixture machine-specific and would disclose the
 author's directory layout if the repository were made public.
 
-Options, none applied:
+**Applied:** the sandbox path is replaced by `SANDBOX_PLACEHOLDER`
+(`{sandbox}`, shared with `servers.yaml`) in both tool arguments and result
+text on write, and restored by `ChainRecord.read(path, sandbox_root=...)` on
+read. `read` without a sandbox leaves the placeholder in place, which is what
+inspection and diffing want. Normalisation happens only on the *stored* form --
+the tool itself ran against the real path.
 
-1. Store `sandbox_root` on `ChainRecord` and record sandbox-relative paths,
-   rehydrating at replay time. Keeps fixtures portable; the record is no longer
-   byte-identical to what the model sent.
-2. Normalise only at publication time, keeping local fixtures literal.
-3. Accept it and make the sandbox path itself non-identifying.
+Accepted cost: the record is no longer byte-identical to what the model sent.
+The placeholder is visibly a placeholder, so no fabricated path is written down.
 
-Same class as Q4 (`config/models.yaml` absolute path); both should be settled
-together before the repository is made public.
+**A field that had to be removed again.** The first implementation also stored
+`recorded_sandbox_root` "for provenance". That reintroduced the exact
+disclosure the placeholder exists to prevent, and nothing read it. It is gone,
+with a comment in `chain.py` saying why, so it does not get re-added.
+
+**How it was caught:** the first version of the guarding test built its own
+record and set the offending field to empty, so it passed while the committed
+fixture still contained `D:\LLMSHIELD-MCP\sandbox`. The test now reads the
+real `chains/baseline.json`. A test written to pass rather than to catch is
+worse than no test.
+
+Q4 (`config/models.yaml` absolute path) was settled at the same time: the
+checked-in root is now the repository-relative `models/`, which is gitignored,
+with `LLMSHIELD_MODELS_ROOT` as the override.

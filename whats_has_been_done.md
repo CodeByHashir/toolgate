@@ -140,6 +140,133 @@ line: `allowed directories set from server args: [ 'D:\LLMSHIELD-MCP\sandbox' ]`
 
 ---
 
+## M0/M1 finalisation — D1, D2, Q4, model selection, cost visibility
+
+Closes every open defect and question from M0 and M1 before M2 begins.
+
+### D1 — CI fixed
+
+`.github/workflows/ci.yml` used `uv pip install --system`, which fails with
+`No system Python installation found for Python 3.11`: `astral-sh/setup-uv`
+provisions a uv-managed interpreter, not a system one. The install step never
+completed, so **lint, type-check and tests had never run in CI at all**.
+
+Replaced with `uv sync --extra dev --frozen` plus `uv run` per step. `--frozen`
+also fails the build on a stale lockfile, stricter for NFR-8 than before.
+
+Second part, same root concern: constraint A3 is CPU-only, but on Linux PyPI's
+`torch` is the CUDA build. `[tool.uv.sources]` now resolves torch from the
+PyTorch CPU index under a `sys_platform == 'linux'` marker. Re-locking removed
+`nvidia-nvjitlink`, `nvidia-nvshmem-cu13`, `nvidia-nvtx` and `triton`, and
+pinned `torch 2.14.0+cpu`.
+
+**Verified:** CI run `33896832340`, conclusion `success`, 1m18s. All eight steps
+ran — Lint `All checks passed!`, Type check `Success: no issues found in 12
+source files`, Test `49 passed, 7 deselected`. Windows resolution unchanged
+(`torch 2.14.0+cpu`, `torch.version.cuda is None`).
+
+### D2 — chain fixtures no longer disclose host paths
+
+`chain.py` schema version 1 -> 2.
+
+- `normalise()` / `restore()` recursively rewrite strings inside arguments and
+  result text, handling both native and POSIX spellings of a Windows path.
+- `SANDBOX_PLACEHOLDER` moved to `config.py` so `servers.yaml` handling and
+  chain fixtures share one definition.
+- `ChainRecord.read(path, sandbox_root=...)` resolves the placeholder; without
+  it the portable form is returned, which is what inspection and diffing want.
+- Normalisation applies only to the *stored* form. The tool ran against the
+  real path.
+
+**A field that had to be removed again.** The first cut also stored
+`recorded_sandbox_root` "for provenance", which reintroduced the exact
+disclosure the placeholder prevents, and nothing read it. Removed, with a
+comment in `chain.py` recording why so it is not re-added.
+
+**How that was caught.** The first version of
+`test_committed_fixture_discloses_no_absolute_path` constructed its own record
+and set the offending field to empty, so it passed while the committed fixture
+still contained `D:\LLMSHIELD-MCP\sandbox`. It now reads the real
+`chains/baseline.json`. A second iteration was needed after the naive `":/"`
+marker matched `https://example.com` in legitimate fetched content; the check
+is now a drive-letter regex with a lookbehind excluding URL schemes.
+
+**Verified:** `chains/baseline.json` re-recorded and grepped — zero host paths,
+`{sandbox}` present, no `recorded_sandbox_root` key.
+
+### Q4 — model artifact path is now relative
+
+`config/models.yaml` root changed from
+`<LLMShield checkout>/evaluation/experiment2/models` to
+`models`. `load_models_config` resolves a relative root against `REPO_ROOT`.
+`models/` is gitignored; locally it is a directory junction to the LLMShield
+artifacts.
+
+**Verified:** `mcp-shield verify-models --detector v0` loads from
+`D:\LLMSHIELD-MCP\models0_tfidf_lr.joblib` and produces scores identical to
+before the change (0.8793 / 0.9400 / 0.9922 / 0.5718), confirming the same
+artifact through the new path.
+
+### Model selection
+
+`--model` flag on `run-agent`. `DEFAULT_AGENT_MODEL` lives in `config.py`, not
+`agent.py`, so `--help` does not import anthropic and mcp.
+
+The two model IDs originally proposed are not usable:
+`claude-3-5-haiku-20241022` was **retired** on 19 Feb 2026, and
+`claude-3-haiku-20240307`'s retirement date of 19 Apr 2026 has passed. The
+current cheap model is `claude-haiku-4-5`.
+
+Default stays `claude-opus-5` for chains that feed the evaluation, because
+PROPOSAL.md section 3.1 asks for *realistic* chains and a weaker model produces
+a thinner sequence — measured: on comparable tasks opus made 7-9 tool calls
+where `claude-haiku-4-5` made 3.
+
+### Cost visibility
+
+`UsageRecord` on every `ChainRecord`: `api_calls`, `input_tokens`,
+`output_tokens`, and both cache counters, accumulated across the loop and
+printed by the CLI. `plus()` tolerates missing or `None` fields, since not
+every response carries every cache counter.
+
+**Measured:** the committed baseline cost **6 API calls, 25,712 input / 1,396
+output tokens** — about **$0.16** at Opus 5 rates. Under assumption A2 this is
+a one-off per fixture and does not scale with corpus size.
+
+### Recorded baseline
+
+Re-recorded under schema 2: **9 tool calls** across both servers. Call 1 is a
+genuine `directory_tree` failure — the model passed an absolute path where the
+filesystem server wanted one relative to its root, so the server doubled it.
+The agent recovered via `list_directory`. This is real agent behaviour, and the
+chain records failures rather than dropping them.
+
+Chains are not deterministic across runs: three recordings of the same task
+produced 7, 8 and 9 calls with different tool choices. That is expected model
+non-determinism and is why the fixture is committed rather than regenerated.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `uv run ruff check src tests` | All checks passed |
+| `uv run ruff format --check src tests` | 19 files already formatted |
+| `uv run mypy` | Success, 12 source files |
+| `uv run pytest` | **69 passed** |
+| `uv run mcp-shield verify-models --detector v0` | OK, scores unchanged |
+| `uv run mcp-shield run-agent` | Exit 0, 9 calls, usage reported |
+| GitHub Actions | run 33896832340 **success** |
+
+### Known limitations
+
+- Chain length is 9 calls; FR-14 needs 20+ sequential calls, recorded in M9.
+- The fetch server still runs in pure-Python extraction mode (no NPM found),
+  which may extract differently from Readability.js.
+- Cache token counters are recorded but currently always zero — prompt caching
+  is not enabled on the agent. Worth revisiting if chain recording grows.
+
+---
+
 ## Repository published to GitHub (private)
 
 **What changed:** created `CodeByHashir/llmshield-mcp` (visibility `PRIVATE`)

@@ -6,7 +6,7 @@ both faked, so the loop's own behaviour is what is under test.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import mcp_types
@@ -39,9 +39,18 @@ class FakeText:
 
 
 @dataclass
+class FakeUsage:
+    input_tokens: int = 10
+    output_tokens: int = 5
+    cache_creation_input_tokens: int = 0
+    cache_read_input_tokens: int = 0
+
+
+@dataclass
 class FakeResponse:
     content: list[Any]
     stop_reason: str
+    usage: FakeUsage = field(default_factory=FakeUsage)
 
 
 class FakeMessages:

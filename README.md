@@ -49,8 +49,21 @@ retrained**:
 Both classify over `(benign, injection, jailbreak, harmful)`.
 
 The trained weights are **not distributed with this repository** and are not
-publishable. Point `config/models.yaml` (or the `LLMSHIELD_MODELS_ROOT`
-environment variable) at a local copy. See
+publishable. `config/models.yaml` defaults to a repository-relative `models/`
+directory, which is gitignored — copy, symlink or junction your artifacts
+there, or point `LLMSHIELD_MODELS_ROOT` at wherever they live:
+
+```bash
+# Windows (no admin needed)
+New-Item -ItemType Junction -Path .\models -Target C:\path	ortifacts
+```
+
+```bash
+# macOS / Linux
+ln -s /path/to/artifacts ./models
+```
+
+See
 [docs/PINNING.md](docs/PINNING.md) for why the scikit-learn and transformers
 versions are pinned exactly, and for how the statistical claims stay
 independently reproducible without the weights.
@@ -74,6 +87,27 @@ Probe texts are a smoke test, not an evaluation. Draw no conclusions from them.
 uv run pytest              # contract tests, no weights needed
 uv run pytest -m models    # reuse audit, requires the local artifacts
 ```
+
+## Record a tool-call chain
+
+```bash
+uv run mcp-shield run-agent --servers filesystem,fetch --out chains/baseline.json
+```
+
+Launches both reference MCP servers, drives them with a Claude tool-use loop,
+and records every call and result to a JSON fixture. The evaluation then runs
+offline against that recording, so API spend is a one-off rather than something
+that scales with the corpus.
+
+Chains that feed the evaluation use the default model. For cheap smoke runs:
+
+```bash
+uv run mcp-shield run-agent --model claude-haiku-4-5 --servers filesystem
+```
+
+Each run reports and records its token usage, so the cost behind a fixture is a
+measured number. Recorded fixtures store the sandbox path as a `{sandbox}`
+placeholder, which keeps them portable across machines.
 
 ## Licence
 

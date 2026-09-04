@@ -7,13 +7,15 @@ from pathlib import Path
 import pytest
 
 from llmshield_mcp.config import (
+    DEFAULT_CONFIG_PATH,
     DETECTOR_CLASSES,
+    REPO_ROOT,
     load_models_config,
     scalar_from_proba,
 )
 
 VALID = """
-root: "/models"
+root: "{root}"
 v0:
   path: "v0_tfidf_lr.joblib"
   score_mode: "not_benign"
@@ -29,26 +31,53 @@ v3:
 """
 
 
-def _write(tmp_path: Path, body: str) -> Path:
+def _write(tmp_path: Path, body: str, root: Path | None = None) -> Path:
+    """Write a config, substituting an OS-appropriate absolute root.
+
+    A bare "/models" is not absolute on Windows (no drive letter), so it would
+    be resolved against the repository root instead of taken literally.
+    """
     path = tmp_path / "models.yaml"
-    path.write_text(body, encoding="utf-8")
+    resolved = (root or (tmp_path / "models")).as_posix()
+    path.write_text(body.replace("{root}", resolved), encoding="utf-8")
     return path
 
 
 def test_loads_valid_config(tmp_path: Path) -> None:
     config = load_models_config(_write(tmp_path, VALID))
 
-    assert config.v0.path == Path("/models/v0_tfidf_lr.joblib")
+    assert config.v0.path == tmp_path / "models" / "v0_tfidf_lr.joblib"
     assert config.v0.score_mode == "not_benign"
-    assert config.v3.path == Path("/models/v3_deberta_base")
+    assert config.v3.path == tmp_path / "models" / "v3_deberta_base"
     assert config.v3.score_mode == "injection"
     assert config.v3.long_text_strategy == "chunk_max"
 
 
 def test_env_var_overrides_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("LLMSHIELD_MODELS_ROOT", "/elsewhere")
+    elsewhere = tmp_path / "elsewhere"
+    monkeypatch.setenv("LLMSHIELD_MODELS_ROOT", str(elsewhere))
+
     config = load_models_config(_write(tmp_path, VALID))
-    assert config.v0.path == Path("/elsewhere/v0_tfidf_lr.joblib")
+
+    assert config.v0.path == elsewhere / "v0_tfidf_lr.joblib"
+
+
+def test_relative_root_resolves_against_the_repository(tmp_path: Path) -> None:
+    """Q4: the checked-in default is relative so it discloses no host path."""
+    body = VALID.replace('root: "{root}"', 'root: "models"')
+    path = tmp_path / "models.yaml"
+    path.write_text(body, encoding="utf-8")
+
+    config = load_models_config(path)
+
+    assert config.v0.path == REPO_ROOT / "models" / "v0_tfidf_lr.joblib"
+
+
+def test_checked_in_config_discloses_no_absolute_host_path() -> None:
+    text = DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")
+    root_line = next(line for line in text.splitlines() if line.startswith("root:"))
+
+    assert not Path(root_line.split(":", 1)[1].strip().strip('"')).is_absolute()
 
 
 def test_unknown_score_mode_is_rejected(tmp_path: Path) -> None:

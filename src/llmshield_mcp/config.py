@@ -30,6 +30,12 @@ DEFAULT_AGENT_MODEL = "claude-opus-5"
 
 DEFAULT_CONFIG_PATH = REPO_ROOT / "config" / "models.yaml"
 
+# Stands in for the sandbox directory wherever a host-specific absolute path
+# would otherwise be written down: in server launch arguments (servers.yaml)
+# and in recorded chain fixtures (chain.py). Keeping fixtures portable also
+# keeps the author's directory layout out of a published repository.
+SANDBOX_PLACEHOLDER = "{sandbox}"
+
 # Fixed by the LLMShield training script (evaluation/experiment2/exp2_train.py:25).
 # BOTH V0 and V3 are 4-class over exactly this label order, which is the model's
 # index order and must not be reordered.
@@ -114,7 +120,12 @@ def load_models_config(path: Path | None = None) -> ModelsConfig:
     if not isinstance(raw, dict):
         raise ValueError(f"{config_path} did not parse to a mapping")
 
+    # Relative roots resolve against the repository root so the checked-in
+    # default is portable. LLMSHIELD_MODELS_ROOT overrides it for anyone whose
+    # artifacts live elsewhere.
     root = Path(os.environ.get("LLMSHIELD_MODELS_ROOT") or _require(raw, "root", "models.yaml"))
+    if not root.is_absolute():
+        root = REPO_ROOT / root
 
     v0_raw = _require(raw, "v0", "models.yaml")
     v3_raw = _require(raw, "v3", "models.yaml")

@@ -78,7 +78,10 @@ load time so a typo fails immediately rather than mid-evaluation.
 | `V0Config` | frozen dataclass | `path`, `score_mode` |
 | `V3Config` | frozen dataclass | `path`, `device`, `max_length`, `score_mode`, `long_text_strategy`, `chunk_stride`, `max_chunks`, `batch_size` |
 | `ModelsConfig` | frozen dataclass | `v0`, `v3` |
-| `load_models_config(path=None)` | function | Reads YAML, applies `LLMSHIELD_MODELS_ROOT` override, validates, returns `ModelsConfig` |
+| `load_models_config(path=None)` | function | Reads YAML, applies `LLMSHIELD_MODELS_ROOT` override, resolves a relative root against `REPO_ROOT`, validates, returns `ModelsConfig` |
+| `REPO_ROOT` | constant | Repository root; relative config paths resolve against it |
+| `SANDBOX_PLACEHOLDER` | constant | `{sandbox}` — shared by `servers.yaml` argument substitution and chain fixtures |
+| `DEFAULT_AGENT_MODEL` | constant | `claude-opus-5`. Lives here, not in `agent.py`, so the CLI shows it in `--help` without importing anthropic and mcp |
 
 ### `llmshield_mcp.detectors.base`
 
@@ -143,12 +146,14 @@ never logged and never written to a chain record.
 
 ### `llmshield_mcp.chain`
 
-The recorded tool-call chain format, `SCHEMA_VERSION = 1`.
+The recorded tool-call chain format, `SCHEMA_VERSION = 2`.
 
 | Symbol | Purpose |
 |---|---|
 | `ToolCallRecord` | One call: `index`, `correlation_id`, `server`, `tool`, `arguments`, `result_text`, `result_block_types`, `is_error`, `duration_ms` |
-| `ChainRecord` | One agent run: `task`, `model`, `created_at`, `servers`, `calls`, `schema_version`; `to_json`/`write`/`read`/`from_dict` |
+| `UsageRecord` | Tokens a chain cost: `api_calls`, `input_tokens`, `output_tokens`, both cache counters. `plus()` accumulates one response's usage and tolerates missing or `None` fields. |
+| `ChainRecord` | One agent run: `task`, `model`, `created_at`, `servers`, `calls`, `usage`, `schema_version`; `to_json`/`write`/`read`/`from_dict`/`with_sandbox` |
+| `normalise` / `restore` | Recursively swap the concrete sandbox path for `SANDBOX_PLACEHOLDER` and back, handling both native and POSIX spellings |
 
 `from_dict` rebuilds tuples explicitly — JSON has no tuple type, so without it
 a round-tripped record compares unequal to a freshly built one. An unknown
@@ -157,6 +162,16 @@ a round-tripped record compares unequal to a freshly built one. An unknown
 `result_text` is the concatenation of text blocks only. It is the field the
 gating layer will scan and the field adversarial payloads are injected into at
 evaluation time; payloads are never stored in the sandbox or in a fixture.
+
+Fixtures store the sandbox as `{sandbox}` rather than a concrete path, so a
+committed chain is portable and discloses no host directory layout (D2). Only
+the *stored* form is normalised — the tool ran against the real path.
+`read(path, sandbox_root=...)` resolves it back; `read(path)` keeps the
+placeholder, which is what inspection and diffing want.
+
+`ChainRecord` deliberately does **not** record the sandbox path it was made
+against. An earlier version did, "for provenance", which reintroduced exactly
+the disclosure the placeholder prevents.
 
 ### `llmshield_mcp.agent`
 

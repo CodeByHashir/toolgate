@@ -15,12 +15,9 @@ from typing import Any
 
 import yaml
 
-from llmshield_mcp.config import REPO_ROOT
+from llmshield_mcp.config import REPO_ROOT, SANDBOX_PLACEHOLDER
 
 DEFAULT_SERVERS_CONFIG_PATH = REPO_ROOT / "config" / "servers.yaml"
-
-# Placeholder substituted into server arguments with the resolved sandbox path.
-SANDBOX_PLACEHOLDER = "{sandbox}"
 
 
 @dataclass(frozen=True, slots=True)

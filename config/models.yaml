@@ -7,7 +7,10 @@
 # V0 was serialised by scikit-learn 1.8.0 and V3's config was written by
 # transformers 5.12.1; both are pinned exactly in pyproject.toml to match.
 
-root: "<LLMShield checkout>/evaluation/experiment2/models"
+# Relative paths resolve against the repository root. `models/` is gitignored,
+# so the default works for anyone who copies or symlinks their artifacts there
+# without disclosing where the author happens to keep theirs.
+root: "models"
 
 v0:
   # TF-IDF (word 1-2 + char_wb 3-5) FeatureUnion + logistic regression.

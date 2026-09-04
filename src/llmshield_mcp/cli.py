@@ -146,7 +146,7 @@ def run_agent(
                 names = ", ".join(t.name for t in server.tools)
                 print(f"  {server.name}: {len(server.tools)} tools ({names})")
             agent = ReferenceAgent(AsyncAnthropic(api_key=api_key), model=model)
-            return await agent.run(task, servers)
+            return await agent.run(task, servers, config.sandbox)
 
     record = asyncio.run(_run())
 
@@ -158,8 +158,14 @@ def run_agent(
             f"{len(call.result_text):>7} chars  {call.duration_ms:7.1f} ms{flag}"
         )
 
+    u = record.usage
+    print(
+        f"\nusage     {u.api_calls} API calls, "
+        f"{u.input_tokens:,} in / {u.output_tokens:,} out tokens"
+    )
+
     record.write(out)
-    print(f"\nwrote {out}")
+    print(f"wrote {out}")
     return 0
 
 
