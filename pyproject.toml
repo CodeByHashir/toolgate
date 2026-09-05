@@ -87,6 +87,6 @@ untyped_calls_exclude = ["transformers", "joblib", "sklearn"]
 # Third-party scientific packages ship no type information. Silencing them
 # here keeps `strict` meaningful for our own code rather than disabling it.
 [[tool.mypy.overrides]]
-module = ["joblib.*", "sklearn.*", "transformers.*", "torch.*", "yaml.*"]
+module = ["joblib.*", "sklearn.*", "transformers.*", "torch.*", "yaml.*", "datasketch.*"]
 ignore_missing_imports = true
 disallow_untyped_calls = false

@@ -839,3 +839,106 @@ reachable at `<LLMShield checkout>\evaluation\experiment2\models`.
   helpers from `tests/test_gating_transport.py` rather than importing them
   (they are underscore-prefixed there). Small, deliberate duplication over a
   cross-test-module import of private helpers.
+
+---
+
+## M6 — Corpus schema, ingest CLI, MinHash decontamination
+
+Builds the payload corpus infrastructure (FR-10, AC-6): a schema, a CLI that
+fetches/labels/decontaminates/stores items, and MinHash decontamination
+against V0/V3's own training data. Scope deliberately excludes the
+"MCP-specific dilution corpus" (embedding payloads in benign carrier text at
+varying ratios, `prd.md` 9.3) -- confirmed with the user before implementation
+as out of scope for this milestone's stated verification bar; see `plan.md`
+2.19.
+
+### What changed
+
+- `config/decontamination.yaml` -- new. `shingle_size: 5`, `num_perm: 64`,
+  `jaccard_threshold: 0.85` (all three straight from `exp2_data.py`'s own
+  calibration), `training_corpus_path` (default `corpus/reference/train.jsonl`,
+  gitignored, `LLMSHIELD_TRAINING_CORPUS` override -- same pattern as
+  `config/models.yaml`'s `LLMSHIELD_MODELS_ROOT`).
+- `src/llmshield_mcp/corpus/sources.py` -- `fetch()`, `load_adversarial()`,
+  `load_benign()`, moved here from `scripts/benchmark_rules.py` verbatim, now
+  that `corpus-ingest` needs the same loaders. `scripts/benchmark_rules.py`
+  imports them instead of defining its own copy.
+- `src/llmshield_mcp/corpus/decontaminate.py` -- `_norm`, `_shingles`,
+  `_minhash` (5-char shingles over NFKC-normalised, casefolded text),
+  `DecontaminationConfig`/`load_decontamination_config()`,
+  `ContaminationResult`/`decontaminate()`. Uses `datasketch.MinHash`/
+  `MinHashLSH`, not `exp2_data.py`'s hand-rolled numpy version.
+- `src/llmshield_mcp/corpus/store.py` -- `PayloadCorpusItem`, `CorpusLabel`,
+  `DecontaminationStatus`, `CorpusStore` (SQLite, schema per `PROPOSAL.md`
+  section 12), `export_jsonl()`.
+- `src/llmshield_mcp/cli.py` -- new `corpus-ingest` subcommand:
+  `ingest_corpus()` fetches, labels (adversarial from BIPIA/InjecAgent, benign
+  from this repository's own content), decontaminates both labels against the
+  training-data reference corpus, stores every item (clean and contaminated),
+  prints a drop-count report, and exports a JSONL snapshot.
+- `tests/test_corpus_decontaminate.py` (13 tests), `tests/test_corpus_store.py`
+  (7), `tests/test_corpus_sources.py` (2) -- all run without network or model
+  weights; `test_corpus_decontaminate.py` is the test PROPOSAL.md section 9
+  names explicitly ("no near-duplicate above the similarity threshold survives
+  decontamination").
+- `pyproject.toml` -- `datasketch.*` added to the mypy untyped-third-party
+  override list (already pinned as a dependency since M0; now actually used).
+
+### Sources read before writing anything
+
+`evaluation/experiment2/exp2_data.py` and `exp2_lobo.py` in the LLMShield
+repository (read-only reference; nothing written there). Found, rather than
+assumed: the "existing MinHash decontamination method" `PROPOSAL.md` refers to
+is real and already calibrated (5-char shingles, 64 permutations, Jaccard
+>= 0.85 or exact match), and `evaluation/experiment2/data/train.jsonl`
+(19,026 rows) is the actual decontaminated set V0/V3 were trained on -- the
+natural reference corpus, not something to reconstruct from raw HuggingFace
+dataset names.
+
+### Design decisions
+
+**`datasketch.MinHashLSH`, not a ported reimplementation.** Already pinned in
+`pyproject.toml` for this exact purpose and unused since M0. Follows the same
+principle M7 states for statistics (established libraries over hand-rolled
+code solving the same problem) and turned out to fix a reproducibility gap:
+`exp2_data.py` hashes shingles with Python's `hash()`, randomised per process,
+which would make a stored `minhash_signature` incomparable across separate
+`corpus ingest` invocations. `datasketch`'s default `hashfunc` (SHA1-based) is
+deterministic across processes -- confirmed directly by running the same hash
+twice in separate process invocations, not assumed from documentation.
+
+**The reference corpus is gitignored, matching V0/V3's own weights.**
+`corpus/reference/` joins `models/` in `.gitignore`. Neither this project nor
+the author has redistribution rights over eight mixed-license public datasets
+merged into one file.
+
+**Contaminated items are flagged, never deleted.** The store's whole point is
+different from `DecisionLog`'s: it holds actual corpus text (a project
+deliverable, per AC-6/AC-7) rather than hashing it away, and the milestone's
+drop-count report needs dropped items still queryable.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `uv run pytest -m "not models"` | **244 passed**, 12 deselected (20 new) |
+| `uv run ruff check src tests scripts` | All checks passed |
+| `uv run ruff format --check src tests scripts` | Clean |
+| `uv run mypy` | Success, 24 source files |
+| `mcp-shield corpus-ingest` against the real `train.jsonl` | 187 adversarial + 6,617 benign lines ingested, **0 contaminated** (expected -- M3b already established BIPIA/InjecAgent share no lineage with V0/V3's training sources) |
+
+### Known limitations
+
+- The "MCP-specific dilution corpus" (prd.md 9.3, a real third source family
+  for M8) is not built. `plan.md` open question Q3 stays open for this.
+- The exported JSONL snapshot from the verification run was not committed --
+  publishing a specific corpus snapshot is left as a deliberate operator
+  decision, not something this milestone's commit makes unasked.
+- Benign items are ingested at line granularity (`load_benign()`, unchanged
+  from `scripts/benchmark_rules.py`); adversarial items are whole attacker
+  instructions. `docs/POLICY-AUDIT.md` section 3 already documents the
+  resulting length mismatch (median 65 vs 106 characters) as a caveat on any
+  recall comparison -- inherited here, not solved.
+- `CorpusStore.count()`/row queries are unindexed beyond the three columns in
+  `SCHEMA`; fine at "low hundreds to low thousands" of rows, not something to
+  scale past without revisiting.

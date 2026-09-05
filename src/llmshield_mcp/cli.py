@@ -184,6 +184,91 @@ def run_agent(
     return 0
 
 
+DEFAULT_CORPUS_DB = Path("corpus/payload_corpus.sqlite")
+DEFAULT_CORPUS_EXPORT = Path("corpus/payload_corpus.jsonl")
+
+
+def ingest_corpus(
+    db: Path,
+    export: Path | None,
+    decontamination_config: Path | None,
+) -> int:
+    """Fetch, label, decontaminate and store the payload corpus (FR-10, M6).
+
+    Adversarial items come from BIPIA/InjecAgent (`corpus.sources`); benign
+    items are lines from this repository's own real content. Both labels are
+    checked against the V0/V3 training-data reference corpus -- the reused
+    training set includes a benign class too (dolly/alpaca), so a benign item
+    can be contaminated exactly as an adversarial one can.
+    """
+    from llmshield_mcp.corpus import (
+        CorpusLabel,
+        DecontaminationStatus,
+        PayloadCorpusItem,
+        corpus_store,
+        decontaminate,
+        fetch,
+        load_adversarial,
+        load_benign,
+        load_decontamination_config,
+    )
+
+    fetch()
+    adversarial = load_adversarial()
+    benign = load_benign()
+    print(f"fetched {len(adversarial)} adversarial payloads, {len(benign)} benign lines")
+
+    config = load_decontamination_config(decontamination_config)
+    print(f"decontaminating against {config.training_corpus_path} ...")
+
+    candidates: list[tuple[str, str | None, CorpusLabel, str]] = [
+        (family, threat_type, CorpusLabel.ADVERSARIAL, text)
+        for family, threat_type, text in adversarial
+    ] + [("repository", None, CorpusLabel.BENIGN, text) for text in benign]
+
+    results = decontaminate((text for _, _, _, text in candidates), config)
+
+    dropped_by_source: dict[str, int] = {}
+    total_by_source: dict[str, int] = {}
+    items: list[PayloadCorpusItem] = []
+    for (source, threat_type, label, text), result in zip(candidates, results, strict=True):
+        total_by_source[source] = total_by_source.get(source, 0) + 1
+        status = (
+            DecontaminationStatus.CONTAMINATED
+            if result.contaminated
+            else DecontaminationStatus.CLEAN
+        )
+        if result.contaminated:
+            dropped_by_source[source] = dropped_by_source.get(source, 0) + 1
+        items.append(
+            PayloadCorpusItem(
+                source=source,
+                threat_type=threat_type,
+                label=label,
+                text=text,
+                decontamination_status=status,
+            )
+        )
+
+    with corpus_store(db) as store:
+        store.add_many(items)
+        clean_count = store.count(status=DecontaminationStatus.CLEAN)
+        contaminated_count = store.count(status=DecontaminationStatus.CONTAMINATED)
+
+        exported = store.export_jsonl(export) if export else None
+
+    print(f"\ndrop-count report ({db}):")
+    for source in sorted(total_by_source):
+        dropped = dropped_by_source.get(source, 0)
+        total = total_by_source[source]
+        print(f"  {source:12} {dropped:>4}/{total:<4} dropped as contaminated")
+    print(f"\n  clean:        {clean_count}")
+    print(f"  contaminated: {contaminated_count}")
+    if exported is not None:
+        print(f"\nexported {exported} rows to {export}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mcp-shield")
     parser.add_argument("--version", action="version", version=f"llmshield-mcp {__version__}")
@@ -231,6 +316,28 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
 
+    corpus_ingest = subparsers.add_parser(
+        "corpus-ingest",
+        help="fetch, label, decontaminate and store the payload corpus",
+    )
+    corpus_ingest.add_argument("--db", type=Path, default=DEFAULT_CORPUS_DB)
+    corpus_ingest.add_argument(
+        "--export",
+        type=Path,
+        default=DEFAULT_CORPUS_EXPORT,
+        help="write the publishable JSONL snapshot here; pass an empty path-like "
+        "value via --no-export to skip",
+    )
+    corpus_ingest.add_argument(
+        "--no-export", action="store_true", help="skip writing the JSONL snapshot"
+    )
+    corpus_ingest.add_argument(
+        "--decontamination-config",
+        type=Path,
+        default=None,
+        help="defaults to config/decontamination.yaml",
+    )
+
     args = parser.parse_args(argv)
     if args.command == "verify-models":
         return verify_models(args.config, args.detector)
@@ -244,6 +351,12 @@ def main(argv: list[str] | None = None) -> int:
             args.model,
             args.db,
             args.max_result_chars,
+        )
+    if args.command == "corpus-ingest":
+        return ingest_corpus(
+            args.db,
+            None if args.no_export else args.export,
+            args.decontamination_config,
         )
     parser.error(f"unhandled command {args.command}")
 

@@ -4,7 +4,7 @@ Companion to `prd.md` (what to build) and `whats_has_been_done.md` (what is
 built). This file holds the plan, the architecture decisions and their
 rationale, remaining work, and known risks.
 
-**Current position: M5 complete. V0 and V3 wired into the live gate as scored-but-inert detectors, alongside rules and PII.**
+**Current position: M6 complete. Corpus schema, ingest CLI and MinHash decontamination exist and are verified against the real training-data reference corpus.**
 
 ---
 
@@ -21,7 +21,7 @@ Each milestone is independently testable and lands as its own commit.
 | M3b | Normaliser as a pre-detection stage; MCP-* rule family derived from benchmark data | FR-2 | 194 tests; MCP-* 20.3% recall at 0.00% FP where INJ-* scores 0.0% | **Done** |
 | M4 | Fusion and policy engine; golden-set regression test begins | FR-4, FR-5, FR-6, FR-7, FR-9 | Table-driven decision tests; threshold change in YAML alters decision with no code edit; thresholds refuse to block until calibrated | **Done** |
 | M5 | V0 and V3 wired into the live gating path | FR-2, FR-3 | Ablation by config alone | **Done** |
-| M6 | Corpus schema, ingest CLI, MinHash decontamination | FR-10, AC-6 | Drop-count report; no surviving near-duplicate above threshold | Not started |
+| M6 | Corpus schema, ingest CLI, MinHash decontamination | FR-10, AC-6 | Drop-count report; no surviving near-duplicate above threshold | **Done** |
 | M7 | GAUGE harness; port LOBO and DeLong; replace hand-rolled CIs | FR-11, NFR-6, NFR-7 | Known-answer tests for Wilson, Clopper-Pearson, McNemar, DeLong | Not started |
 | M8 | Leave-one-source-out generalisation test | FR-12 | Per-held-out-family table | Not started |
 | M9 | Latency benchmark: per-detector, fused, 20-call chain | FR-13, FR-14, NFR-1, NFR-2 | Reproducible script, committed numbers | Not started |
@@ -245,6 +245,8 @@ modified**).
 | Leave-one-source-out | `evaluation/experiment2/exp2_lobo.py` | Port in M8 |
 | DeLong AUROC | `evaluation/experiment2/exp2_auroc_delong.py` | Port in M7 |
 | Multi-FPR calibration | `exp2_multi_fpr.py`, `exp2_calibration.py` | Port in M7 |
+| MinHash decontamination method (shingle definition, 0.85 Jaccard threshold) | `exp2_data.py:_shingles/_minhash`, reused by `exp2_lobo.py` | Threshold/shingle-size reused in M6; reimplemented on `datasketch.MinHashLSH`, not ported line-for-line (`plan.md` 2.19) |
+| V0/V3 training-data reference corpus (19,026 rows, post-decontamination) | `evaluation/experiment2/data/train.jsonl` | Decontamination reference set for M6, via `LLMSHIELD_TRAINING_CORPUS`/`config/decontamination.yaml` |
 
 **Not reusable as-is:** `evaluation/metrics.py` uses hand-rolled `_t_value`,
 `_confidence_interval` and `_percentile`. Proposal [9] requires established
@@ -474,6 +476,63 @@ get constructed, that their real scores reach the audit log, and that the
 same real V0 detector escalates once promoted via YAML alone on text that the
 shipped policy allows.
 
+### 2.19 M6: corpus infrastructure, dilution corpus deferred to M8
+
+**The reference repository already had the decontamination method PROPOSAL.md
+refers to.** `evaluation/experiment2/exp2_data.py` decontaminates V0/V3's own
+training set against its eval suite with 5-character shingles over
+normalised text, 64-permutation MinHash, and a Jaccard >= 0.85 (or exact
+match) threshold. `evaluation/experiment2/data/train.jsonl` (19,026 rows) is
+the actual post-decontamination training set -- the natural reference corpus
+for checking whether a new item is too close to what V0/V3 already learned.
+Both are reused for calibration continuity: an item flagged contaminated here
+is held to the exact standard V0/V3's own training pipeline used, not a
+number invented for this project.
+
+**`datasketch.MinHashLSH`, not the dissertation's hand-rolled numpy version.**
+`datasketch` was already pinned in `pyproject.toml` for exactly this purpose
+and had gone unused since M0. Using it over reimplementing `exp2_data.py`'s
+matrix-comparison approach follows the same principle M7 states for
+statistics (established libraries over bespoke reimplementations), and
+happens to fix a reproducibility gap for free: the dissertation script hashes
+shingles with Python's `hash()`, which is randomised per process and would
+make `minhash_signature` incomparable across separate `corpus ingest`
+invocations. `datasketch`'s default `hashfunc` (SHA1-based) is deterministic
+across processes -- verified directly (`src/llmshield_mcp/corpus/decontaminate.py`
+docstring) rather than assumed.
+
+**The training-data reference corpus is not vendored**, the same way V0/V3's
+weights are not: `corpus/reference/` is gitignored, `config/decontamination.yaml`
+resolves it against the repository root with an `LLMSHIELD_TRAINING_CORPUS`
+override, mirroring `config/models.yaml`'s `LLMSHIELD_MODELS_ROOT` pattern
+exactly (`plan.md` open question Q4's resolution).
+
+**Contaminated items are flagged, not deleted.** `PayloadCorpusItem.decontamination_status`
+keeps every ingested item, clean or contaminated -- the milestone's own
+verification bar is a *drop-count report*, which needs the dropped items
+still visible. Unlike `gating/audit.py`'s `DecisionLog`, this store's whole
+purpose is to hold text (the corpus is a project deliverable, not an audit
+trail of something scanned in passing), so nothing here is hashed-instead-of-stored.
+
+**Scope, confirmed before implementation:** the "MCP-specific dilution
+corpus" -- embedding these same payloads into real benign carrier documents
+at varying dilution ratios (`prd.md` 9.3, `docs/M0-OBSERVATIONS.md`) -- is a
+genuinely new composition pipeline, not corpus infrastructure, and the
+milestone's stated verification bar (schema, ingest CLI, decontamination,
+drop-count report) does not require it. Deferred to whenever M8's
+leave-one-source-out test needs a third source family, rather than pulled
+into M6. Open question Q3 stays open for that reason: two adversarial source
+families (BIPIA, InjecAgent) are now ingested through this milestone's
+infrastructure; a third is still needed before M8.
+
+**The publishable JSONL snapshot is not committed by this milestone.**
+`mcp-shield corpus-ingest` is implemented and verified end to end against the
+real reference corpus (187 adversarial + several thousand benign lines, 0
+contaminated -- expected, since M3b already established BIPIA/InjecAgent
+share no lineage with the training sources). Deciding exactly what goes into
+the *published* corpus snapshot, and when, is left as a deliberate operator
+action rather than something this milestone's commit decides unasked.
+
 ## 4. Open Questions
 
 | # | Question | Blocks |
@@ -481,7 +540,7 @@ shipped policy allows.
 | Q1 | Anthropic API key location — existing env var / `.env`, or to be supplied? The LLMShield repo's `.env` is deliberately not read. | M1 |
 | Q2 | Filesystem sandbox directory (SEC-4). Proposed default `D:\LLMSHIELD-MCP\sandbox\`, gitignored, with synthetic files. | M1 |
 | ~~Q5~~ | ~~Add a tool-result rule family?~~ **RESOLVED: yes.** Six `MCP-*` rules derived from BIPIA and InjecAgent by discriminative phrase analysis, not invention. 20.3% recall at 0.000% false positives. `INJ-*` frozen at 19 and guarded by a test. | - |
-| Q3 | Corpus source families for leave-one-source-out. Needs >= 3, ideally 4, distinct families. Target corpus size within "low hundreds". | M6, M8 |
+| Q3 | Corpus source families for leave-one-source-out. Needs >= 3, ideally 4, distinct families. Target corpus size within "low hundreds". **Partially resolved**: BIPIA and InjecAgent (2 families, 187 adversarial items) now ingested via M6's `corpus-ingest`. A third family (candidate: the MCP-specific dilution corpus, `plan.md` 2.19) is still needed before M8. | M8 |
 | ~~Q4~~ | ~~`config/models.yaml` absolute path~~ **RESOLVED**: root is now the repository-relative `models/` (gitignored), resolved against `REPO_ROOT`, with `LLMSHIELD_MODELS_ROOT` as override. Settled with D2. | - |
 
 ---

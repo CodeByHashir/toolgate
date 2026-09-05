@@ -2,12 +2,13 @@
 
 Factual map of what exists in this repository. Updated when structure changes.
 
-**As of M5.** 2980 lines of source, 3080 lines of tests, 236 tests (224
+**As of M6.** 3602 lines of source, 3384 lines of tests, 256 tests (244
 weight-free + 12 marked `models`). All four detectors -- rules (both
 families), PII, V0, V3 -- run against every intercepted tool result through
 the fusion/policy engine (`gating/policy.py`); V0/V3 ship **inert** (scored,
-logged, zero decision weight) until M7 calibrates them. No corpus, no
-evaluation harness yet.
+logged, zero decision weight) until M7 calibrates them. A payload corpus
+pipeline exists (`corpus/`): fetch, label, MinHash-decontaminate, store. No
+evaluation harness yet (M7).
 
 ---
 
@@ -25,6 +26,8 @@ D:\LLMSHIELD-MCP\
 ├── pyproject.toml               package metadata, exact pins, tool config
 ├── uv.lock                      full transitive lock (111 packages)
 ├── config/
+│   ├── decontamination.yaml      MinHash shingle/threshold + training-corpus
+│   │                             reference path (FR-10, M6)
 │   ├── models.yaml              paths + runtime settings for reused detectors
 │   ├── policy.yaml               fusion/policy config: calibrated flag, roles,
 │   │                             thresholds, gate.max_result_chars (FR-9)
@@ -35,8 +38,12 @@ D:\LLMSHIELD-MCP\
 ├── chains/
 │   └── baseline.json            recorded benign tool-call chain (M1 fixture)
 ├── scripts/
-│   └── benchmark_rules.py       rule recall vs BIPIA + InjecAgent
-├── corpus/external/             fetched benchmarks (gitignored)
+│   └── benchmark_rules.py       rule recall vs BIPIA + InjecAgent (imports
+│                                loaders from llmshield_mcp.corpus.sources)
+├── corpus/
+│   ├── external/                 fetched BIPIA/InjecAgent (gitignored)
+│   └── reference/                V0/V3 training-data reference corpus,
+│                                  train.jsonl (gitignored, not published)
 ├── docs/
 │   ├── PINNING.md               why scikit-learn and transformers are pinned
 │   └── M0-OBSERVATIONS.md       M0 probe observations (explicitly not results)
@@ -56,14 +63,18 @@ D:\LLMSHIELD-MCP\
 │   │   ├── policy.py            fusion + policy engine (FR-4/FR-9) (240)
 │   │   └── transport.py         Gate + stream wrappers; wires detectors +
 │   │                            PolicyEngine into observe_inbound (M4) (340)
-│   └── detectors/
-│       ├── __init__.py          exports; V3 imported lazily (31)
-│       ├── base.py              detector contract (118)
-│       ├── normalise.py         canonicalisation + dual scan (187)
-│       ├── pii.py               PII scanner + redact() (183)
-│       ├── rules.py             injection rule engine (135)
-│       ├── v0_lexical.py        V0 adapter (79)
-│       └── v3_transformer.py    V3 adapter (108)
+│   ├── detectors/
+│   │   ├── __init__.py          exports; V3 imported lazily (31)
+│   │   ├── base.py              detector contract (118)
+│   │   ├── normalise.py         canonicalisation + dual scan (187)
+│   │   ├── pii.py               PII scanner + redact() (183)
+│   │   ├── rules.py             injection rule engine (135)
+│   │   ├── v0_lexical.py        V0 adapter (79)
+│   │   └── v3_transformer.py    V3 adapter (108)
+│   └── corpus/                  payload corpus pipeline (FR-10, M6)
+│       ├── sources.py           fetch()/load_adversarial()/load_benign()
+│       ├── decontaminate.py     MinHash shingling + datasketch.MinHashLSH
+│       └── store.py             PayloadCorpusItem, CorpusStore, export_jsonl()
 ├── tests/
 │   ├── fixtures/
 │   │   └── golden_set.json      frozen decision fixture (M4 regression test)
@@ -72,6 +83,9 @@ D:\LLMSHIELD-MCP\
 │   ├── test_agent.py            tool-use loop, faked client + sessions (13)
 │   ├── test_chain.py            chain round-trip and schema (6)
 │   ├── test_config.py           config + score-mode tests (15)
+│   ├── test_corpus_decontaminate.py  MinHash correctness, config loading (13)
+│   ├── test_corpus_sources.py   load_benign() sanity (offline) (2)
+│   ├── test_corpus_store.py     PayloadCorpusItem round-trip, export (7)
 │   ├── test_detector_normalise.py  canonicalisation + dual scan (22)
 │   ├── test_detector_pii.py     PII, redaction, SEC-3 leakage (31)
 │   ├── test_detector_rules.py   rule loading, matching, SEC-6 (24)
@@ -89,7 +103,7 @@ D:\LLMSHIELD-MCP\
 ```
 
 Not tracked by git: `.venv/`, `models/`, `.env`, `*.joblib`, `*.safetensors`,
-`logs/`, `*.sqlite`.
+`logs/`, `*.sqlite`, `corpus/external/`, `corpus/reference/`.
 
 ---
 
@@ -323,6 +337,37 @@ Behaviours worth knowing:
   (FR-11) — `PolicyEngine._ceiling()` downgrades it to `ESCALATE` regardless of
   which branch produced it.
 
+### `llmshield_mcp.corpus`
+
+The payload corpus pipeline (FR-10, AC-6, M6): fetch raw sources, label them,
+check them against V0/V3's own training data, store the result.
+
+| Symbol | Purpose |
+|---|---|
+| `fetch()` / `load_adversarial()` / `load_benign()` | `sources.py`. BIPIA/InjecAgent (cached under `corpus/external/`, gitignored) and benign lines from this repository's own content. Moved here from `scripts/benchmark_rules.py`, which now imports them. |
+| `DecontaminationConfig` / `load_decontamination_config()` | `decontaminate.py`. Validated `config/decontamination.yaml`: shingle size, `num_perm`, Jaccard threshold, and the training-corpus reference path (`LLMSHIELD_TRAINING_CORPUS` override, same pattern as `config.py`'s `LLMSHIELD_MODELS_ROOT`) |
+| `decontaminate(items, config, reference_texts=None)` | Flags near-duplicates (Jaccard >= threshold via `datasketch.MinHashLSH`) or exact normalised-text matches against the reference corpus. `reference_texts` lets tests supply a small in-memory reference set instead of the real ~19k-row file |
+| `CorpusLabel` | `benign` / `adversarial` |
+| `DecontaminationStatus` | `clean` / `contaminated` / `unchecked` -- distinct from `clean` so an unrun check cannot look decontaminated by construction |
+| `PayloadCorpusItem` / `CorpusStore` | `store.py`. SQLite schema per `PROPOSAL.md` section 12. Unlike `DecisionLog`, stores the actual text -- the corpus is a project deliverable, not an audit trail |
+| `CorpusStore.export_jsonl(path)` | The publishable snapshot -- one JSON object per row, field order matching the `PayloadCorpusItem` schema |
+
+Behaviours worth knowing:
+
+- Reused, not reinvented: the 5-char shingle definition and the 0.85 Jaccard
+  threshold are `evaluation/experiment2/exp2_data.py`'s own values, so an item
+  flagged contaminated here is held to the exact standard that kept V0/V3's
+  training set disjoint from their eval suite. The MinHash *implementation*
+  is `datasketch`, not a port of the dissertation's hand-rolled numpy version.
+- Both labels are checked against the reference corpus, not just adversarial
+  items -- the training set has a benign class too (dolly/alpaca), so a
+  benign corpus item can be contaminated exactly as an adversarial one can.
+- Contaminated items are kept, flagged via `decontamination_status`, never
+  deleted -- a drop-count report needs them still visible.
+- The training-data reference corpus (`corpus/reference/train.jsonl`) is not
+  vendored, for the same reason V0/V3's weights are not: mixed-license public
+  datasets this project has no redistribution rights over.
+
 ### `llmshield_mcp.cli`
 
 `main(argv)` — argparse, `--version`, subcommand `verify-models`.
@@ -421,7 +466,7 @@ retained by default; a hash is stored instead.
 | Official MCP fetch server (`mcp-server-fetch==2026.8.18`, via `uvx`) | **Active** — 1 tool |
 | HuggingFace `transformers` / `torch` | Active (V3) |
 | `scikit-learn` / `joblib` | Active (V0) |
-| `datasketch` | Installed, unused. Decontamination is M6. |
+| `datasketch` | **Active** (M6) -- `MinHash`/`MinHashLSH` for corpus decontamination. |
 | `statsmodels` / `scipy` | Installed, unused. Statistics are M7. |
 
 ---
