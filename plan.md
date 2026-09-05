@@ -18,7 +18,8 @@ Each milestone is independently testable and lands as its own commit.
 | M1 | Both reference MCP servers running + minimal Claude agent + committed tool-call chain fixture | SEC-4, [3.1] | Agent reads a file and fetches a URL; fixture committed | **Done** |
 | M2 | Interception layer, **logging only, zero detectors** | FR-1, FR-8, FR-15, FR-16, NFR-5 | 10-call run produced exactly 10 log rows; gate overhead 0.03-0.06 ms | **Done** |
 | M3 | Port rule engine and PII scanner as detector adapters | FR-2 (part), NFR-4, SEC-3, SEC-6 | 55 unit tests incl. fail-closed for both adapters; zero false positives on the benign sandbox | **Done** |
-| M4 | Fusion and policy engine; golden-set regression test begins | FR-4, FR-5, FR-6, FR-7, FR-9 | Table-driven decision tests; threshold change in YAML alters decision with no code edit | Not started |
+| M3b | Port the normaliser as a pre-detection stage (gap found by the policy audit) | FR-2 | Recall on the audit set rises 38.1% -> 57.1% with no new false positives | Not started |
+| M4 | Fusion and policy engine; golden-set regression test begins | FR-4, FR-5, FR-6, FR-7, FR-9 | Table-driven decision tests; threshold change in YAML alters decision with no code edit; thresholds refuse to block until calibrated | Not started |
 | M5 | V0 and V3 wired into the live gating path | FR-2, FR-3 | Ablation by config alone | Not started |
 | M6 | Corpus schema, ingest CLI, MinHash decontamination | FR-10, AC-6 | Drop-count report; no surviving near-duplicate above threshold | Not started |
 | M7 | GAUGE harness; port LOBO and DeLong; replace hand-rolled CIs | FR-11, NFR-6, NFR-7 | Known-answer tests for Wilson, Clopper-Pearson, McNemar, DeLong | Not started |
@@ -259,12 +260,43 @@ is already implemented correctly.
 
 ---
 
+### 2.12 Inherited policy settings are not adopted
+
+`docs/POLICY-AUDIT.md` measures the LLMShield policy defaults against this
+surface before M4 wires them in. The rule set survives; the fusion and
+threshold configuration does not.
+
+Load-bearing measurements:
+
+- The `ml_probability >= 0.95` circuit breaker hard-blocks **7 of 8 benign
+  documents** when applied to `not_benign` scores (V3 scores `README.md`,
+  `config.py`, `docs/PINNING.md` and `config/servers.yaml` at 1.000). Under
+  `injection` scores it fires on none. The score-mode choice in `prd.md` 9.2 is
+  therefore not only a reporting decision -- with an inherited threshold it
+  decides whether the system is usable.
+- `rule_flag >= 0.5` against a binary rule score means any single regex match
+  hard-blocks, whatever its severity.
+- The `policy` weight (0.2) has no signal behind it here; `ml` (0.3) is one
+  weight for two ML detectors; `low_max`/`high_min` were calibrated on the
+  user-prompt surface.
+- `escalation_enabled: false` cannot satisfy FR-7.
+- The dissertation's own fusion ablation found all five modes identical
+  (recall 0.659, FPR 0.265, McNemar p = 1.0), so there is no inherited evidence
+  for preferring a mode.
+
+Consequence for M4: thresholds are calibrated on this project's benign
+reference sets at matched FPR (FR-11), not inherited. The policy file ships
+with thresholds marked uncalibrated and refuses to run in blocking mode until
+calibration has been performed -- an inherited number would silently invalidate
+the cross-surface comparison the project exists to make.
+
 ## 4. Open Questions
 
 | # | Question | Blocks |
 |---|---|---|
 | Q1 | Anthropic API key location — existing env var / `.env`, or to be supplied? The LLMShield repo's `.env` is deliberately not read. | M1 |
 | Q2 | Filesystem sandbox directory (SEC-4). Proposed default `D:\LLMSHIELD-MCP\sandbox\`, gitignored, with synthetic files. | M1 |
+| Q5 | Should a tool-result rule family (`MCP-*`) be added for the shapes with no rule at all -- HTML/markdown/code-comment injection, CSV cell injection, fake-tool-output redirect? The 19 `INJ-*` rules would stay frozen for comparability. | M4/M6 |
 | Q3 | Corpus source families for leave-one-source-out. Needs >= 3, ideally 4, distinct families. Target corpus size within "low hundreds". | M6, M8 |
 | ~~Q4~~ | ~~`config/models.yaml` absolute path~~ **RESOLVED**: root is now the repository-relative `models/` (gitignored), resolved against `REPO_ROOT`, with `LLMSHIELD_MODELS_ROOT` as override. Settled with D2. | - |
 
