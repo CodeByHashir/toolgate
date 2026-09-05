@@ -620,3 +620,126 @@ baseline, and its 0.0% is the finding — not a bug to patch away.
   detectors, it waits on fusion in M4.
 - Homoglyph coverage is a 25-character table, not the full Unicode confusables
   set.
+
+---
+
+## M4 — Fusion and policy engine
+
+Wires the rules and PII detectors (M3/M3b) into the gate for the first time,
+via a new fusion/policy layer. V0 and V3 stay out of the live path -- that is
+M5's job (`plan.md` milestone table); M4's scope is exactly what M3/M3b
+already ported.
+
+### What changed
+
+- `config/policy.yaml` -- new versioned policy file (FR-9). `calibrated:
+  false`, `on_detector_failure: escalate`, detector-role groupings
+  (`injection: [rules_mcp]`, `redaction: [pii]`, `inert: [rules_inj]`),
+  per-detector per-action thresholds, and `gate.max_result_chars` (moved here
+  from the `--max-result-chars` CLI flag, per the comment left in `cli.py` at
+  M2).
+- `src/llmshield_mcp/gating/policy.py` -- `PolicyConfig`, `load_policy_config()`,
+  `FusionOutcome`, `PolicyEngine.decide()`. Pure function: a
+  `dict[str, DetectorResult]` in, one `FusionOutcome` out, no I/O.
+- `src/llmshield_mcp/gating/content.py` -- `_walk_blocks()` (shared by
+  `extract()` and the new `apply_redaction()`), `apply_redaction()` (FR-5),
+  `build_block_result()` / `BLOCK_MESSAGE` (FR-6).
+- `src/llmshield_mcp/gating/transport.py` -- `default_detectors()` (two
+  `RuleDetector` instances, `families={"mcp"}` and `families={"inj"}`, plus
+  `PiiDetector`). `Gate.__init__` gained `policy` and `detectors` parameters
+  (both optional; default `Gate()` now runs real detection). `observe_inbound`
+  runs every configured detector through `scan_normalised()`, calls
+  `PolicyEngine.decide()`, and returns the (possibly rewritten) frame instead
+  of a bare `None`.
+- `tests/test_gating_policy.py` (23 tests) -- table-driven `PolicyEngine.decide`
+  cases, SEC-6 fail-closed cases, and the FR-9 proof (`config/policy.yaml`
+  threshold changed in a temp file, same code, decision flips).
+- `tests/test_golden_set.py` + `tests/fixtures/golden_set.json` -- the M4
+  golden-set regression test: five frozen texts run through the real detector
+  set and the shipped policy file, decisions pinned.
+- `tests/test_gating_transport.py`, `tests/test_gating_content.py` -- extended
+  for the M4 behaviour (see below).
+- `src/llmshield_mcp/cli.py` -- `--max-result-chars` default changed to `None`
+  (meaning "use the policy file"); still overrides it when passed explicitly.
+
+### Design decisions
+
+**Escalate is the default action on detection, not Block** (plan.md 2.15,
+carried into `PolicyEngine._injection_signal`): an `rules_mcp` hit alone
+produces `ESCALATE`. `BLOCK` additionally requires `calibrated: true` *and*
+`detail["normalisation_only"] == 1.0` (the case `detectors/normalise.py`
+flags as "found only after canonicalisation, cannot be redacted precisely").
+Severity-aware refinement of that condition is left to M7 calibration
+(`docs/POLICY-AUDIT.md` recommendation 4) rather than assumed now -- it would
+be unreachable and untestable-for-real while `calibrated: false` anyway.
+
+**`calibrated: false` is a hard ceiling, enforced once.**
+`PolicyEngine._ceiling()` downgrades any `BLOCK` to `ESCALATE` whenever the
+policy is uncalibrated, regardless of which branch produced it (a fired
+detector or `on_detector_failure: block`). `test_block_is_downgraded_to_escalate_while_uncalibrated`
+and `test_on_detector_failure_block_is_also_downgraded_while_uncalibrated`
+both exercise this. FR-11 requires matched-FPR calibration on this surface
+before Block is safe to ship live.
+
+**Decision-label precedence is BLOCK > ESCALATE > REDACT > ALLOW, and PII
+redaction is independent of which label wins.** A result can be logged
+`ESCALATE` while its PII spans are still masked in the content actually
+forwarded (`FusionOutcome.redacted`/`redact_spans` are separate fields from
+`decision`). `test_mcp_rule_hit_escalates_and_still_masks_the_pii_span`
+exercises the combined case directly: MCP-006 (exfiltration destination) and
+a PII email in the same text. Full rationale in `plan.md` 2.17.
+
+**Redaction has to survive multi-block results.** `extract()` joins every
+text-contributing content block with `"\n"` before detection, so a `Span`'s
+offset is only meaningful against that joined string, not the original
+per-block JSON. `_walk_blocks()` is now the one routine both `extract()` and
+`apply_redaction()` use to find block boundaries, so they cannot disagree
+about where a block starts.
+`test_apply_redaction_targets_only_the_block_the_span_falls_in` is the
+regression guard for that offset arithmetic.
+
+**Two `RuleDetector` instances, not one.** `RuleDetector.name` is a fixed
+`"rules"` for both the `INJ-*` and `MCP-*` families, so the gate -- not the
+detector -- assigns the keys `rules_mcp` / `rules_inj` used everywhere else
+(policy config, `detector_scores` in the audit log). This kept `rules.py`
+and `rules.yaml` completely untouched, which matters because `INJ-*` is
+frozen and guarded by its own test (M3b).
+
+**Frame rewriting is new, and deliberately narrow.** M2's stream wrappers
+always forwarded the exact object they received; `observe_inbound` now
+returns a different `SessionMessage` (built via `payload.model_copy()` +
+`dataclasses.replace()`) whenever the fused decision is `BLOCK` or produces a
+non-empty `redact_spans`. For `ALLOW`/`ESCALATE` the identity guarantee is
+unchanged --
+`test_read_wrapper_forwards_the_identical_object` still asserts `is message`
+on ordinary benign text, and the new
+`test_redact_returns_a_new_object_and_leaves_the_original_untouched` pins the
+opposite case.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `uv run pytest -m "not models"` | **224 passed**, 7 deselected (30 new) |
+| `uv run ruff check src tests scripts` | All checks passed |
+| `uv run ruff format --check src tests scripts` | 36 files already formatted |
+| `uv run mypy` | Success, 20 source files |
+
+### Known limitations
+
+- V0 and V3 are not in `detectors.injection` yet -- M5 wires them in and the
+  same `PolicyEngine` machinery (thresholds already keyed generically, not
+  rules-specific) is what will carry their graded scores.
+- `BLOCK` cannot be reached through the shipped `config/policy.yaml`
+  (`calibrated: false` by design) or through the real rule set today, since no
+  `MCP-*` rule is currently written to set `normalisation_only` on its own --
+  that detail comes from `scan_normalised`'s canonical-form comparison, not
+  from a rule. The BLOCK path is therefore only exercised in tests via a fake
+  detector (`_FixedDetector`) and a hand-built calibrated `PolicyConfig`.
+  Real BLOCK reachability is an M7 calibration question.
+- Only PII's own spans are ever redacted; `rules_mcp`'s matched spans exist
+  (FR-5's span machinery is generic) but are not redaction candidates in M4 --
+  2.15 assigns rules to Escalate/Block, not Redact.
+- The golden-set fixture (`tests/fixtures/golden_set.json`) has five cases.
+  It is a wiring regression guard, not a recall measurement -- recall claims
+  still come only from `scripts/benchmark_rules.py` against BIPIA/InjecAgent.

@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-from llmshield_mcp.gating.content import extract
+from llmshield_mcp.detectors.base import Span
+from llmshield_mcp.gating.content import BLOCK_MESSAGE, apply_redaction, build_block_result, extract
 
 
 def _text_result(*texts: str, is_error: bool = False) -> dict[str, object]:
@@ -169,3 +170,74 @@ def test_unknown_block_type_is_recorded_and_not_scanned() -> None:
 
     assert content.block_types == ("future_thing",)
     assert content.text == ""
+
+
+# --- FR-5: redaction mirrors extract()'s own block walk --------------------
+
+
+def test_apply_redaction_masks_a_span_in_a_single_text_block() -> None:
+    result = _text_result("call me at 555-123-4567 please")
+    span = Span(start=11, end=23, label="PHONE_NUMBER")
+
+    redacted = apply_redaction(result, (span,))
+
+    assert redacted["content"][0]["text"] == "call me at [REDACTED:PHONE_NUMBER] please"
+    # The original is never mutated in place.
+    assert result["content"][0]["text"] == "call me at 555-123-4567 please"
+
+
+def test_apply_redaction_targets_only_the_block_the_span_falls_in() -> None:
+    # extract() would join these as "first block\nsecond block with a@b.com".
+    # The span's offset lands inside the second block once the "\n" separator
+    # is accounted for -- that accounting is exactly what _walk_blocks shares
+    # between extract() and apply_redaction().
+    result = _text_result("first block", "second block with a@b.com")
+    joined = extract(result, max_chars=1000).text
+    start = joined.index("a@b.com")
+    span = Span(start=start, end=start + len("a@b.com"), label="EMAIL_ADDRESS")
+
+    redacted = apply_redaction(result, (span,))
+
+    assert redacted["content"][0]["text"] == "first block"
+    assert redacted["content"][1]["text"] == "second block with [REDACTED:EMAIL_ADDRESS]"
+
+
+def test_apply_redaction_leaves_non_text_blocks_alone() -> None:
+    result = {
+        "content": [
+            {"type": "text", "text": "secret@example.com"},
+            {"type": "image", "data": "AAAA", "mimeType": "image/png"},
+        ]
+    }
+    span = Span(start=0, end=len("secret@example.com"), label="EMAIL_ADDRESS")
+
+    redacted = apply_redaction(result, (span,))
+
+    assert redacted["content"][1] == {"type": "image", "data": "AAAA", "mimeType": "image/png"}
+
+
+def test_apply_redaction_masks_an_embedded_text_resource() -> None:
+    result = {
+        "content": [{"type": "resource", "resource": {"uri": "file:///a", "text": "call 555-0100"}}]
+    }
+    span = Span(start=5, end=13, label="PHONE_NUMBER")
+
+    redacted = apply_redaction(result, (span,))
+
+    assert redacted["content"][0]["resource"]["text"] == "call [REDACTED:PHONE_NUMBER]"
+
+
+def test_apply_redaction_with_no_spans_returns_the_same_object() -> None:
+    result = _text_result("nothing to see here")
+
+    assert apply_redaction(result, ()) is result
+
+
+# --- FR-6: Block replaces the whole result ----------------------------------
+
+
+def test_build_block_result_replaces_content_with_the_block_message() -> None:
+    blocked = build_block_result()
+
+    assert blocked["content"] == [{"type": "text", "text": BLOCK_MESSAGE}]
+    assert blocked["isError"] is True

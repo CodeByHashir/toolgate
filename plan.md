@@ -4,7 +4,7 @@ Companion to `prd.md` (what to build) and `whats_has_been_done.md` (what is
 built). This file holds the plan, the architecture decisions and their
 rationale, remaining work, and known risks.
 
-**Current position: M3b complete. M4 designed (plan.md 2.15) but not started.**
+**Current position: M4 complete. Fusion and policy engine wired into the gate for rules + PII; V0/V3 join in M5.**
 
 ---
 
@@ -19,7 +19,7 @@ Each milestone is independently testable and lands as its own commit.
 | M2 | Interception layer, **logging only, zero detectors** | FR-1, FR-8, FR-15, FR-16, NFR-5 | 10-call run produced exactly 10 log rows; gate overhead 0.03-0.06 ms | **Done** |
 | M3 | Port rule engine and PII scanner as detector adapters | FR-2 (part), NFR-4, SEC-3, SEC-6 | 55 unit tests incl. fail-closed for both adapters; zero false positives on the benign sandbox | **Done** |
 | M3b | Normaliser as a pre-detection stage; MCP-* rule family derived from benchmark data | FR-2 | 194 tests; MCP-* 20.3% recall at 0.00% FP where INJ-* scores 0.0% | **Done** |
-| M4 | Fusion and policy engine; golden-set regression test begins | FR-4, FR-5, FR-6, FR-7, FR-9 | Table-driven decision tests; threshold change in YAML alters decision with no code edit; thresholds refuse to block until calibrated | Not started |
+| M4 | Fusion and policy engine; golden-set regression test begins | FR-4, FR-5, FR-6, FR-7, FR-9 | Table-driven decision tests; threshold change in YAML alters decision with no code edit; thresholds refuse to block until calibrated | **Done** |
 | M5 | V0 and V3 wired into the live gating path | FR-2, FR-3 | Ablation by config alone | Not started |
 | M6 | Corpus schema, ingest CLI, MinHash decontamination | FR-10, AC-6 | Drop-count report; no surviving near-duplicate above threshold | Not started |
 | M7 | GAUGE harness; port LOBO and DeLong; replace hand-rolled CIs | FR-11, NFR-6, NFR-7 | Known-answer tests for Wilson, Clopper-Pearson, McNemar, DeLong | Not started |
@@ -378,6 +378,54 @@ that blocks attacks. Documentation, the README and the eventual report must say
 so. PROPOSAL.md section 15 anticipates exactly this: a well-evidenced negative
 result is a legitimate and valuable outcome. The project's value is the
 measurement, not the protection.
+
+### 2.17 M4 implementation: precedence, ceiling and where redaction actually happens
+
+`src/llmshield_mcp/gating/policy.py` implements 2.15's design. Three decisions
+made during implementation, not measurement-driven like 2.15's but worth
+recording because they resolve real ambiguity in "fuse into exactly one
+decision" (FR-4):
+
+**Decision-label precedence is BLOCK > ESCALATE > REDACT > ALLOW.** A tool
+result can trigger both an injection signal (rules_mcp) and a redaction signal
+(PII) at once. Since FR-4 allows only one label, the louder, more
+security-relevant label wins the *log entry* -- Escalate over Redact -- rather
+than picking whichever fired "first" or averaging anything (that would be the
+FM-5 mistake again, just moved one level up).
+
+**PII redaction is orthogonal to the decision label, not a competing action.**
+`FusionOutcome.redacted` and `redact_spans` are separate fields from
+`decision`. A result can be logged as `escalate` and still have its PII spans
+masked in the content actually forwarded -- the two questions ("what do we
+tell the reviewer" and "does sensitive data leave this gate") are independent,
+matching 2.15's framing that PII carries zero injection weight and exists
+purely for SEC-3/NFR-4. `redacted` is forced `False` whenever the decision is
+BLOCK, since the whole result is replaced and a per-span mask is moot.
+
+**`calibrated: false` is enforced once, centrally, not scattered across every
+branch that could produce BLOCK.** `PolicyEngine._ceiling()` downgrades BLOCK
+to ESCALATE regardless of whether the BLOCK came from a fired detector or from
+`on_detector_failure: block`. `load_policy_config` also rejects
+`on_detector_failure: allow` outright (SEC-6: a crashed detector must never
+look like a clean scan) and validates every threshold is in `[0, 1]` at load
+time, not at first use.
+
+**Redaction has to survive multi-block results, not just the common
+single-text-block case.** `extract()` in `gating/content.py` joins every
+text-contributing content block with `"\n"` before a detector ever sees it, so
+a `Span`'s offsets are only meaningful against that joined string. Masking the
+*original* `tools/call` result therefore has to translate a joined-string
+offset back to the specific block (and, for an embedded resource, the nested
+`resource.text`) it came from. `_walk_blocks` is the single block-walking
+routine both `extract()` and the new `apply_redaction()` call, so the two can
+never disagree about where a block starts. `build_block_result()` is the
+FR-6 counterpart: it does not carry any field of the original result forward,
+so nothing survives a Block by accident.
+
+**V0/V3 stay out of the gate in M4.** `detectors.injection` in
+`config/policy.yaml` lists only `rules_mcp`. Wiring them in is explicitly M5's
+job (`plan.md` milestone table); M4 fuses what M3/M3b already ported (rules,
+PII) rather than pulling two more milestones' scope forward.
 
 ## 4. Open Questions
 

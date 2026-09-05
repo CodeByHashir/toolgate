@@ -2,11 +2,10 @@
 
 Factual map of what exists in this repository. Updated when structure changes.
 
-**As of M3b.** 2508 lines of source, 2358 lines of tests, 194 tests. Four
-detector adapters exist (rules, PII, V0, V3), and the interception layer logs
-every tool result — but the detectors are **not yet wired into the gate**,
-because the gate cannot act on multiple scores until fusion exists (M4). No
-policy engine, no corpus, no evaluation harness yet.
+**As of M4.** 2929 lines of source, 2879 lines of tests, 231 tests. Rules
+(both families) and PII are wired into the gate through a new fusion/policy
+engine (`gating/policy.py`); V0 and V3 remain adapters not yet called from the
+live path (M5). No corpus, no evaluation harness yet.
 
 ---
 
@@ -25,7 +24,9 @@ D:\LLMSHIELD-MCP\
 ├── uv.lock                      full transitive lock (111 packages)
 ├── config/
 │   ├── models.yaml              paths + runtime settings for reused detectors
-│   ├── rules.yaml               19 injection regexes, ported verbatim
+│   ├── policy.yaml               fusion/policy config: calibrated flag, roles,
+│   │                             thresholds, gate.max_result_chars (FR-9)
+│   ├── rules.yaml               25 rules: 19 INJ-* (frozen) + 6 MCP-*
 │   └── servers.yaml             reference MCP server launch specs + sandbox
 ├── sandbox/                     synthetic benign corpus; filesystem server is
 │                                confined to this directory (SEC-4)
@@ -48,8 +49,11 @@ D:\LLMSHIELD-MCP\
 │   ├── settings.py              .env / environment secrets (38)
 │   ├── gating/
 │   │   ├── audit.py             SQLite decision log, Decision/Outcome (173)
-│   │   ├── content.py           result extraction + size policy (133)
-│   │   └── transport.py         Gate + stream wrappers (281)
+│   │   ├── content.py           extraction, apply_redaction(),
+│   │   │                        build_block_result() (FR-5/FR-6) (231)
+│   │   ├── policy.py            fusion + policy engine (FR-4/FR-9) (240)
+│   │   └── transport.py         Gate + stream wrappers; wires detectors +
+│   │                            PolicyEngine into observe_inbound (M4) (340)
 │   └── detectors/
 │       ├── __init__.py          exports; V3 imported lazily (31)
 │       ├── base.py              detector contract (118)
@@ -59,6 +63,8 @@ D:\LLMSHIELD-MCP\
 │       ├── v0_lexical.py        V0 adapter (79)
 │       └── v3_transformer.py    V3 adapter (108)
 ├── tests/
+│   ├── fixtures/
+│   │   └── golden_set.json      frozen decision fixture (M4 regression test)
 │   ├── test_agent.py            tool-use loop, faked client + sessions (13)
 │   ├── test_chain.py            chain round-trip and schema (6)
 │   ├── test_config.py           config + score-mode tests (15)
@@ -67,8 +73,10 @@ D:\LLMSHIELD-MCP\
 │   ├── test_detector_rules.py   rule loading, matching, SEC-6 (24)
 │   ├── test_detector_base.py    contract tests (7)
 │   ├── test_gating_audit.py     decision log store (7)
-│   ├── test_gating_content.py   extraction, size policy, section 19 cases (18)
-│   ├── test_gating_transport.py gate behaviour + stream wrappers (20)
+│   ├── test_gating_content.py   extraction, size policy, redaction, block (24)
+│   ├── test_gating_policy.py    table-driven PolicyEngine.decide, FR-9 proof (23)
+│   ├── test_gating_transport.py gate + fusion behaviour, stream wrappers (26)
+│   ├── test_golden_set.py       M4 golden-set regression test (6)
 │   ├── test_servers.py          server config + sandbox validation (8)
 │   └── test_adapters_with_models.py  reuse audit, marked `models` (7)
 └── .github/workflows/ci.yml     lint, format, type-check, test (CURRENTLY FAILING)
@@ -269,25 +277,34 @@ Loop invariants worth knowing:
 
 ### `llmshield_mcp.gating`
 
-The interception layer (M2). Observes every frame and logs a decision per tool
-result; **runs no detectors**.
+The interception layer (M2) plus, since M4, the fusion/policy engine wired
+into it. Observes every frame, runs the configured detectors, fuses their
+results into one decision, and logs it -- rewriting the frame itself for
+Redact/Block.
 
 | Symbol | Purpose |
 |---|---|
-| `Decision` | `allow` / `redact` / `block` / `escalate` (FR-4). M2 only emits `allow`. |
+| `Decision` | `allow` / `redact` / `block` / `escalate` (FR-4) |
 | `Outcome` | `result` / `protocol_error` / `detector_failure` — what kind of frame the row is about |
 | `DecisionRecord` | One log row. `latency_ms` is time inside the gate; `roundtrip_ms` is client-to-server-and-back, kept separate so NFR-1 stays measurable |
 | `DecisionLog` | Append-only SQLite store. Content is **hashed, never stored** (section 12) |
 | `extract(result, max_chars)` | Raw `tools/call` result -> scannable text, block types, truncation flag, SHA-256 of the *full* pre-truncation text |
-| `GateConfig` | `max_result_chars` (FR-16/SEC-2), `max_pending` (NFR-5) |
-| `Gate` | Correlates requests to responses, logs one row per tool result |
+| `apply_redaction(result, spans)` | Rebuilds `result` with `spans` masked in their originating content block (FR-5). Shares `_walk_blocks()` with `extract()` so offsets always agree. |
+| `build_block_result(is_error)` | The FR-6 replacement result: one text block, `BLOCK_MESSAGE`, nothing of the original carried forward |
+| `PolicyConfig` / `load_policy_config()` | Validated `config/policy.yaml`: `calibrated`, `on_detector_failure`, detector-role sets, per-detector thresholds, `max_result_chars` |
+| `PolicyEngine.decide(results)` | Pure fusion function: `dict[str, DetectorResult]` -> `FusionOutcome`. Max/OR across `injection_detectors`; PII (`redaction_detectors`) masks independently of the decision label; `calibrated: false` caps `BLOCK` to `ESCALATE` |
+| `GateConfig` | `max_result_chars` (FR-16/SEC-2, now sourced from `policy.yaml` by default), `max_pending` (NFR-5) |
+| `Gate` | Runs `default_detectors()` (or an injected set) through `scan_normalised`, calls `PolicyEngine.decide`, logs one row per tool result, and returns the (possibly rewritten) frame |
+| `default_detectors()` | `{"rules_mcp": RuleDetector(families={"mcp"}), "rules_inj": RuleDetector(families={"inj"}), "pii": PiiDetector()}` — two `RuleDetector` instances because `RuleDetector.name` can't distinguish the families itself |
 | `gating_transport(inner, gate)` | Wraps any `Transport`, satisfying the same protocol |
 
 Behaviours worth knowing:
 
-- Frames are forwarded **byte-identical** — the wrappers return the same object
-  they received. Truncation bounds *detection input only* and never alters what
-  the agent sees.
+- Frames are forwarded **byte-identical** for `Allow` and `Escalate` — the
+  wrappers return the same object they received. For `Redact` and `Block`,
+  `observe_inbound` returns a *new* `SessionMessage` built via
+  `payload.model_copy()` + `dataclasses.replace()`; the original object is
+  never mutated. Truncation still bounds *detection input only*.
 - A JSON-RPC error is logged as `protocol_error` with no content extraction
   (FR-15). A tool-level failure (`isError`) is a normal `result` row with
   `tool_is_error` set — a different thing entirely.
@@ -296,6 +313,9 @@ Behaviours worth knowing:
   growing state (NFR-5).
 - Only `tools/call` is tracked. `initialize`, `tools/list` and server-initiated
   requests produce no rows.
+- `BLOCK` cannot surface while `config/policy.yaml` ships `calibrated: false`
+  (FR-11) — `PolicyEngine._ceiling()` downgrades it to `ESCALATE` regardless of
+  which branch produced it.
 
 ### `llmshield_mcp.cli`
 
@@ -314,21 +334,31 @@ also imported by `tests/test_adapters_with_models.py`.
 ## 3. Data Flow (current)
 
 ```
-config/models.yaml
-   │  load_models_config()  → validates, applies LLMSHIELD_MODELS_ROOT
-   ▼
-ModelsConfig ──► V0LexicalDetector / V3TransformerDetector  (construction)
-                          │
-   text ──────────────────┤ Detector.score(text)
-                          │   ├── times the call
-                          │   ├── delegates to _score(text) → RawScore
-                          │   └── contains any exception
-                          ▼
-                   DetectorResult   (score | None, detail, spans, latency, error)
+config/models.yaml                          config/rules.yaml, config/policy.yaml
+   │  load_models_config()                     │  load_rules() / load_policy_config()
+   ▼                                           ▼
+ModelsConfig ──► V0/V3 (constructed,      default_detectors() ──► {rules_mcp, rules_inj, pii}
+                 not yet called from                                   │
+                 the live gate — M5)          tool-result text ────────┤ scan_normalised(detector, text)
+                                                                        │   → DetectorResult (score|None, ...)
+                                                                        ▼
+                                                        {detector_key: DetectorResult}
+                                                                        │
+                                                                        ▼
+                                                       PolicyEngine.decide()  →  FusionOutcome
+                                                          (Decision, redacted, redact_spans, note)
+                                                                        │
+                                                    ┌───────────────────┼────────────────────┐
+                                                    ▼                   ▼                     ▼
+                                          apply_redaction()   build_block_result()      DecisionLog.append()
+                                          (Redact: mask       (Block: replace whole     (always: the decision,
+                                           PII spans only)     result, FR-6)             scores, redacted flag)
 ```
 
-There is no consumer of `DetectorResult` yet. The fusion and policy engine
-(M4) will be the first.
+V0 and V3 are constructed and scoreable (M0) but `default_detectors()` does
+not include them — M5 adds them to `detectors.injection` in
+`config/policy.yaml`, and `PolicyEngine` needs no change to accept their
+graded scores (thresholds are already keyed generically, not rules-specific).
 
 ---
 

@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING
 from llmshield_mcp import __version__
 from llmshield_mcp.config import DEFAULT_AGENT_MODEL, DETECTOR_CLASSES, load_models_config
 from llmshield_mcp.detectors.base import Detector, DetectorResult
-from llmshield_mcp.gating import GateConfig
 
 if TYPE_CHECKING:
     from llmshield_mcp.chain import ChainRecord
@@ -124,7 +123,7 @@ def run_agent(
     config_path: Path | None,
     model: str,
     db: Path | None,
-    max_result_chars: int,
+    max_result_chars: int | None,
 ) -> int:
     """Record one tool-call chain by driving real MCP servers with a real model."""
     import asyncio
@@ -156,7 +155,9 @@ def run_agent(
 
     with ExitStack() as stack:
         log = stack.enter_context(decision_log(db)) if db else None
-        gate_config = GateConfig(max_result_chars=max_result_chars)
+        # None means "use config/policy.yaml's gate.max_result_chars" (FR-9);
+        # the flag only overrides it when the caller actually passes one.
+        gate_config = GateConfig(max_result_chars=max_result_chars) if max_result_chars else None
         gate_factory = (lambda spec: Gate(spec.name, log, gate_config)) if log else None
         record = asyncio.run(_run(gate_factory))
         logged = log.count() if log else 0
@@ -221,11 +222,12 @@ def main(argv: list[str] | None = None) -> int:
     agent.add_argument(
         "--max-result-chars",
         type=int,
-        default=GateConfig().max_result_chars,
+        default=None,
         help=(
-            "FR-16/SEC-2 ceiling on how much of a tool result would be handed to a "
-            "detector. Bounds detection input only; the result forwarded to the "
-            "agent is never modified. Moves into the policy file in M4."
+            "FR-16/SEC-2 ceiling on how much of a tool result is handed to a "
+            "detector. Bounds detection input only, never what is forwarded to "
+            "the agent for Allow/Escalate. Defaults to config/policy.yaml's "
+            "gate.max_result_chars (FR-9); pass this flag to override it."
         ),
     )
 
