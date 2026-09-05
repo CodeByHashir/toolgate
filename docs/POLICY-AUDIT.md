@@ -129,6 +129,52 @@ takes the higher score, keeps spans only from the original, and marks
 not -- telling the policy engine that a detection exists which cannot be
 precisely redacted, so it is a Block rather than a Redact.
 
+## 3c. Detector complementarity — can fusion help at all?
+
+Measured over the same 187 payloads, each detector held to a **1% FPR budget**
+on 800 benign lines.
+
+| Detector | recall @1% FPR | payloads only it catches |
+|---|---|---|
+| MCP-\* rules | **20.3%** | 33 |
+| V0 | 5.3% | 6 |
+| V3 | 2.7% | 4 |
+| INJ-\* rules | 0.0% | **0** |
+
+Pairwise Jaccard overlap: `mcp+inj` 0.00, `v0+v3` 0.00, `mcp+v3` 0.02,
+`mcp+v0` 0.09. The detectors are **near-orthogonal** — they fail on different
+things, which is the precondition for fusion being worth anything.
+
+| | Recall |
+|---|---|
+| Best single detector | 20.3% |
+| Union of all four | **25.7%** |
+| Gain from fusion | **+5.3pp** |
+
+**Caveat that must not be lost:** that union stacks four separate 1% budgets,
+so its system FPR may approach 4%. Comparing it to a single detector at 1% is
+not a fair fight. FR-11's matched-FPR comparison has to hold the **system**
+FPR constant, not the per-detector one, and the honest gain will be smaller.
+
+**74.3% of payloads are caught by nothing at all.**
+
+### The PII signal was an artefact
+
+An earlier version of this measurement showed the PII scanner reaching 19.3%
+recall on injection payloads, which would have made it a fusion signal. It is
+not:
+
+| Family | PII recall | What fired |
+|---|---|---|
+| BIPIA | 0.8% | one IP address |
+| InjecAgent | **56.5%** | 35 emails, of which **34 are the literal string `amy.watson@gmail.com`** |
+
+That is InjecAgent's hardcoded attacker address — the same class of benchmark
+artefact deliberately excluded when deriving the MCP-\* rules. PII therefore
+gets **no injection-detection weight**; its role is SEC-3/NFR-4 redaction only.
+The real signal underneath, an exfiltration destination in an imperative
+context, is already MCP-006's job.
+
 ## 4. The inherited circuit breakers are unsafe here
 
 `policies/default.json` carries `circuit_breakers`: `rule_flag >= 0.5` and

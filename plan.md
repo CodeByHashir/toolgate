@@ -4,7 +4,7 @@ Companion to `prd.md` (what to build) and `whats_has_been_done.md` (what is
 built). This file holds the plan, the architecture decisions and their
 rationale, remaining work, and known risks.
 
-**Current position: M3 complete, plus M3b (normaliser) and the MCP-* rule family. M4 not started.**
+**Current position: M3b complete. M4 designed (plan.md 2.15) but not started.**
 
 ---
 
@@ -328,6 +328,56 @@ cross-surface comparison stays honest and each family's contribution is
 separately measurable. Measured separately, they are opposites: `INJ-*`
 contributes 0.0% recall and every false positive; `MCP-*` contributes all the
 recall and none.
+
+### 2.15 M4 fusion design, decided from measurement
+
+Settled after the evidence in `docs/POLICY-AUDIT.md` 3c. Each decision traces
+to a number, not a preference.
+
+**Max / OR-style fusion, never weighted-linear averaging.** The detectors are
+near-orthogonal (pairwise Jaccard 0.00-0.09) and none exceeds 20.3% recall.
+Averaging four weak orthogonal signals at ~0.3 weight cannot reach any useful
+threshold -- which is precisely the FM-5 failure the dissertation's own fusion
+docstring blames for 75.7% of bypasses.
+
+**PII is not an injection signal.** Its apparent 19.3% recall was InjecAgent's
+hardcoded `amy.watson@gmail.com` (34 of 35 hits). It contributes to SEC-3 /
+NFR-4 redaction only. The genuine signal beneath it -- an exfiltration
+destination in an imperative context -- is MCP-006's job.
+
+**INJ-\* stays enabled but carries zero decision weight.** It catches 0
+payloads, contributes 0 unique detections, and produces every rule false
+positive. Keeping it scored-but-inert means each run keeps reporting the 0.0%
+transfer result, which is the finding, while it cannot degrade a live decision.
+
+**Per-action FPR budgets, not one score cut into four bands.** At 5% FPR a
+20-call agent chain carries roughly one false positive per chain -- tolerable
+for a flag, not for destroying a tool result. Indicative targets, to be
+calibrated in M7 rather than assumed:
+
+| Action | FPR budget | Why |
+|---|---|---|
+| Block | ~0.1% | Destroys the tool result |
+| Redact | ~1% | Masks a span, preserves the rest |
+| Escalate | ~5% | Flags only; content still passes |
+
+**Escalate is the default action on detection, not Block.** With 74.3% of
+payloads caught by nothing, a Block-by-default policy would impose the full
+false-positive cost while still missing three quarters of attacks. Escalate
+keeps the agent working and the decision auditable.
+
+**Thresholds ship uncalibrated and refuse to block.** FR-11 requires
+matched-FPR calibration on this surface; an inherited or guessed threshold
+would silently invalidate the cross-surface comparison.
+
+### 2.16 What the system honestly is
+
+With 74.3% of real indirect injections undetected by any component, this is a
+**detection and audit layer with measured, poor coverage** -- not a guardrail
+that blocks attacks. Documentation, the README and the eventual report must say
+so. PROPOSAL.md section 15 anticipates exactly this: a well-evidenced negative
+result is a legitimate and valuable outcome. The project's value is the
+measurement, not the protection.
 
 ## 4. Open Questions
 
