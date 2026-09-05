@@ -4,7 +4,7 @@ Companion to `prd.md` (what to build) and `whats_has_been_done.md` (what is
 built). This file holds the plan, the architecture decisions and their
 rationale, remaining work, and known risks.
 
-**Current position: M3 complete. M4 not started.**
+**Current position: M3 complete, plus M3b (normaliser) and the MCP-* rule family. M4 not started.**
 
 ---
 
@@ -18,7 +18,7 @@ Each milestone is independently testable and lands as its own commit.
 | M1 | Both reference MCP servers running + minimal Claude agent + committed tool-call chain fixture | SEC-4, [3.1] | Agent reads a file and fetches a URL; fixture committed | **Done** |
 | M2 | Interception layer, **logging only, zero detectors** | FR-1, FR-8, FR-15, FR-16, NFR-5 | 10-call run produced exactly 10 log rows; gate overhead 0.03-0.06 ms | **Done** |
 | M3 | Port rule engine and PII scanner as detector adapters | FR-2 (part), NFR-4, SEC-3, SEC-6 | 55 unit tests incl. fail-closed for both adapters; zero false positives on the benign sandbox | **Done** |
-| M3b | Port the normaliser as a pre-detection stage (gap found by the policy audit) | FR-2 | Recall on the audit set rises 38.1% -> 57.1% with no new false positives | Not started |
+| M3b | Normaliser as a pre-detection stage; MCP-* rule family derived from benchmark data | FR-2 | 194 tests; MCP-* 20.3% recall at 0.00% FP where INJ-* scores 0.0% | **Done** |
 | M4 | Fusion and policy engine; golden-set regression test begins | FR-4, FR-5, FR-6, FR-7, FR-9 | Table-driven decision tests; threshold change in YAML alters decision with no code edit; thresholds refuse to block until calibrated | Not started |
 | M5 | V0 and V3 wired into the live gating path | FR-2, FR-3 | Ablation by config alone | Not started |
 | M6 | Corpus schema, ingest CLI, MinHash decontamination | FR-10, AC-6 | Drop-count report; no surviving near-duplicate above threshold | Not started |
@@ -290,13 +290,52 @@ with thresholds marked uncalibrated and refuses to run in blocking mode until
 calibration has been performed -- an inherited number would silently invalidate
 the cross-surface comparison the project exists to make.
 
+### 2.13 Benchmarks replace hand-written test cases
+
+The first policy audit measured rule recall at 38.1% on 21 hand-written cases.
+The same rules score **0.0%** against real benchmarks. The hand-written cases
+had been authored by someone who had just read the regexes, so they contained
+the words those regexes match -- they measured the author's assumptions.
+
+Adopted sources, both MIT, fetched by `scripts/benchmark_rules.py` and cached
+under `corpus/external/` (gitignored):
+
+* **BIPIA** (microsoft/BIPIA) -- 125 attacker objectives, 25 categories.
+* **InjecAgent** (uiuc-kang-lab/InjecAgent) -- 62 attacker instructions.
+
+Neither shares lineage with V0/V3's training corpora, which are all
+user-prompt surface. They also give FR-12 two independent source families for
+leave-one-source-out, with our own MCP-specific corpus as a third in M6.
+
+Rule of practice from this: no detection claim in this project rests on cases
+written by whoever wrote the detector.
+
+### 2.14 MCP-* rules are derived, not invented
+
+Candidate patterns came from discriminative phrase analysis over the benchmarks
+against ~5,000 lines of benign repository content. Candidates with no measured
+support were dropped, and a "tool invocation directive" candidate was rejected
+for scoring 0% recall at 0.30% false positives.
+
+Benchmark artefacts were deliberately excluded. The strongest raw n-grams were
+`amy watson` and `gmail com` (InjecAgent's fixed attacker identity) and
+`example com` (BIPIA's placeholder domain). Matching those would have scored
+near-perfectly on the benchmark and detected nothing real.
+
+`INJ-*` stays frozen at 19 rules, guarded by
+`test_inj_family_is_frozen_at_the_dissertation_s_nineteen_rules`, so the
+cross-surface comparison stays honest and each family's contribution is
+separately measurable. Measured separately, they are opposites: `INJ-*`
+contributes 0.0% recall and every false positive; `MCP-*` contributes all the
+recall and none.
+
 ## 4. Open Questions
 
 | # | Question | Blocks |
 |---|---|---|
 | Q1 | Anthropic API key location — existing env var / `.env`, or to be supplied? The LLMShield repo's `.env` is deliberately not read. | M1 |
 | Q2 | Filesystem sandbox directory (SEC-4). Proposed default `D:\LLMSHIELD-MCP\sandbox\`, gitignored, with synthetic files. | M1 |
-| Q5 | Should a tool-result rule family (`MCP-*`) be added for the shapes with no rule at all -- HTML/markdown/code-comment injection, CSV cell injection, fake-tool-output redirect? The 19 `INJ-*` rules would stay frozen for comparability. | M4/M6 |
+| ~~Q5~~ | ~~Add a tool-result rule family?~~ **RESOLVED: yes.** Six `MCP-*` rules derived from BIPIA and InjecAgent by discriminative phrase analysis, not invention. 20.3% recall at 0.000% false positives. `INJ-*` frozen at 19 and guarded by a test. | - |
 | Q3 | Corpus source families for leave-one-source-out. Needs >= 3, ideally 4, distinct families. Target corpus size within "low hundreds". | M6, M8 |
 | ~~Q4~~ | ~~`config/models.yaml` absolute path~~ **RESOLVED**: root is now the repository-relative `models/` (gitignored), resolved against `REPO_ROOT`, with `LLMSHIELD_MODELS_ROOT` as override. Settled with D2. | - |
 

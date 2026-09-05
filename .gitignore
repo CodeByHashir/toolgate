@@ -25,3 +25,6 @@ models/
 *.sqlite
 *.sqlite3
 logs/
+
+# Fetched benchmark corpora (MIT; re-fetch with scripts/benchmark_rules.py)
+corpus/external/

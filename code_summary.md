@@ -2,7 +2,7 @@
 
 Factual map of what exists in this repository. Updated when structure changes.
 
-**As of M3.** 2301 lines of source, 2114 lines of tests, 169 tests. Four
+**As of M3b.** 2508 lines of source, 2358 lines of tests, 194 tests. Four
 detector adapters exist (rules, PII, V0, V3), and the interception layer logs
 every tool result — but the detectors are **not yet wired into the gate**,
 because the gate cannot act on multiple scores until fusion exists (M4). No
@@ -31,6 +31,9 @@ D:\LLMSHIELD-MCP\
 │                                confined to this directory (SEC-4)
 ├── chains/
 │   └── baseline.json            recorded benign tool-call chain (M1 fixture)
+├── scripts/
+│   └── benchmark_rules.py       rule recall vs BIPIA + InjecAgent
+├── corpus/external/             fetched benchmarks (gitignored)
 ├── docs/
 │   ├── PINNING.md               why scikit-learn and transformers are pinned
 │   └── M0-OBSERVATIONS.md       M0 probe observations (explicitly not results)
@@ -50,6 +53,7 @@ D:\LLMSHIELD-MCP\
 │   └── detectors/
 │       ├── __init__.py          exports; V3 imported lazily (31)
 │       ├── base.py              detector contract (118)
+│       ├── normalise.py         canonicalisation + dual scan (187)
 │       ├── pii.py               PII scanner + redact() (183)
 │       ├── rules.py             injection rule engine (135)
 │       ├── v0_lexical.py        V0 adapter (79)
@@ -58,6 +62,7 @@ D:\LLMSHIELD-MCP\
 │   ├── test_agent.py            tool-use loop, faked client + sessions (13)
 │   ├── test_chain.py            chain round-trip and schema (6)
 │   ├── test_config.py           config + score-mode tests (15)
+│   ├── test_detector_normalise.py  canonicalisation + dual scan (22)
 │   ├── test_detector_pii.py     PII, redaction, SEC-3 leakage (31)
 │   ├── test_detector_rules.py   rule loading, matching, SEC-6 (24)
 │   ├── test_detector_base.py    contract tests (7)
@@ -114,6 +119,13 @@ individual adapters cannot forget either.
 `RuleDetector`, `name = "rules"`. Binary regex detector over the 19 injection
 signatures in `config/rules.yaml`, ported verbatim from the dissertation.
 
+Two families, filterable via `load_rules(families=...)`:
+
+* **`INJ-*`** — the dissertation's 19 rules, **frozen**. Comparability baseline.
+  Measured recall against real indirect-PI benchmarks: **0.0%**.
+* **`MCP-*`** — 6 rules derived from BIPIA and InjecAgent for the tool-result
+  surface. **20.3%** recall at **0.000%** false positives.
+
 `load_rules()` compiles at load time and rejects a duplicate id, an unknown
 severity, an uncompilable pattern, an empty rule list, or a file where every
 rule is disabled — each of which would otherwise produce a scan that looks
@@ -121,6 +133,23 @@ clean for the wrong reason.
 
 Score is binary (1.0 if any rule fires). `detail` maps rule id to 1.0. Every
 match becomes a `Span`, not just the first, because FR-5 must mask all of them.
+
+### `llmshield_mcp.detectors.normalise`
+
+Canonicalisation, step 1 of the pipeline. `normalise(text) -> Normalised`
+applies NFKC, invisible-character stripping, homoglyph folding and base64
+decoding, reporting which transforms actually fired.
+
+Base64 is **appended**, not substituted, so following offsets stay valid and
+the encoded form survives as evidence.
+
+`scan_normalised(detector, text)` scans both the original and the canonical
+form, takes the higher score, and keeps spans only from the original -- a span
+found in normalised text does not point at the same characters in the original,
+and redacting with it would corrupt the tool result. When the canonical pass
+finds something the original did not, `detail["normalisation_only"] = 1.0`
+tells the policy engine that a detection exists with no redactable span, so it
+is a Block rather than a Redact.
 
 ### `llmshield_mcp.detectors.pii`
 

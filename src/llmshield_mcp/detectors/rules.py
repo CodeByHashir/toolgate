@@ -39,9 +39,16 @@ class Rule:
     severity: str
     pattern: re.Pattern[str]
     description: str = ""
+    #: Rule family. `inj` is the dissertation's frozen 19; `mcp` is new work
+    #: for the tool-result surface. Kept separate so the two can be enabled
+    #: independently and their contributions measured apart -- the INJ-* set is
+    #: the comparability baseline and must not be diluted by new rules.
+    family: str = "inj"
 
 
-def load_rules(path: Path | None = None) -> tuple[Rule, ...]:
+def load_rules(
+    path: Path | None = None, families: frozenset[str] | None = None
+) -> tuple[Rule, ...]:
     """Read and compile the rule set.
 
     Compilation happens here rather than per scan so that a malformed pattern
@@ -83,6 +90,10 @@ def load_rules(path: Path | None = None) -> tuple[Rule, ...]:
         if not entry.get("enabled", True):
             continue
 
+        family = str(entry.get("family", "inj"))
+        if families is not None and family not in families:
+            continue
+
         try:
             compiled = re.compile(str(entry["pattern"]), re.IGNORECASE)
         except re.error as exc:
@@ -94,6 +105,7 @@ def load_rules(path: Path | None = None) -> tuple[Rule, ...]:
                 severity=severity,
                 pattern=compiled,
                 description=str(entry.get("description", "")),
+                family=family,
             )
         )
 
@@ -107,8 +119,12 @@ class RuleDetector(Detector):
 
     name: ClassVar[str] = "rules"
 
-    def __init__(self, rules: tuple[Rule, ...] | None = None) -> None:
-        self._rules = rules if rules is not None else load_rules()
+    def __init__(
+        self,
+        rules: tuple[Rule, ...] | None = None,
+        families: frozenset[str] | None = None,
+    ) -> None:
+        self._rules = rules if rules is not None else load_rules(families=families)
 
     @property
     def rules(self) -> tuple[Rule, ...]:

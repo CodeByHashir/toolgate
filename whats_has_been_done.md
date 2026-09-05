@@ -76,11 +76,6 @@ another reader) could pick up without re-deriving it from the diff.
 
 ---
 
-*Next entry should be M1 (reference MCP servers + agent + tool-call-chain
-fixture) once implemented.*
-
----
-
 ## Repository published to GitHub (private)
 
 **What changed:** created `CodeByHashir/llmshield-mcp` (visibility `PRIVATE`)
@@ -524,3 +519,104 @@ classifier precision, since they may differ sharply.
   decision needs the policy engine.
 - PII coverage is pattern-based only. `PERSON`, `LOCATION` and other NER
   entities are skipped, as in the dissertation.
+
+---
+
+## M3b — Normaliser, MCP-* rule family, and benchmarks replacing hand-written cases
+
+Prompted by the policy audit, and by a direction to stop treating the
+dissertation as a constraint: only the *models* were required to be reused.
+Anything else is improvable on evidence.
+
+### The benchmark result that reframes the project
+
+The first audit measured rule recall at 38.1% on 21 hand-written cases. Against
+real benchmarks the same rules score **0.0%**.
+
+The hand-written cases had been authored by someone who had just read the 19
+regexes, so they contained the words those regexes match. They measured the
+author's assumptions. This is recorded rather than quietly corrected because it
+is the kind of error that silently validates a broken detector.
+
+Adopted sources, both MIT, fetched by `scripts/benchmark_rules.py` into
+`corpus/external/` (gitignored):
+
+* **BIPIA** (microsoft/BIPIA) — 125 attacker objectives, 25 categories.
+* **InjecAgent** (uiuc-kang-lab/InjecAgent) — 62 attacker instructions.
+
+| Rule family | BIPIA | InjecAgent | Overall | Benign FP |
+|---|---|---|---|---|
+| INJ-* (ported, 19) | 0.0% | 0.0% | **0.0%** | 23 (0.49%) |
+| MCP-* (new, 6) | 15.2% | 30.6% | **20.3%** | **0 (0.00%)** |
+
+The ported family contributes zero recall and every false positive. Not one of
+its 19 signatures appears in 187 real indirect injections, because indirect
+injection does not need to override a system prompt — the content is already in
+context, so a plain imperative suffices.
+
+The reused classifiers are barely better: at 5% FPR, V0 reaches 10.7%, V3
+4.3% under `injection` and 0.5% under `not_benign`.
+
+### What changed
+
+- `src/llmshield_mcp/detectors/normalise.py` — `normalise()`, `Normalised`,
+  `scan_normalised()`. Ports LLMShield's pipeline step 1, missed in M3.
+- `config/rules.yaml` — schema version 2. Adds a `family` key; `INJ-*` marked
+  frozen, six `MCP-*` rules added.
+- `src/llmshield_mcp/detectors/rules.py` — `Rule.family`, and
+  `load_rules(families=...)` / `RuleDetector(families=...)` so each family can
+  be enabled and measured alone.
+- `scripts/benchmark_rules.py` — reproducible fetch-and-measure.
+- `tests/test_detector_normalise.py` (22 tests); rule tests extended to 27.
+- `docs/POLICY-AUDIT.md` — sections 2 and 3 rewritten with benchmark numbers.
+- `.gitignore` — `corpus/external/`.
+
+### Design decisions
+
+**Spans and the dual scan.** Normalisation changes offsets, so a span found in
+normalised text does not point at the same characters in the original.
+Redacting with it would silently corrupt a tool result. `scan_normalised` scans
+both forms, takes the higher score, keeps spans only from the original, and
+sets `detail["normalisation_only"]` when the canonical pass found something the
+original did not — telling the policy engine a detection exists that cannot be
+precisely redacted, so it is a Block rather than a Redact.
+
+**Base64 is appended, not substituted**, so following offsets stay valid and
+the encoded form survives as evidence. Capped at 4,096 decoded characters
+(SEC-2).
+
+**MCP-* rules are derived, not invented.** Candidates came from discriminative
+phrase analysis over the benchmarks against ~5,000 benign repository lines.
+Candidates with no measured support were dropped, and a "tool invocation
+directive" candidate was rejected for 0% recall at 0.30% false positives.
+
+Benchmark artefacts were deliberately excluded. The strongest raw n-grams were
+`amy watson` and `gmail com` (InjecAgent's fixed attacker identity) and
+`example com` (BIPIA's placeholder domain); matching those would have scored
+near-perfectly on the benchmark and detected nothing real.
+
+**INJ-* stays frozen** at 19 rules, guarded by a test. It is the comparability
+baseline, and its 0.0% is the finding — not a bug to patch away.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `uv run ruff check src tests scripts` | All checks passed |
+| `uv run ruff format --check` | Clean |
+| `uv run mypy` | Success, 19 source files |
+| `uv run pytest` | **194 passed** (25 new) |
+| `uv run python scripts/benchmark_rules.py` | Table above, reproducible |
+
+### Known limitations
+
+- Benchmarks supply the *injected instruction*, not the composed document a
+  gate sees. Embedding it in a host result is harder, so these are upper bounds.
+- No decontamination yet (M6), no confidence intervals (M7), benign reference
+  sets are ad hoc.
+- `MCP-*` recall differs sharply by source (15.2% vs 30.6%), so it does not
+  generalise across attack families. That is what FR-12 exists to measure.
+- The normaliser is available but **not yet wired into the gate**; like the
+  detectors, it waits on fusion in M4.
+- Homoglyph coverage is a 25-character table, not the full Unicode confusables
+  set.

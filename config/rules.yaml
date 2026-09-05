@@ -1,51 +1,68 @@
-# Injection rule set, ported verbatim from the LLMShield dissertation's
-# policies/default.json (injection_rules.rules, 19 rules).
+# Injection rule set.
 #
-# The patterns are the reused asset -- they are carried across unchanged so
-# that rule-engine behaviour on this surface is comparable to the dissertation's
-# on the user-prompt surface. Rule ids and severities are the originals.
-# `description` is annotation added here; the source rules carried none.
+# Two families, kept deliberately separate:
 #
-# These were written against USER PROMPTS. Whether they transfer to MCP tool
-# results is the project's research question, not an assumption -- several of
-# them plainly match imperative English that also occurs in benign technical
-# prose (PROPOSAL.md section 2).
+#   INJ-*  the LLMShield dissertation's 19 rules, ported verbatim and FROZEN.
+#   MCP-*  new rules for the MCP tool-result surface, derived from benchmark
+#          data in this project.
+#
+# They are not merged because INJ-* is the comparability baseline against the
+# user-prompt surface. Editing or extending it would make the cross-surface
+# comparison dishonest, and would hide which family is doing the work.
 
-version: 1
+version: 2
 
 rules:
+  # ======================================================================
+  # INJ-* : ported verbatim from policies/default.json (injection_rules).
+  # FROZEN -- do not edit, reorder or extend. Rule ids and severities are the
+  # originals; `description` is annotation added here, as the source carried
+  # none.
+  #
+  # These were written against USER PROMPTS. Measured recall against real
+  # indirect prompt injection benchmarks on the tool-result surface is
+  # 0.0% (0/187). See docs/POLICY-AUDIT.md. They are kept anyway, because
+  # that number IS the transfer finding the project exists to report.
+  # ======================================================================
+
   # --- instruction override ---
   - id: INJ-001
+    family: inj
     severity: high
     enabled: true
     description: ignore previous instructions
     pattern: 'ignore\s+(all\s+)?(previous|prior|above)\s+instructions?'
 
   - id: INJ-002
+    family: inj
     severity: high
     enabled: true
     description: disregard previous instructions
     pattern: 'disregard\s+(all\s+)?(previous|prior|above)\s+instructions?'
 
   - id: INJ-003
+    family: inj
     severity: high
     enabled: true
     description: forget previous instructions
     pattern: 'forget\s+(all\s+)?(previous|prior|above)\s+instructions?'
 
   - id: INJ-004
+    family: inj
     severity: high
     enabled: true
     description: do not follow prior instructions
     pattern: 'do\s+not\s+follow\s+(your\s+)?(previous|original|prior|earlier)\s+instructions?'
 
   - id: INJ-005
+    family: inj
     severity: high
     enabled: true
     description: override system instructions
     pattern: 'override\s+(your\s+)?(system|previous|original|prior)\s+(instructions?|prompt|rules?|settings?)'
 
   - id: INJ-006
+    family: inj
     severity: high
     enabled: true
     description: injected system prompt header
@@ -53,24 +70,28 @@ rules:
 
   # --- persona / jailbreak framing ---
   - id: INJ-007
+    family: inj
     severity: high
     enabled: true
     description: act as an unrestricted persona
     pattern: 'act\s+as\s+(an?\s+)?(evil|unfiltered|unrestricted|uncensored|jailbroken|dan)\b'
 
   - id: INJ-008
+    family: inj
     severity: high
     enabled: true
     description: pretend restrictions do not exist
     pattern: 'pretend\s+(you\s+have\s+no|there\s+(are|is)\s+no)\s+(restriction|rule|filter|guideline|limit)'
 
   - id: INJ-009
+    family: inj
     severity: high
     enabled: true
     description: roleplay as an AI without rules
     pattern: '(roleplay|role.play)\s+as\s+(an?\s+)?(ai|assistant|system)\s+(without|that\s+(has\s+no|ignores?))'
 
   - id: INJ-010
+    family: inj
     severity: medium
     enabled: true
     description: pretextual framing to bypass safety
@@ -78,24 +99,28 @@ rules:
 
   # --- system prompt exfiltration ---
   - id: INJ-011
+    family: inj
     severity: high
     enabled: true
     description: reveal the system prompt
     pattern: '(repeat|print|output|reveal|display)\s+(your\s+|the\s+)?(system\s+prompt|initial\s+instructions?|original\s+instructions?)'
 
   - id: INJ-012
+    family: inj
     severity: medium
     enabled: true
     description: ask for original instructions
     pattern: 'what\s+(are|were)\s+your\s+(original|initial|system)\s+instructions?'
 
   - id: INJ-013
+    family: inj
     severity: high
     enabled: true
     description: output everything above
     pattern: '(output|print|repeat)\s+everything\s+(above|before\s+this)'
 
   - id: INJ-014
+    family: inj
     severity: high
     enabled: true
     description: show hidden instructions
@@ -103,18 +128,21 @@ rules:
 
   # --- chat-template / control-token injection ---
   - id: INJ-015
+    family: inj
     severity: high
     enabled: true
     description: Llama-style instruction token
     pattern: '\[INST\]'
 
   - id: INJ-016
+    family: inj
     severity: high
     enabled: true
     description: ChatML role tokens
     pattern: '<\|system\|>|<\|user\|>|<\|assistant\|>|<\|im_start\|>'
 
   - id: INJ-017
+    family: inj
     severity: high
     enabled: true
     description: markdown system-role header
@@ -122,13 +150,84 @@ rules:
 
   # --- encoding evasion ---
   - id: INJ-018
+    family: inj
     severity: medium
     enabled: true
     description: base64 encoding reference
     pattern: 'base64\s*(decode|encoded|:)'
 
   - id: INJ-019
+    family: inj
     severity: medium
     enabled: true
     description: classical cipher reference
     pattern: '(hex|rot13|caesar)\s*(encoded|decode|decrypt)'
+
+  # ======================================================================
+  # MCP-* : tool-result surface rules. New work, not ported.
+  #
+  # Added because INJ-* scores 0.0% recall against real indirect prompt
+  # injection benchmarks (BIPIA, 125 payloads; InjecAgent, 62), which contain
+  # none of its signatures.
+  #
+  # DERIVED FROM DATA, not invented. Candidate patterns came from
+  # discriminative phrase analysis over those benchmarks against ~5,000 lines
+  # of benign repository content. Candidates with no measured support were
+  # dropped, and a "tool invocation directive" candidate was rejected outright
+  # for scoring 0% recall at 0.30% false positives -- pure cost.
+  #
+  # Benchmark artefacts were deliberately EXCLUDED. The strongest raw n-grams
+  # were "amy watson" and "gmail com" (InjecAgent's fixed attacker identity)
+  # and "example com" (BIPIA's placeholder domain). A rule matching those would
+  # score near-perfectly on the benchmark and detect nothing real.
+  #
+  # Measured as a family: 20.3% recall overall -- 15.2% on BIPIA, 30.6% on
+  # InjecAgent -- at 0.000% false positives over 4,998 benign lines.
+  #
+  # That gap between the two sources is itself the point: these do not
+  # generalise across attack families, which is what FR-12's leave-one-source-out
+  # test is built to expose. Regexes do not solve this surface. They buy a
+  # floor above zero, cheaply and without false positives.
+  # ======================================================================
+
+  - id: MCP-001
+    family: mcp
+    severity: medium
+    enabled: true
+    description: instructs the reader to place content in its own output
+    pattern: '\b(include|add|insert|integrate|append|feature|embed|place|put)\b[^.\n]{0,60}\b(in|to|into|within)\s+(your|the)\s+(response|reply|answer|output|summary|result|code|implementation)\b'
+
+  - id: MCP-002
+    family: mcp
+    severity: medium
+    enabled: true
+    description: hijacks the format of the reader's own response
+    pattern: '\b(encode|format|write|provide|give|present)\b[^.\n]{0,30}\byour\s+(response|answer|reply|output)\b'
+
+  - id: MCP-003
+    family: mcp
+    severity: high
+    enabled: true
+    description: content addressed to the assistant rather than the user
+    pattern: '\b(note|message|instruction)s?\s+(to|for)\s+(the\s+)?(ai|assistant|agent|model|llm)\b|(^|\n)\s*(ai\s+)?(assistant|agent|llm)\s*[:,]'
+
+  - id: MCP-004
+    family: mcp
+    severity: high
+    enabled: true
+    description: directive hidden in an HTML or markdown comment
+    pattern: '<!--[^>]{0,400}?\b(ignore|instruction|assistant|ai\b|system|instead|must|should)\b|\[//\]:\s*#'
+
+  - id: MCP-006
+    family: mcp
+    severity: high
+    enabled: true
+    description: directive to send data to an external address
+    pattern: '\b(send|post|upload|email|forward|transmit|exfiltrate|leak)\b[^.\n]{0,60}\b(to|at)\s+(https?://|www\.|[\w.\-]+@)'
+
+  - id: MCP-007
+    family: mcp
+    severity: medium
+    enabled: true
+    description: instructs the reader to follow embedded content
+    pattern: '\b(follow|obey|execute|comply\s+with|carry\s+out)\b[^.\n]{0,30}\b(the\s+)?(following|below|subsequent|attached|these)\b'
