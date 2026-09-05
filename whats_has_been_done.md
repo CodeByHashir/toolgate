@@ -743,3 +743,99 @@ opposite case.
 - The golden-set fixture (`tests/fixtures/golden_set.json`) has five cases.
   It is a wiring regression guard, not a recall measurement -- recall claims
   still come only from `scripts/benchmark_rules.py` against BIPIA/InjecAgent.
+
+---
+
+## M5 — V0 and V3 wired into the live gating path
+
+Runs the two reused classifiers against every intercepted tool result for the
+first time. They ship **inert** (scored, logged, zero decision weight) in
+`config/policy.yaml`, not weighted into `injection` -- promoting them on
+today's uncalibrated numbers would repeat the exact ML-circuit-breaker mistake
+`docs/POLICY-AUDIT.md` section 4.1 already measured, just relabelled from
+Block to Escalate-spam. Full rationale in `plan.md` 2.18.
+
+### What changed
+
+- `src/llmshield_mcp/gating/transport.py` -- `default_detectors()` replaced by
+  `build_detectors(config: PolicyConfig)`: a small factory registry
+  (`rules_mcp`, `rules_inj`, `pii`, `v0`, `v3`) that constructs exactly the
+  union of keys a `PolicyConfig`'s three role sets actually name. `_build_v0`/
+  `_build_v3` import `V0LexicalDetector`/`V3TransformerDetector` and call
+  `load_models_config()` lazily, inside the factory -- nothing pays for torch,
+  transformers or a joblib load unless a policy file actually names "v0" or
+  "v3" in a role.
+- `config/policy.yaml` -- `detectors.inert` gained `v0` and `v3`, with a
+  comment recording the specific ad-hoc threshold docs/POLICY-AUDIT.md section
+  3 measured (`v0: {escalate: 0.94}` for roughly its 5.3%-recall-at-1%-FPR
+  point) as a documented ablation starting point, not a live setting.
+- `tests/conftest.py` -- new. `light_detectors` fixture: the decision-relevant,
+  weight-free set (rules_mcp, rules_inj, pii), used by the bulk of the gating
+  test suite so it stays independent of the reused (unpublished, CI-absent)
+  LLMShield weights.
+- `tests/test_gating_transport_with_models.py` -- new, `models`-marked (like
+  `tests/test_adapters_with_models.py`). Proves, against the real weights:
+  the shipped policy builds V0/V3 as inert; their real scores reach both an
+  in-memory `PolicyEngine.decide` call and a real `Gate`'s audit log; the
+  shipped policy does not escalate on benign-but-trigger-word-bearing text
+  that scores V0 highly; and promoting `v0` to `injection` via a YAML file
+  alone -- no code change -- escalates that same real detector on that same
+  text. That last pair is the milestone's own verification bar, "ablation by
+  config alone," proven with a real graded detector rather than only the
+  binary rules.
+- `tests/test_gating_transport.py`, `tests/test_golden_set.py`,
+  `tests/test_gating_policy.py` -- updated to use `light_detectors` (or the
+  updated `inert_detectors` set) instead of the removed `default_detectors()`.
+
+### Design decisions
+
+**Ablation is genuinely config-only, including the constructor cost.**
+`build_detectors` does not construct-then-discard an unused V0/V3; it never
+imports `v0_lexical`/`v3_transformer` at all unless a role names them. A
+policy file that doesn't mention "v0"/"v3" costs nothing extra -- important
+given V3's measured ~180-220ms single-window / ~5300ms chunked CPU latency
+(`docs/M0-OBSERVATIONS.md`), which the rest of the system should not pay for
+until M9 says it should.
+
+**Weight-dependent tests are opt-in, not incidental.** Before M5, no ordinary
+`Gate()` construction needed model weights. Making V0/V3 part of the shipped
+inert set would have made that untrue for most of the existing suite by
+accident. `tests/conftest.py`'s `light_detectors` fixture keeps that
+invariant explicit and provable (inert detectors are provably inert to
+`PolicyEngine.decide`, so substituting them changes no test's expected
+outcome) rather than quietly making 224 tests need a private, unpublished
+artifact.
+
+**Verified with the real artifacts, not just asserted.** `LLMSHIELD_MODELS_ROOT`
+(already a supported override in `config.py`, see M0/M1 finalisation) was
+pointed at the author's local LLMShield checkout for this milestone's
+verification; the artifacts are not vendored into this repository or this
+worktree (`models/` is gitignored and absent here by default) but are
+reachable at `<LLMShield checkout>\evaluation\experiment2\models`.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `uv run pytest -m "not models"` | **224 passed**, 12 deselected |
+| `LLMSHIELD_MODELS_ROOT=... uv run pytest -m models` | **12 passed** (5 new), 224 deselected |
+| `uv run ruff check src tests scripts` | All checks passed |
+| `uv run ruff format --check src tests scripts` | 38 files already formatted |
+| `uv run mypy` | Success, 20 source files |
+
+### Known limitations
+
+- V0/V3's only thresholds anywhere are the ad-hoc percentile numbers in
+  `docs/POLICY-AUDIT.md` section 3, recorded as a comment for a future
+  ablation run, not applied. Real promotion to `injection` is an M7
+  calibration decision.
+- `build_detectors` raises if a policy role names a key with no registered
+  factory. There is no test corpus of "policy files with typos" yet -- the
+  existing `load_policy_config` validation catches structural errors (bad
+  YAML shape, out-of-range thresholds); an unknown detector *name* inside an
+  otherwise well-formed role list is caught one layer later, at `Gate`
+  construction, not at `load_policy_config` time.
+- The new `models`-marked test file duplicates two small JSON-RPC frame
+  helpers from `tests/test_gating_transport.py` rather than importing them
+  (they are underscore-prefixed there). Small, deliberate duplication over a
+  cross-test-module import of private helpers.

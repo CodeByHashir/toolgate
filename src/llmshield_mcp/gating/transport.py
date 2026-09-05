@@ -30,7 +30,7 @@ import dataclasses
 import time
 import uuid
 from collections import OrderedDict
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from types import TracebackType
@@ -45,29 +45,78 @@ from llmshield_mcp.detectors.pii import PiiDetector
 from llmshield_mcp.detectors.rules import RuleDetector
 from llmshield_mcp.gating.audit import Decision, DecisionLog, DecisionRecord, Outcome
 from llmshield_mcp.gating.content import apply_redaction, build_block_result, extract
-from llmshield_mcp.gating.policy import PolicyEngine, load_policy_config
+from llmshield_mcp.gating.policy import PolicyConfig, PolicyEngine, load_policy_config
 
 TOOL_CALL_METHOD = "tools/call"
 CANCELLED_NOTIFICATION = "notifications/cancelled"
 
 
-def default_detectors() -> dict[str, Detector]:
-    """The M4 detector set: rules (split by family) and PII.
+def _build_rules_mcp() -> Detector:
+    return RuleDetector(families=frozenset({"mcp"}))
 
-    Two `RuleDetector` instances rather than one -- `families={"mcp"}` and
-    `families={"inj"}` -- so the gate can assign them distinct keys
-    (`rules_mcp`, `rules_inj`) for the policy engine and the audit log.
-    `RuleDetector.name` is a fixed `"rules"` for both, so the split has to
-    happen here rather than by reading `DetectorResult.detector`.
 
-    V0 and V3 are not included; they are wired into the live gating path in
-    M5 (`plan.md` milestone table), not M4.
+def _build_rules_inj() -> Detector:
+    return RuleDetector(families=frozenset({"inj"}))
+
+
+def _build_pii() -> Detector:
+    return PiiDetector()
+
+
+def _build_v0() -> Detector:
+    # Imported lazily: constructing this loads a joblib artifact that is not
+    # published (prd.md A1) and is not present in CI, so nothing should pay
+    # for this import unless a policy file actually names "v0" in a role.
+    from llmshield_mcp.config import load_models_config
+    from llmshield_mcp.detectors.v0_lexical import V0LexicalDetector
+
+    return V0LexicalDetector(load_models_config().v0)
+
+
+def _build_v3() -> Detector:
+    # Same reasoning as _build_v0, and doubly so here: this import pulls in
+    # torch and transformers, seconds of cost nothing should pay unless "v3"
+    # is actually named in a policy role.
+    from llmshield_mcp.config import load_models_config
+    from llmshield_mcp.detectors.v3_transformer import V3TransformerDetector
+
+    return V3TransformerDetector(load_models_config().v3)
+
+
+#: Every detector key a policy file's `detectors.*` roles may name. Adding V0
+#: and V3 here (M5) is what makes `plan.md`'s "ablation by config alone"
+#: verification literal: a key only gets constructed -- and only then pays its
+#: load cost -- if some role in the policy actually names it.
+_DETECTOR_FACTORIES: dict[str, Callable[[], Detector]] = {
+    "rules_mcp": _build_rules_mcp,
+    "rules_inj": _build_rules_inj,
+    "pii": _build_pii,
+    "v0": _build_v0,
+    "v3": _build_v3,
+}
+
+
+def build_detectors(config: PolicyConfig) -> dict[str, Detector]:
+    """Construct exactly the detectors `config` actually names.
+
+    A key appears in the result if and only if it is listed in at least one
+    of `config.injection_detectors`, `.redaction_detectors` or
+    `.inert_detectors` -- the same three sets `PolicyEngine.decide` reads. A
+    detector present in the gate but absent from all three roles would be
+    dead weight (scored, never consulted, never logged as mattering); a role
+    naming a key with no factory is a configuration error, not a silent skip.
     """
-    return {
-        "rules_mcp": RuleDetector(families=frozenset({"mcp"})),
-        "rules_inj": RuleDetector(families=frozenset({"inj"})),
-        "pii": PiiDetector(),
-    }
+    keys = config.injection_detectors | config.redaction_detectors | config.inert_detectors
+    detectors: dict[str, Detector] = {}
+    for key in keys:
+        factory = _DETECTOR_FACTORIES.get(key)
+        if factory is None:
+            raise ValueError(
+                f"policy names detector {key!r}, which has no registered factory "
+                f"(known: {sorted(_DETECTOR_FACTORIES)})"
+            )
+        detectors[key] = factory()
+    return detectors
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,7 +170,9 @@ class Gate:
         # explicitly passed GateConfig (e.g. the --max-result-chars CLI flag)
         # overrides it; the default Gate() picks up the policy file's value.
         self.config = config or GateConfig(max_result_chars=self.policy.config.max_result_chars)
-        self.detectors = dict(detectors) if detectors is not None else default_detectors()
+        self.detectors = (
+            dict(detectors) if detectors is not None else build_detectors(self.policy.config)
+        )
         self._pending: OrderedDict[str, _Pending] = OrderedDict()
 
     @property

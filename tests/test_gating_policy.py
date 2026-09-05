@@ -231,7 +231,7 @@ def test_shipped_policy_file_loads_uncalibrated() -> None:
     assert config.calibrated is False
     assert config.injection_detectors == frozenset({"rules_mcp"})
     assert config.redaction_detectors == frozenset({"pii"})
-    assert config.inert_detectors == frozenset({"rules_inj"})
+    assert config.inert_detectors == frozenset({"rules_inj", "v0", "v3"})
     assert config.on_detector_failure == Decision.ESCALATE
 
 

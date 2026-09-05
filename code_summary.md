@@ -2,10 +2,12 @@
 
 Factual map of what exists in this repository. Updated when structure changes.
 
-**As of M4.** 2929 lines of source, 2879 lines of tests, 231 tests. Rules
-(both families) and PII are wired into the gate through a new fusion/policy
-engine (`gating/policy.py`); V0 and V3 remain adapters not yet called from the
-live path (M5). No corpus, no evaluation harness yet.
+**As of M5.** 2980 lines of source, 3080 lines of tests, 236 tests (224
+weight-free + 12 marked `models`). All four detectors -- rules (both
+families), PII, V0, V3 -- run against every intercepted tool result through
+the fusion/policy engine (`gating/policy.py`); V0/V3 ship **inert** (scored,
+logged, zero decision weight) until M7 calibrates them. No corpus, no
+evaluation harness yet.
 
 ---
 
@@ -65,6 +67,8 @@ D:\LLMSHIELD-MCP\
 ├── tests/
 │   ├── fixtures/
 │   │   └── golden_set.json      frozen decision fixture (M4 regression test)
+│   ├── conftest.py               `light_detectors` fixture: the weight-free,
+│   │                              decision-relevant detector set (M5)
 │   ├── test_agent.py            tool-use loop, faked client + sessions (13)
 │   ├── test_chain.py            chain round-trip and schema (6)
 │   ├── test_config.py           config + score-mode tests (15)
@@ -76,6 +80,8 @@ D:\LLMSHIELD-MCP\
 │   ├── test_gating_content.py   extraction, size policy, redaction, block (24)
 │   ├── test_gating_policy.py    table-driven PolicyEngine.decide, FR-9 proof (23)
 │   ├── test_gating_transport.py gate + fusion behaviour, stream wrappers (26)
+│   ├── test_gating_transport_with_models.py  V0/V3 wiring + ablation, marked
+│   │                              `models` (5)
 │   ├── test_golden_set.py       M4 golden-set regression test (6)
 │   ├── test_servers.py          server config + sandbox validation (8)
 │   └── test_adapters_with_models.py  reuse audit, marked `models` (7)
@@ -277,10 +283,10 @@ Loop invariants worth knowing:
 
 ### `llmshield_mcp.gating`
 
-The interception layer (M2) plus, since M4, the fusion/policy engine wired
-into it. Observes every frame, runs the configured detectors, fuses their
-results into one decision, and logs it -- rewriting the frame itself for
-Redact/Block.
+The interception layer (M2) plus the fusion/policy engine wired into it (M4),
+now running all four detectors (M5). Observes every frame, runs whichever
+detectors the policy names, fuses their results into one decision, and logs
+it -- rewriting the frame itself for Redact/Block.
 
 | Symbol | Purpose |
 |---|---|
@@ -294,8 +300,8 @@ Redact/Block.
 | `PolicyConfig` / `load_policy_config()` | Validated `config/policy.yaml`: `calibrated`, `on_detector_failure`, detector-role sets, per-detector thresholds, `max_result_chars` |
 | `PolicyEngine.decide(results)` | Pure fusion function: `dict[str, DetectorResult]` -> `FusionOutcome`. Max/OR across `injection_detectors`; PII (`redaction_detectors`) masks independently of the decision label; `calibrated: false` caps `BLOCK` to `ESCALATE` |
 | `GateConfig` | `max_result_chars` (FR-16/SEC-2, now sourced from `policy.yaml` by default), `max_pending` (NFR-5) |
-| `Gate` | Runs `default_detectors()` (or an injected set) through `scan_normalised`, calls `PolicyEngine.decide`, logs one row per tool result, and returns the (possibly rewritten) frame |
-| `default_detectors()` | `{"rules_mcp": RuleDetector(families={"mcp"}), "rules_inj": RuleDetector(families={"inj"}), "pii": PiiDetector()}` — two `RuleDetector` instances because `RuleDetector.name` can't distinguish the families itself |
+| `Gate` | Runs `build_detectors(policy.config)` (or an injected set) through `scan_normalised`, calls `PolicyEngine.decide`, logs one row per tool result, and returns the (possibly rewritten) frame |
+| `build_detectors(config)` | Factory registry keyed `rules_mcp`/`rules_inj`/`pii`/`v0`/`v3`; constructs exactly the union of keys named in `config`'s three role sets. `v0`/`v3` factories call `load_models_config()` lazily, so nothing imports torch/transformers or reads a joblib file unless a policy role actually names them |
 | `gating_transport(inner, gate)` | Wraps any `Transport`, satisfying the same protocol |
 
 Behaviours worth knowing:
@@ -334,31 +340,36 @@ also imported by `tests/test_adapters_with_models.py`.
 ## 3. Data Flow (current)
 
 ```
-config/models.yaml                          config/rules.yaml, config/policy.yaml
-   │  load_models_config()                     │  load_rules() / load_policy_config()
-   ▼                                           ▼
-ModelsConfig ──► V0/V3 (constructed,      default_detectors() ──► {rules_mcp, rules_inj, pii}
-                 not yet called from                                   │
-                 the live gate — M5)          tool-result text ────────┤ scan_normalised(detector, text)
-                                                                        │   → DetectorResult (score|None, ...)
-                                                                        ▼
-                                                        {detector_key: DetectorResult}
-                                                                        │
-                                                                        ▼
-                                                       PolicyEngine.decide()  →  FusionOutcome
-                                                          (Decision, redacted, redact_spans, note)
-                                                                        │
-                                                    ┌───────────────────┼────────────────────┐
-                                                    ▼                   ▼                     ▼
-                                          apply_redaction()   build_block_result()      DecisionLog.append()
-                                          (Redact: mask       (Block: replace whole     (always: the decision,
-                                           PII spans only)     result, FR-6)             scores, redacted flag)
+config/rules.yaml, config/models.yaml, config/policy.yaml
+   │  load_rules() / load_models_config() / load_policy_config()
+   ▼
+build_detectors(policy.config) ──► {rules_mcp, rules_inj, pii, v0, v3}
+     (only the keys a role names;         │
+      v0/v3 factories load weights        │
+      lazily -- see gating/transport.py)  │
+                                           ▼
+                    tool-result text ────────┤ scan_normalised(detector, text)
+                                              │   → DetectorResult (score|None, ...)
+                                              ▼
+                              {detector_key: DetectorResult}   (ALL detectors, incl. inert)
+                                              │
+                                              ▼
+                             PolicyEngine.decide()  →  FusionOutcome
+                                (Decision, redacted, redact_spans, note)
+                                              │
+                          ┌───────────────────┼────────────────────┐
+                          ▼                   ▼                     ▼
+                apply_redaction()   build_block_result()      DecisionLog.append()
+                (Redact: mask       (Block: replace whole     (always: EVERY detector's
+                 PII spans only)     result, FR-6)             score, incl. inert ones)
 ```
 
-V0 and V3 are constructed and scoreable (M0) but `default_detectors()` does
-not include them — M5 adds them to `detectors.injection` in
-`config/policy.yaml`, and `PolicyEngine` needs no change to accept their
-graded scores (thresholds are already keyed generically, not rules-specific).
+V0 and V3 are real detectors in this diagram (M5), but sit in
+`config/policy.yaml`'s `detectors.inert`, not `detectors.injection` --
+`PolicyEngine.decide()` reads every detector's score into the log
+unconditionally, but only consults `injection_detectors`/`redaction_detectors`
+when deciding. Promoting either to `injection` (plus a threshold) is the
+whole ablation; no code changes (`plan.md` 2.18).
 
 ---
 
@@ -403,7 +414,7 @@ retained by default; a hash is stored instead.
 
 | Integration | Status |
 |---|---|
-| Reused LLMShield V0/V3 artifacts | Active. Read from an external path; never modified. |
+| Reused LLMShield V0/V3 artifacts | Active, wired into the live gate as inert detectors (M5). Read from an external path; never modified. |
 | Anthropic Claude API (`anthropic==0.86.0`) | **Active** — `ReferenceAgent`, model `claude-opus-5` |
 | MCP Python SDK (`mcp==2.1.1`) | **Active** — client sessions over stdio. Transport interception is M2. |
 | Official MCP filesystem server (`@modelcontextprotocol/server-filesystem@2026.8.31`, via `npx`) | **Active** — 14 tools, confined to `sandbox/` |

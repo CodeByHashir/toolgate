@@ -22,6 +22,16 @@
 #     rule false positive (docs/POLICY-AUDIT.md section 2). Logging its score
 #     every run keeps that 0.0% transfer finding visible without letting it
 #     degrade a live decision.
+#   * V0 and V3 (M5) ship inert for the identical reason. Their thresholds in
+#     docs/POLICY-AUDIT.md section 3 are ad-hoc percentile splits on ~800
+#     benign lines -- the document's own words are "directional, not a
+#     result". V0 alone scores README.md-style benign content at 0.986
+#     not_benign (section 4.1); promoting either to `injection` on today's
+#     numbers would repeat the exact ML-circuit-breaker mistake this file
+#     exists to avoid, just relabelled from Block to Escalate-spam. They run
+#     against every intercepted tool result and their real scores reach the
+#     audit log regardless (FR-2, FR-3) -- promotion to `injection` is a
+#     one-line, no-code-change ablation once M7 actually calibrates them.
 #   * Escalate is the default action on detection, not Block. With 74.3% of
 #     payloads caught by nothing at all, a Block-by-default policy would pay
 #     the full false-positive cost while still missing three quarters of
@@ -41,11 +51,14 @@ calibrated: false
 # a clean scan) and is itself subject to the `calibrated` gate above.
 on_detector_failure: escalate
 
-# Which logical detector KEYS (assigned by the gate, not the same as
-# DetectorResult.detector -- see policy.py) participate in which role.
-# `injection` and `redaction` feed the decision; `inert` is scored and logged
-# only. rules_mcp/rules_inj are the same RuleDetector class constructed twice
-# with different `families`, so this is the only place their roles differ.
+# Which logical detector KEYS (assigned by the gate -- see
+# gating/transport.py:build_detectors -- not the same as DetectorResult.detector)
+# participate in which role. `injection` and `redaction` feed the decision;
+# `inert` is scored and logged only. A key only gets constructed (and only
+# then pays its load cost -- real for v0/v3) if it appears in one of these
+# three lists. rules_mcp/rules_inj are the same RuleDetector class
+# constructed twice with different `families`, so this is the only place
+# their roles differ.
 detectors:
   injection:
     - rules_mcp
@@ -53,11 +66,18 @@ detectors:
     - pii
   inert:
     - rules_inj
+    - v0
+    - v3
 
 # Per-detector, per-action score thresholds, in [0, 1]. Rules today are
-# binary (0.0 or 1.0), so 1.0 means "the family fired at all". V0 and V3
-# (M5) will report graded scores calibrated in M7; this schema already has a
-# place for them without a shape change.
+# binary (0.0 or 1.0), so 1.0 means "the family fired at all". No entries
+# for v0/v3 here: PolicyEngine.decide() never reads a threshold for a key
+# that isn't in `injection` or `redaction`, so one would be dead
+# configuration while they stay inert. To ablate one in, add it under
+# `detectors.injection` above AND a threshold here -- e.g. (NOT calibrated,
+# see docs/POLICY-AUDIT.md section 3 for where these ad-hoc numbers came
+# from): `v0: {escalate: 0.94}` reaches roughly the 5.3%-recall-at-1%-FPR
+# operating point measured there.
 thresholds:
   rules_mcp:
     escalate: 1.0

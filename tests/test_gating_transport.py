@@ -34,8 +34,8 @@ def log(tmp_path: Path) -> DecisionLog:
 
 
 @pytest.fixture
-def gate(log: DecisionLog) -> Gate:
-    return Gate("filesystem", log)
+def gate(log: DecisionLog, light_detectors: dict[str, Detector]) -> Gate:
+    return Gate("filesystem", log, detectors=light_detectors)
 
 
 def call_request(request_id: Any, tool: str = "read_text_file") -> SessionMessage:
@@ -223,9 +223,11 @@ def test_cancellation_clears_the_pending_entry(gate: Gate, log: DecisionLog) -> 
     assert log.count() == 0
 
 
-def test_unanswered_calls_are_evicted_rather_than_accumulating(log: DecisionLog) -> None:
+def test_unanswered_calls_are_evicted_rather_than_accumulating(
+    log: DecisionLog, light_detectors: dict[str, Detector]
+) -> None:
     # NFR-5 again: responses that never arrive must not grow the map forever.
-    gate = Gate("filesystem", log, GateConfig(max_pending=4))
+    gate = Gate("filesystem", log, GateConfig(max_pending=4), detectors=light_detectors)
 
     for i in range(10):
         gate.observe_outbound(call_request(i))
@@ -239,8 +241,10 @@ def test_unanswered_calls_are_evicted_rather_than_accumulating(log: DecisionLog)
 # --- size policy through the gate -----------------------------------------
 
 
-def test_oversized_result_is_flagged_in_the_log(log: DecisionLog) -> None:
-    gate = Gate("filesystem", log, GateConfig(max_result_chars=50))
+def test_oversized_result_is_flagged_in_the_log(
+    log: DecisionLog, light_detectors: dict[str, Detector]
+) -> None:
+    gate = Gate("filesystem", log, GateConfig(max_result_chars=50), detectors=light_detectors)
     gate.observe_outbound(call_request(1))
     gate.observe_inbound(call_response(1, text="x" * 500))
 

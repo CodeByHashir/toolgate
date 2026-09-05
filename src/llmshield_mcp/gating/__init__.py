@@ -21,7 +21,7 @@ from llmshield_mcp.gating.policy import (
     PolicyEngine,
     load_policy_config,
 )
-from llmshield_mcp.gating.transport import Gate, GateConfig, default_detectors, gating_transport
+from llmshield_mcp.gating.transport import Gate, GateConfig, build_detectors, gating_transport
 
 __all__ = [
     "BLOCK_MESSAGE",
@@ -39,7 +39,7 @@ __all__ = [
     "apply_redaction",
     "build_block_result",
     "decision_log",
-    "default_detectors",
+    "build_detectors",
     "extract",
     "gating_transport",
     "load_policy_config",

@@ -4,7 +4,7 @@ Companion to `prd.md` (what to build) and `whats_has_been_done.md` (what is
 built). This file holds the plan, the architecture decisions and their
 rationale, remaining work, and known risks.
 
-**Current position: M4 complete. Fusion and policy engine wired into the gate for rules + PII; V0/V3 join in M5.**
+**Current position: M5 complete. V0 and V3 wired into the live gate as scored-but-inert detectors, alongside rules and PII.**
 
 ---
 
@@ -20,7 +20,7 @@ Each milestone is independently testable and lands as its own commit.
 | M3 | Port rule engine and PII scanner as detector adapters | FR-2 (part), NFR-4, SEC-3, SEC-6 | 55 unit tests incl. fail-closed for both adapters; zero false positives on the benign sandbox | **Done** |
 | M3b | Normaliser as a pre-detection stage; MCP-* rule family derived from benchmark data | FR-2 | 194 tests; MCP-* 20.3% recall at 0.00% FP where INJ-* scores 0.0% | **Done** |
 | M4 | Fusion and policy engine; golden-set regression test begins | FR-4, FR-5, FR-6, FR-7, FR-9 | Table-driven decision tests; threshold change in YAML alters decision with no code edit; thresholds refuse to block until calibrated | **Done** |
-| M5 | V0 and V3 wired into the live gating path | FR-2, FR-3 | Ablation by config alone | Not started |
+| M5 | V0 and V3 wired into the live gating path | FR-2, FR-3 | Ablation by config alone | **Done** |
 | M6 | Corpus schema, ingest CLI, MinHash decontamination | FR-10, AC-6 | Drop-count report; no surviving near-duplicate above threshold | Not started |
 | M7 | GAUGE harness; port LOBO and DeLong; replace hand-rolled CIs | FR-11, NFR-6, NFR-7 | Known-answer tests for Wilson, Clopper-Pearson, McNemar, DeLong | Not started |
 | M8 | Leave-one-source-out generalisation test | FR-12 | Per-held-out-family table | Not started |
@@ -426,6 +426,53 @@ so nothing survives a Block by accident.
 `config/policy.yaml` lists only `rules_mcp`. Wiring them in is explicitly M5's
 job (`plan.md` milestone table); M4 fuses what M3/M3b already ported (rules,
 PII) rather than pulling two more milestones' scope forward.
+
+### 2.18 M5: V0/V3 wired in, shipped inert -- a deliberate departure from "use them fully now"
+
+The instruction going into M5 was to actually use V0 and V3 to complete the
+project, and defer any "what do we ship publicly" question to later. That is
+what happened -- both are real, constructed with the real reused weights, and
+run against every intercepted tool result -- but they ship in `config/policy.yaml`
+`detectors.inert`, not `detectors.injection`. Reasoning:
+
+`docs/POLICY-AUDIT.md` section 4.1 already measured the failure mode of
+turning an unmeasured ML score into a live decision: `ml_probability >= 0.95`
+hard-blocked 7 of 8 benign documents, because V0's `not_benign` score on
+ordinary README-and-config-style content sits at 0.7-1.0. Promoting V0 to
+`injection` today, on the ad-hoc percentile thresholds in section 3 ("directional,
+not a result", by that document's own words), would reproduce exactly that
+failure relabelled from Block to Escalate -- not destroying the result, but
+drowning the audit log and defeating the entire point of Escalate being a rare
+flag rather than the default outcome. `calibrated: false` already stops this
+class of mistake for Block (2.15); there was no equivalent guard for Escalate
+before M5, so "inert until calibrated" is that guard.
+
+**What "wired in" means concretely:** `build_detectors()` (renamed from M4's
+`default_detectors()`) is now a registry keyed by every name a policy's
+`detectors.*` roles may use (`rules_mcp`, `rules_inj`, `pii`, `v0`, `v3`), and
+constructs exactly the union of keys the given `PolicyConfig` actually names.
+V0 and V3 sit in the registry unconditionally; whether they get built, and
+whether building them costs a joblib load or a transformers/torch import,
+is entirely a property of `config/policy.yaml`. Moving `v0` from `inert` to
+`injection` and adding one threshold line is the whole ablation -- no code
+changes, which is the milestone's own verification bar.
+
+**Why this needed a companion decision about the test suite.** `models/` is
+gitignored (`prd.md` A1: the weights are not publishable) and is not present
+in CI or in a fresh git worktree -- only the original checkout has the local
+junction to the author's copy. Once V0/V3 became part of the *shipped*
+policy's inert set, a literal `Gate()` with no explicit detector override
+would try to load them, which would have made most of the existing
+plumbing-level gating tests suddenly require weights they were never about.
+`tests/conftest.py`'s `light_detectors` fixture pins the M4-era,
+decision-relevant set (rules + PII) for that majority of the suite -- provably
+equivalent to the full set for every `outcome.decision`/`.redacted`, since
+`PolicyEngine.decide` never reads a key outside `injection_detectors`/
+`redaction_detectors`. `tests/test_gating_transport_with_models.py` (new,
+`models`-marked) is where the real weights are actually exercised: that V0/V3
+get constructed, that their real scores reach the audit log, and that the
+same real V0 detector escalates once promoted via YAML alone on text that the
+shipped policy allows.
 
 ## 4. Open Questions
 
