@@ -8,6 +8,8 @@ that, and CI runs the contract tests without a torch install.
 from typing import TYPE_CHECKING, Any
 
 from llmshield_mcp.detectors.base import Detector, DetectorResult, RawScore, Span
+from llmshield_mcp.detectors.pii import PiiDetector, redact
+from llmshield_mcp.detectors.rules import Rule, RuleDetector, load_rules
 from llmshield_mcp.detectors.v0_lexical import V0LexicalDetector
 
 if TYPE_CHECKING:
@@ -16,10 +18,15 @@ if TYPE_CHECKING:
 __all__ = [
     "Detector",
     "DetectorResult",
+    "PiiDetector",
     "RawScore",
+    "Rule",
+    "RuleDetector",
     "Span",
     "V0LexicalDetector",
     "V3TransformerDetector",
+    "load_rules",
+    "redact",
 ]
 
 

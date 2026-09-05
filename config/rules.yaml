@@ -1,0 +1,134 @@
+# Injection rule set, ported verbatim from the LLMShield dissertation's
+# policies/default.json (injection_rules.rules, 19 rules).
+#
+# The patterns are the reused asset -- they are carried across unchanged so
+# that rule-engine behaviour on this surface is comparable to the dissertation's
+# on the user-prompt surface. Rule ids and severities are the originals.
+# `description` is annotation added here; the source rules carried none.
+#
+# These were written against USER PROMPTS. Whether they transfer to MCP tool
+# results is the project's research question, not an assumption -- several of
+# them plainly match imperative English that also occurs in benign technical
+# prose (PROPOSAL.md section 2).
+
+version: 1
+
+rules:
+  # --- instruction override ---
+  - id: INJ-001
+    severity: high
+    enabled: true
+    description: ignore previous instructions
+    pattern: 'ignore\s+(all\s+)?(previous|prior|above)\s+instructions?'
+
+  - id: INJ-002
+    severity: high
+    enabled: true
+    description: disregard previous instructions
+    pattern: 'disregard\s+(all\s+)?(previous|prior|above)\s+instructions?'
+
+  - id: INJ-003
+    severity: high
+    enabled: true
+    description: forget previous instructions
+    pattern: 'forget\s+(all\s+)?(previous|prior|above)\s+instructions?'
+
+  - id: INJ-004
+    severity: high
+    enabled: true
+    description: do not follow prior instructions
+    pattern: 'do\s+not\s+follow\s+(your\s+)?(previous|original|prior|earlier)\s+instructions?'
+
+  - id: INJ-005
+    severity: high
+    enabled: true
+    description: override system instructions
+    pattern: 'override\s+(your\s+)?(system|previous|original|prior)\s+(instructions?|prompt|rules?|settings?)'
+
+  - id: INJ-006
+    severity: high
+    enabled: true
+    description: injected system prompt header
+    pattern: 'new\s+system\s+prompt\s*:'
+
+  # --- persona / jailbreak framing ---
+  - id: INJ-007
+    severity: high
+    enabled: true
+    description: act as an unrestricted persona
+    pattern: 'act\s+as\s+(an?\s+)?(evil|unfiltered|unrestricted|uncensored|jailbroken|dan)\b'
+
+  - id: INJ-008
+    severity: high
+    enabled: true
+    description: pretend restrictions do not exist
+    pattern: 'pretend\s+(you\s+have\s+no|there\s+(are|is)\s+no)\s+(restriction|rule|filter|guideline|limit)'
+
+  - id: INJ-009
+    severity: high
+    enabled: true
+    description: roleplay as an AI without rules
+    pattern: '(roleplay|role.play)\s+as\s+(an?\s+)?(ai|assistant|system)\s+(without|that\s+(has\s+no|ignores?))'
+
+  - id: INJ-010
+    severity: medium
+    enabled: true
+    description: pretextual framing to bypass safety
+    pattern: 'for\s+(educational|research|hypothetical|fictional)\s+purposes?,?\s*(please\s+)?(ignore|bypass|disregard)\s+(your\s+)?(restriction|filter|rule|safety)'
+
+  # --- system prompt exfiltration ---
+  - id: INJ-011
+    severity: high
+    enabled: true
+    description: reveal the system prompt
+    pattern: '(repeat|print|output|reveal|display)\s+(your\s+|the\s+)?(system\s+prompt|initial\s+instructions?|original\s+instructions?)'
+
+  - id: INJ-012
+    severity: medium
+    enabled: true
+    description: ask for original instructions
+    pattern: 'what\s+(are|were)\s+your\s+(original|initial|system)\s+instructions?'
+
+  - id: INJ-013
+    severity: high
+    enabled: true
+    description: output everything above
+    pattern: '(output|print|repeat)\s+everything\s+(above|before\s+this)'
+
+  - id: INJ-014
+    severity: high
+    enabled: true
+    description: show hidden instructions
+    pattern: 'show\s+me\s+(your\s+)?(system\s+prompt|hidden\s+instructions?|original\s+prompt)'
+
+  # --- chat-template / control-token injection ---
+  - id: INJ-015
+    severity: high
+    enabled: true
+    description: Llama-style instruction token
+    pattern: '\[INST\]'
+
+  - id: INJ-016
+    severity: high
+    enabled: true
+    description: ChatML role tokens
+    pattern: '<\|system\|>|<\|user\|>|<\|assistant\|>|<\|im_start\|>'
+
+  - id: INJ-017
+    severity: high
+    enabled: true
+    description: markdown system-role header
+    pattern: '###\s*System\s*:'
+
+  # --- encoding evasion ---
+  - id: INJ-018
+    severity: medium
+    enabled: true
+    description: base64 encoding reference
+    pattern: 'base64\s*(decode|encoded|:)'
+
+  - id: INJ-019
+    severity: medium
+    enabled: true
+    description: classical cipher reference
+    pattern: '(hex|rot13|caesar)\s*(encoded|decode|decrypt)'

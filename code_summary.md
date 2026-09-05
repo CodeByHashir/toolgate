@@ -2,9 +2,11 @@
 
 Factual map of what exists in this repository. Updated when structure changes.
 
-**As of M2.** 1976 lines of source, 1596 lines of tests, 114 tests. The
-interception layer exists and logs every tool result, but runs **no detectors**.
-There is no policy engine, no corpus and no evaluation harness yet — M3 onward.
+**As of M3.** 2301 lines of source, 2114 lines of tests, 169 tests. Four
+detector adapters exist (rules, PII, V0, V3), and the interception layer logs
+every tool result — but the detectors are **not yet wired into the gate**,
+because the gate cannot act on multiple scores until fusion exists (M4). No
+policy engine, no corpus, no evaluation harness yet.
 
 ---
 
@@ -23,6 +25,7 @@ D:\LLMSHIELD-MCP\
 ├── uv.lock                      full transitive lock (111 packages)
 ├── config/
 │   ├── models.yaml              paths + runtime settings for reused detectors
+│   ├── rules.yaml               19 injection regexes, ported verbatim
 │   └── servers.yaml             reference MCP server launch specs + sandbox
 ├── sandbox/                     synthetic benign corpus; filesystem server is
 │                                confined to this directory (SEC-4)
@@ -47,12 +50,16 @@ D:\LLMSHIELD-MCP\
 │   └── detectors/
 │       ├── __init__.py          exports; V3 imported lazily (31)
 │       ├── base.py              detector contract (118)
+│       ├── pii.py               PII scanner + redact() (183)
+│       ├── rules.py             injection rule engine (135)
 │       ├── v0_lexical.py        V0 adapter (79)
 │       └── v3_transformer.py    V3 adapter (108)
 ├── tests/
 │   ├── test_agent.py            tool-use loop, faked client + sessions (13)
 │   ├── test_chain.py            chain round-trip and schema (6)
 │   ├── test_config.py           config + score-mode tests (15)
+│   ├── test_detector_pii.py     PII, redaction, SEC-3 leakage (31)
+│   ├── test_detector_rules.py   rule loading, matching, SEC-6 (24)
 │   ├── test_detector_base.py    contract tests (7)
 │   ├── test_gating_audit.py     decision log store (7)
 │   ├── test_gating_content.py   extraction, size policy, section 19 cases (18)
@@ -101,6 +108,33 @@ individual adapters cannot forget either.
 | `RawScore` | frozen dataclass | What a concrete adapter returns from `_score`: `score`, `detail`, `spans`, `truncated` |
 | `DetectorResult` | frozen dataclass | One detector's verdict: `detector`, `score`, `detail`, `spans`, `latency_ms`, `truncated`, `error`. Invariant: `score is None` **iff** `error is not None`. Property `failed`. |
 | `Detector` | ABC | Subclasses implement `_score(text) -> RawScore` only. `score(text) -> DetectorResult` wraps it with timing and a `try/except` that converts any exception into a failed result. |
+
+### `llmshield_mcp.detectors.rules`
+
+`RuleDetector`, `name = "rules"`. Binary regex detector over the 19 injection
+signatures in `config/rules.yaml`, ported verbatim from the dissertation.
+
+`load_rules()` compiles at load time and rejects a duplicate id, an unknown
+severity, an uncompilable pattern, an empty rule list, or a file where every
+rule is disabled — each of which would otherwise produce a scan that looks
+clean for the wrong reason.
+
+Score is binary (1.0 if any rule fires). `detail` maps rule id to 1.0. Every
+match becomes a `Span`, not just the first, because FR-5 must mask all of them.
+
+### `llmshield_mcp.detectors.pii`
+
+`PiiDetector`, `name = "pii"`. Six pattern-based entity types with the
+dissertation's confidences: `EMAIL_ADDRESS` 0.85, `PHONE_NUMBER` 0.75,
+`CREDIT_CARD` 0.90 (Luhn-checked), `US_SSN` 0.85, `IBAN_CODE` 0.80,
+`IP_ADDRESS` 0.75. Score is the maximum confidence among detected entities.
+
+NER-only entities (`PERSON`, `LOCATION`, ...) are skipped rather than raising,
+and exposed through `skipped_entities` so the gap is visible rather than
+looking like a clean scan.
+
+`redact(text, spans)` masks every span with `[REDACTED:<label>]`, merging
+overlaps and applying right to left.
 
 ### `llmshield_mcp.detectors.v0_lexical`
 

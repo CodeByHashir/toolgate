@@ -1,7 +1,8 @@
 # whats_has_been_done.md — Running Implementation History
 
 Companion to `prd.md` (what to build) and `plan.md` (how, and what's left).
-This file is the append-only log of what actually happened, in commit order.
+This file is the log of what actually happened, oldest first, matching git
+history. Append new entries at the end.
 
 ---
 
@@ -55,6 +56,56 @@ every push (`No system Python installation found for Python 3.11` — `uv pip
 install --system` has no target under `astral-sh/setup-uv@v7`). Root cause
 identified, fix proposed in `plan.md` section 6 (D1). **Not fixed yet** —
 out of scope for M0/the docs-sync pass that found it; awaiting go-ahead.
+
+---
+
+## Project memory sync (pre-M1)
+
+**What changed:** `prd.md`, `plan.md`, `code_summary.md` written from a full
+read of `PROPOSAL.md`, `README.md`, `docs/`, `src/`, `tests/`, and git
+history, per `CLAUDE.md` section 7. This file (`whats_has_been_done.md`) added
+to complete the set — it was referenced by `code_summary.md`'s own file tree
+but had not actually been created yet.
+
+**Why:** M0 was implemented and committed before these memory files existed,
+so nothing recorded milestone scope, the interception-architecture decision,
+or the M0 smoke-test findings' implications in a form a future session (or
+another reader) could pick up without re-deriving it from the diff.
+
+**Nothing in the source tree changed in this pass** — docs only.
+
+---
+
+*Next entry should be M1 (reference MCP servers + agent + tool-call-chain
+fixture) once implemented.*
+
+---
+
+## Repository published to GitHub (private)
+
+**What changed:** created `CodeByHashir/llmshield-mcp` (visibility `PRIVATE`)
+and pushed `main`. Added `.gitattributes` (`* text=auto eol=lf`) to normalise
+line endings.
+
+**Why:** user request — offsite backup and CV artifact.
+
+**Details:**
+
+- The first push was rejected: the `CodeByHashir` token lacked the `workflow`
+  scope and the commit contains `.github/workflows/ci.yml`. Resolved by the
+  user granting it via `gh auth refresh -s workflow`; scopes are now
+  `gist, read:org, repo, workflow`.
+- The active `gh` account was switched from `hashirSynapse` to `CodeByHashir`
+  and remains switched.
+
+**Verification:** remote tree listed via
+`gh api repos/CodeByHashir/llmshield-mcp/git/trees/main?recursive=1` —
+24 blobs, no weights, no `.env`, no secrets.
+
+**Known limitation:** `config/models.yaml` embeds an absolute local path
+(`<LLMShield checkout>/...`). Harmless while the repository
+is private; it must become a relative default before the repository is made
+public. Tracked as open question Q4 in `plan.md`.
 
 ---
 
@@ -137,113 +188,6 @@ line: `allowed directories set from server args: [ 'D:\LLMSHIELD-MCP\sandbox' ]`
 - No interception, no detection. The agent talks to the servers directly. That
   is M2 by design — interception transparency is proven before any detection
   exists.
-
----
-
-## M2 — Interception layer (logging only, zero detectors)
-
-**What changed:**
-
-- `src/llmshield_mcp/gating/transport.py` — `Gate`, `GateConfig`,
-  `_ObservedReadStream`, `_ObservedWriteStream`, `gating_transport()`.
-- `src/llmshield_mcp/gating/audit.py` — `Decision`, `Outcome`,
-  `DecisionRecord`, `DecisionLog`, SQLite schema per PROPOSAL.md section 12.
-- `src/llmshield_mcp/gating/content.py` — `extract()`, the size policy, and
-  defined behaviour for every awkward case in section 19.
-- `src/llmshield_mcp/agent.py` — `open_servers()` gained `gate_factory`. This
-  is the seam left deliberately in M1; the agent code is otherwise unchanged.
-- `src/llmshield_mcp/cli.py` — `--db` enables interception, `--max-result-chars`
-  makes the FR-16 ceiling configurable without a code change.
-- `tests/test_gating_transport.py` (20), `tests/test_gating_content.py` (18),
-  `tests/test_gating_audit.py` (7).
-
-**Why no detectors:** M2 ships logging-only on purpose. Interception
-transparency has to be demonstrable on its own, so that when detection arrives
-in M3-M5 any change in agent behaviour is attributable to the detectors rather
-than to the plumbing.
-
-### Design decisions
-
-**Stream wrappers, not pump tasks.** `ReadStream`/`WriteStream`
-(`mcp/shared/_stream_protocols.py`) are five-method protocols, so a delegating
-wrapper satisfies them with no concurrency of its own. The alternative — fresh
-memory streams plus two copy tasks — would have added cancellation, shutdown
-ordering and backpressure concerns for no benefit, since every frame is
-forwarded unchanged anyway.
-
-**`__getattr__` delegates to the inner stream.** The SDK reads `last_context`
-off a read stream; a wrapper that hid unknown attributes would silently change
-session behaviour, which is the opposite of AC-1.
-
-**The whole log schema is fixed now**, including all four `Decision` values and
-`detector_scores`, even though M2 only writes `allow` with `{}`. A later
-milestone must not need a schema change, or the logging-only baseline stops
-being comparable.
-
-**`Outcome.PROTOCOL_ERROR` is separate from `RESULT`** for a measurement
-reason: a JSON-RPC error carries no tool content (FR-15), so counting those
-rows as benign allows would inflate the denominator of any later
-false-positive rate.
-
-**`latency_ms` and `roundtrip_ms` are separate columns.** The M2 numbers show
-why — gate time is ~0.04 ms against a 467 ms fetch round trip. One column would
-have made NFR-1 unmeasurable.
-
-### Verification
-
-| Check | Result |
-|---|---|
-| `uv run ruff check src tests` | All checks passed |
-| `uv run ruff format --check src tests` | Clean |
-| `uv run mypy` | Success, 16 source files |
-| `uv run pytest` | **114 passed** |
-| End-to-end with `--db` | **10 tool calls -> exactly 10 log rows** |
-
-End-to-end run used `--model claude-haiku-4-5` (a verification run, not an
-evaluation fixture; cost 8 API calls, 29,208 in / 714 out).
-
-Log contents confirmed by direct query:
-
-- 10 rows, **10 unique correlation IDs** — interleaving is attributable.
-- All `fused_decision = allow`, all `detector_scores = {}`. If either ever
-  differs in M2, detection leaked in early.
-- **Gate overhead 0.029–0.055 ms** against round trips of 1.9–466.9 ms. Well
-  inside the NFR-1 ~5 ms budget, though NFR-1 is really about the detector path
-  that M5 adds.
-- Two rows have `tool_is_error = 1` with `outcome = result` — tool-level
-  failures, correctly *not* classified as protocol errors.
-- Two rows share a `raw_result_hash` because their content was identical.
-- **Zero raw content in the database.** Verified by scanning the SQLite file
-  for four distinctive strings from the sandbox and the fetched page; all
-  returned 0 occurrences (section 12).
-
-### On "byte-identical agent behaviour"
-
-The milestone's original wording was that gated agent behaviour should be
-byte-identical to M1. That is not testable as stated: the model is
-non-deterministic, and three recordings of one task already produced 7, 8 and 9
-calls. What *is* established:
-
-1. `test_read_wrapper_forwards_the_identical_object` and its write-side twin
-   assert object **identity** (`is`), not equality — the session receives
-   exactly the frame that arrived.
-2. Tool results through the gate were byte-for-byte the same sizes as in
-   ungated runs (330 / 572 / 597 / 151 characters for the four sandbox files).
-3. All 15 tools across both servers functioned normally.
-
-### Known limitations
-
-- Chain length is 10 calls. FR-14 needs 20+ sequential calls; that fixture is
-  recorded in M9.
-- FR-15 is covered by unit tests but was not observed against a real
-  server-generated JSON-RPC error, since neither reference server produced one.
-  Tool-level `isError` was exercised for real.
-- `max_result_chars` is a CLI flag, not yet part of a versioned policy file.
-  FR-9 moves it there in M4.
-- Gate latency was measured incidentally, not benchmarked. FR-13/NFR-1 proper
-  measurement is M9.
-- The gate logs but cannot yet modify a frame. Redact and Block need the policy
-  engine (M4) and are unreachable in M2 by construction.
 
 ---
 
@@ -374,50 +318,209 @@ non-determinism and is why the fixture is committed rather than regenerated.
 
 ---
 
-## Repository published to GitHub (private)
+## M2 — Interception layer (logging only, zero detectors)
 
-**What changed:** created `CodeByHashir/llmshield-mcp` (visibility `PRIVATE`)
-and pushed `main`. Added `.gitattributes` (`* text=auto eol=lf`) to normalise
-line endings.
+**What changed:**
 
-**Why:** user request — offsite backup and CV artifact.
+- `src/llmshield_mcp/gating/transport.py` — `Gate`, `GateConfig`,
+  `_ObservedReadStream`, `_ObservedWriteStream`, `gating_transport()`.
+- `src/llmshield_mcp/gating/audit.py` — `Decision`, `Outcome`,
+  `DecisionRecord`, `DecisionLog`, SQLite schema per PROPOSAL.md section 12.
+- `src/llmshield_mcp/gating/content.py` — `extract()`, the size policy, and
+  defined behaviour for every awkward case in section 19.
+- `src/llmshield_mcp/agent.py` — `open_servers()` gained `gate_factory`. This
+  is the seam left deliberately in M1; the agent code is otherwise unchanged.
+- `src/llmshield_mcp/cli.py` — `--db` enables interception, `--max-result-chars`
+  makes the FR-16 ceiling configurable without a code change.
+- `tests/test_gating_transport.py` (20), `tests/test_gating_content.py` (18),
+  `tests/test_gating_audit.py` (7).
 
-**Details:**
+**Why no detectors:** M2 ships logging-only on purpose. Interception
+transparency has to be demonstrable on its own, so that when detection arrives
+in M3-M5 any change in agent behaviour is attributable to the detectors rather
+than to the plumbing.
 
-- The first push was rejected: the `CodeByHashir` token lacked the `workflow`
-  scope and the commit contains `.github/workflows/ci.yml`. Resolved by the
-  user granting it via `gh auth refresh -s workflow`; scopes are now
-  `gist, read:org, repo, workflow`.
-- The active `gh` account was switched from `hashirSynapse` to `CodeByHashir`
-  and remains switched.
+### Design decisions
 
-**Verification:** remote tree listed via
-`gh api repos/CodeByHashir/llmshield-mcp/git/trees/main?recursive=1` —
-24 blobs, no weights, no `.env`, no secrets.
+**Stream wrappers, not pump tasks.** `ReadStream`/`WriteStream`
+(`mcp/shared/_stream_protocols.py`) are five-method protocols, so a delegating
+wrapper satisfies them with no concurrency of its own. The alternative — fresh
+memory streams plus two copy tasks — would have added cancellation, shutdown
+ordering and backpressure concerns for no benefit, since every frame is
+forwarded unchanged anyway.
 
-**Known limitation:** `config/models.yaml` embeds an absolute local path
-(`<LLMShield checkout>/...`). Harmless while the repository
-is private; it must become a relative default before the repository is made
-public. Tracked as open question Q4 in `plan.md`.
+**`__getattr__` delegates to the inner stream.** The SDK reads `last_context`
+off a read stream; a wrapper that hid unknown attributes would silently change
+session behaviour, which is the opposite of AC-1.
+
+**The whole log schema is fixed now**, including all four `Decision` values and
+`detector_scores`, even though M2 only writes `allow` with `{}`. A later
+milestone must not need a schema change, or the logging-only baseline stops
+being comparable.
+
+**`Outcome.PROTOCOL_ERROR` is separate from `RESULT`** for a measurement
+reason: a JSON-RPC error carries no tool content (FR-15), so counting those
+rows as benign allows would inflate the denominator of any later
+false-positive rate.
+
+**`latency_ms` and `roundtrip_ms` are separate columns.** The M2 numbers show
+why — gate time is ~0.04 ms against a 467 ms fetch round trip. One column would
+have made NFR-1 unmeasurable.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `uv run ruff check src tests` | All checks passed |
+| `uv run ruff format --check src tests` | Clean |
+| `uv run mypy` | Success, 16 source files |
+| `uv run pytest` | **114 passed** |
+| End-to-end with `--db` | **10 tool calls -> exactly 10 log rows** |
+
+End-to-end run used `--model claude-haiku-4-5` (a verification run, not an
+evaluation fixture; cost 8 API calls, 29,208 in / 714 out).
+
+Log contents confirmed by direct query:
+
+- 10 rows, **10 unique correlation IDs** — interleaving is attributable.
+- All `fused_decision = allow`, all `detector_scores = {}`. If either ever
+  differs in M2, detection leaked in early.
+- **Gate overhead 0.029–0.055 ms** against round trips of 1.9–466.9 ms. Well
+  inside the NFR-1 ~5 ms budget, though NFR-1 is really about the detector path
+  that M5 adds.
+- Two rows have `tool_is_error = 1` with `outcome = result` — tool-level
+  failures, correctly *not* classified as protocol errors.
+- Two rows share a `raw_result_hash` because their content was identical.
+- **Zero raw content in the database.** Verified by scanning the SQLite file
+  for four distinctive strings from the sandbox and the fetched page; all
+  returned 0 occurrences (section 12).
+
+### On "byte-identical agent behaviour"
+
+The milestone's original wording was that gated agent behaviour should be
+byte-identical to M1. That is not testable as stated: the model is
+non-deterministic, and three recordings of one task already produced 7, 8 and 9
+calls. What *is* established:
+
+1. `test_read_wrapper_forwards_the_identical_object` and its write-side twin
+   assert object **identity** (`is`), not equality — the session receives
+   exactly the frame that arrived.
+2. Tool results through the gate were byte-for-byte the same sizes as in
+   ungated runs (330 / 572 / 597 / 151 characters for the four sandbox files).
+3. All 15 tools across both servers functioned normally.
+
+### Known limitations
+
+- Chain length is 10 calls. FR-14 needs 20+ sequential calls; that fixture is
+  recorded in M9.
+- FR-15 is covered by unit tests but was not observed against a real
+  server-generated JSON-RPC error, since neither reference server produced one.
+  Tool-level `isError` was exercised for real.
+- `max_result_chars` is a CLI flag, not yet part of a versioned policy file.
+  FR-9 moves it there in M4.
+- Gate latency was measured incidentally, not benchmarked. FR-13/NFR-1 proper
+  measurement is M9.
+- The gate logs but cannot yet modify a frame. Redact and Block need the policy
+  engine (M4) and are unreachable in M2 by construction.
 
 ---
 
-## Project memory sync (pre-M1)
+## M3 — Rule engine and PII scanner ported as detector adapters
 
-**What changed:** `prd.md`, `plan.md`, `code_summary.md` written from a full
-read of `PROPOSAL.md`, `README.md`, `docs/`, `src/`, `tests/`, and git
-history, per `CLAUDE.md` section 7. This file (`whats_has_been_done.md`) added
-to complete the set — it was referenced by `code_summary.md`'s own file tree
-but had not actually been created yet.
+**What changed:**
 
-**Why:** M0 was implemented and committed before these memory files existed,
-so nothing recorded milestone scope, the interception-architecture decision,
-or the M0 smoke-test findings' implications in a form a future session (or
-another reader) could pick up without re-deriving it from the diff.
+- `config/rules.yaml` — the dissertation's 19 injection regexes with their
+  original ids and severities, carried across verbatim. `description` fields
+  are annotation added here; the source rules carried none.
+- `src/llmshield_mcp/detectors/rules.py` — `Rule`, `load_rules()`,
+  `RuleDetector`.
+- `src/llmshield_mcp/detectors/pii.py` — `PATTERNS`, `NER_ONLY_ENTITIES`,
+  `luhn_valid()`, `redact()`, `PiiDetector`.
+- `src/llmshield_mcp/detectors/__init__.py` — exports the two new adapters,
+  `Rule`, `load_rules` and `redact`.
+- `tests/test_detector_rules.py` (24), `tests/test_detector_pii.py` (31).
 
-**Nothing in the source tree changed in this pass** — docs only.
+**Sources read before writing anything** (CLAUDE.md sections 1-3):
+`src/llmshield/pre_llm/rule_engine.py`, `src/llmshield/pre_llm/pii_scanner.py`,
+and `policies/default.json` in the LLMShield repository. Nothing was written
+there.
 
----
+### Ported, not imported
 
-*Next entry should be M1 (reference MCP servers + agent + tool-call-chain
-fixture) once implemented.*
+The LLMShield repo is a read-only reference and not an installed dependency,
+and its scanners implement `InputScanner.scan(prompt, PolicyConfig)`, which
+drags in structlog and pydantic policy models this project does not have. The
+reused asset is the rule and pattern *data*; the matching plumbing is about
+twenty lines per adapter behind this project's own `Detector` contract.
+
+Rules are data, so they live in `config/rules.yaml` rather than in Python.
+
+### One deliberate behavioural difference
+
+The dissertation calls `pattern.search()` and keeps only the first match of
+each rule, because it needed nothing more than a binary flag. Both adapters
+here use `finditer()` and record every match as a `Span`, because FR-5 has to
+mask every offending region rather than the first one. Scores are unaffected:
+binary for rules, max-confidence for PII, exactly as before.
+
+### SEC-3 / NFR-4 — PII cannot leak through a detector result
+
+`RawScore.detail` is typed `dict[str, float]` and `Span` holds integer offsets
+plus an entity-type label. Neither can carry a matched value, so a PII string
+cannot reach the decision log through a detector result at all. That is
+enforced by the type rather than by remembering to strip a field.
+`test_a_full_result_can_be_serialised_without_leaking` serialises a complete
+result containing four synthetic PII values and asserts none survives.
+
+### SEC-6 — explicit fail-closed tests
+
+Both adapters have a test that drives them with a pattern object that raises
+during matching. Each produces a `DetectorResult` with `failed=True`,
+`score=None`, the exception text in `error`, and empty spans and detail — not
+an exception escaping into the gating path. Translating that into Block or
+Escalate remains the policy engine's job in M4.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `uv run ruff check src tests` | All checks passed |
+| `uv run ruff format --check src tests` | Clean |
+| `uv run mypy` | Success, 18 source files |
+| `uv run pytest` | **169 passed** (55 new) |
+
+Behaviour confirmed directly against the real artifacts: `load_rules()` returns
+19 rules with ids `INJ-001`..`INJ-019`; `PiiDetector` reports six supported
+entity types; a combined probe fired `INJ-001` and `INJ-007` with two spans.
+
+### An observation worth recording
+
+The rule engine produced **zero false positives** on all four sandbox files and
+on both benign probes from `cli.PROBES` — including `sandbox/src/config_loader.py`,
+which contains the string "Ignore all previous overrides" and
+`SYSTEM_PROMPT_DEFAULTS`. INJ-001 requires the literal word "instructions", so
+"overrides" does not match.
+
+That is the opposite of the trained detectors on the same content: V0 scores
+`config_loader.py`-style code at 0.94 and V3 at `injection = 0.996`
+(`docs/M0-OBSERVATIONS.md`). On this surface the narrow hand-written regexes
+look far more precise than the classifiers trained on user-prompt injection.
+
+This is a smoke-test observation on four files, not a finding. It does suggest
+the benign-reference sets in M7 should be sized to separate rule precision from
+classifier precision, since they may differ sharply.
+
+### Known limitations
+
+- **Not wired into the gate.** The gate cannot act on multiple detector scores
+  until fusion exists, so wiring happens in M4/M5. `Gate` still records
+  `detector_scores = {}`.
+- FR-2 remains only partly satisfied: rules and PII are done, V0 and V3 are
+  adapters but not in the live path.
+- The rule patterns were written for user prompts. Whether they transfer to
+  tool results is the research question, and 19 English regexes will not
+  generalise to non-English content (a stated section 19 limitation).
+- `redact()` exists and is tested but nothing calls it yet; Redact as a
+  decision needs the policy engine.
+- PII coverage is pattern-based only. `PERSON`, `LOCATION` and other NER
+  entities are skipped, as in the dissertation.

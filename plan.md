@@ -4,7 +4,7 @@ Companion to `prd.md` (what to build) and `whats_has_been_done.md` (what is
 built). This file holds the plan, the architecture decisions and their
 rationale, remaining work, and known risks.
 
-**Current position: M2 complete. M3 not started.**
+**Current position: M3 complete. M4 not started.**
 
 ---
 
@@ -17,7 +17,7 @@ Each milestone is independently testable and lands as its own commit.
 | M0 | Scaffold, pinned CPU stack, reuse audit for V0/V3 | NFR-8, A1, A3 | `mcp-shield verify-models`; contract tests | **Done** |
 | M1 | Both reference MCP servers running + minimal Claude agent + committed tool-call chain fixture | SEC-4, [3.1] | Agent reads a file and fetches a URL; fixture committed | **Done** |
 | M2 | Interception layer, **logging only, zero detectors** | FR-1, FR-8, FR-15, FR-16, NFR-5 | 10-call run produced exactly 10 log rows; gate overhead 0.03-0.06 ms | **Done** |
-| M3 | Port rule engine and PII scanner as detector adapters | FR-2 (part), NFR-4, SEC-3, SEC-6 | Unit tests incl. explicit fail-closed test | Not started |
+| M3 | Port rule engine and PII scanner as detector adapters | FR-2 (part), NFR-4, SEC-3, SEC-6 | 55 unit tests incl. fail-closed for both adapters; zero false positives on the benign sandbox | **Done** |
 | M4 | Fusion and policy engine; golden-set regression test begins | FR-4, FR-5, FR-6, FR-7, FR-9 | Table-driven decision tests; threshold change in YAML alters decision with no code edit | Not started |
 | M5 | V0 and V3 wired into the live gating path | FR-2, FR-3 | Ablation by config alone | Not started |
 | M6 | Corpus schema, ingest CLI, MinHash decontamination | FR-10, AC-6 | Drop-count report; no surviving near-duplicate above threshold | Not started |
@@ -125,6 +125,42 @@ the reused artifacts. The V0 adapter promotes scikit-learn's
 `InconsistentVersionWarning` to a hard load failure so the pin enforces itself
 rather than depending on someone reading a comment. Rationale in
 `docs/PINNING.md`.
+
+### 2.10 Detectors are ported, not imported
+
+The LLMShield repository is a read-only reference, not an installed
+dependency, and its scanners implement a different interface
+(`InputScanner.scan(prompt, PolicyConfig)`) that pulls in structlog and
+pydantic policy models this project does not have.
+
+So the *data* is reused verbatim -- 19 injection regexes with their ids and
+severities, six PII patterns with their per-entity confidences and the Luhn
+check -- while the matching plumbing is reimplemented behind this project's own
+`Detector` contract. That is roughly twenty lines per adapter, against the cost
+of dragging an incompatible interface and its dependencies across.
+
+Rules live in `config/rules.yaml` rather than in Python. Nineteen regexes are
+data, and FR-9 wants policy driven by a versioned file.
+
+**One deliberate behavioural difference.** The dissertation calls
+`pattern.search()` and keeps only the first match per rule, because it only
+needed a binary flag for fusion. Both adapters here use `finditer()` and record
+every match as a `Span`, because FR-5 has to mask *all* offending regions. The
+score is unaffected -- it is binary for rules and max-confidence for PII either
+way.
+
+### 2.11 PII cannot leak through a detector result
+
+`RawScore.detail` is typed `dict[str, float]` and `Span` carries integer
+offsets plus an entity-type label. Neither can hold a matched value, so a PII
+string cannot reach the decision log through a detector result at all (SEC-3,
+NFR-4). This is enforced by the type, not by remembering to strip something,
+and `test_a_full_result_can_be_serialised_without_leaking` checks the whole
+serialised result.
+
+`redact()` lives alongside the scanner for callers that need to mask the
+original text. It merges overlapping spans rather than producing nested
+placeholders, and applies them right to left so earlier offsets stay valid.
 
 ### 2.8 Stream wrappers rather than pump tasks
 
