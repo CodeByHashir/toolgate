@@ -942,3 +942,133 @@ drop-count report needs dropped items still queryable.
 - `CorpusStore.count()`/row queries are unindexed beyond the three columns in
   `SCHEMA`; fine at "low hundreds to low thousands" of rows, not something to
   scale past without revisiting.
+
+---
+
+## M7 — GAUGE harness: statistics, calibration, and a real calibration run
+
+Builds the statistics and matched-FPR calibration machinery FR-11/NFR-6/NFR-7
+require, and runs it against the real V0/V3 weights and the real M6 corpus.
+Does not edit `config/policy.yaml` -- see "Design decisions" below.
+
+### A milestone-table correction, found by reading the file
+
+The M7 row said "port LOBO and DeLong". `evaluation/experiment2/exp2_lobo.py`
+turned out to **retrain** V0/V1 per fold to test whether retraining changes
+generalisation -- this project never retrains anything, so that script is not
+portable for M7 or M8. `plan.md` section 2.20 records the correction; M8's
+leave-one-source-out test (FR-12) will build its own, much simpler,
+no-retraining source-holdout check on top of this milestone's calibration
+code instead.
+
+### What changed
+
+- `src/llmshield_mcp/gauge/stats.py` -- `wilson_ci()`/`clopper_pearson_ci()`
+  (thin `statsmodels.stats.proportion.proportion_confint` wrappers, methods
+  `"wilson"`/`"beta"`), `mcnemar_test()` (`statsmodels.stats.contingency_tables.mcnemar`),
+  `auroc_delong()` (ported from `exp2_auroc_delong.py`'s pure-Python midrank
+  DeLong implementation -- the one dissertation statistic confirmed correct
+  rather than replaced).
+- `src/llmshield_mcp/gauge/calibrate.py` -- `threshold_at_fpr()`, porting
+  `exp2_multi_fpr.py`/`exp2_eval.py`'s thresholding *convention* (achieved FPR
+  always `<= target`; a constant-scored detector is flagged `unreachable`
+  rather than given a fake threshold), not their code.
+- `src/llmshield_mcp/gauge/references.py` -- `partition_benign_references()`:
+  splits M6's benign pool into PROPOSAL.md section 8.2's two references
+  (realistic / adversarial-styled) via a keyword filter over already-real
+  content, independent of `config/rules.yaml`'s actual patterns.
+- `src/llmshield_mcp/gauge/run.py` -- `run_gauge()`: loads the clean corpus,
+  samples/splits the dual benign references, calibrates V0 and V3 at each of
+  `config/policy.yaml`'s `fpr_budget` values, computes ASR by threat type
+  (Wilson + Clopper-Pearson) and DeLong AUROC, writes `scores.csv` (`plan.md`
+  section 2.6's per-item/per-detector reproducibility file) and a
+  `calibration_report.json`.
+- `src/llmshield_mcp/cli.py` -- new `gauge-run` subcommand.
+- `tests/test_gauge_stats.py` (11), `tests/test_gauge_calibrate.py` (8),
+  `tests/test_gauge_references.py` (7) -- weight-free. `tests/test_gauge_run_with_models.py`
+  (4, `models`-marked) -- the real end-to-end run, against a small synthetic
+  corpus for speed.
+- `pyproject.toml` -- `statsmodels.*` added to the mypy untyped-third-party
+  override list (already pinned since M0; now actually used).
+
+### Design decisions
+
+**DeLong is ported; Wilson/Clopper-Pearson/McNemar are not.** Both hand-rolled
+dissertation versions (`evaluation/metrics.py` and `exp2_eval.py`) fail
+`PROPOSAL.md` section 9's "established library implementations" requirement.
+`statsmodels` was already pinned and unused for exactly this. DeLong has no
+ready library implementation, so the one dissertation file confirmed correct
+by direct inspection is ported, with its point estimate cross-checked against
+`sklearn.metrics.roc_auc_score` in a test rather than trusted from the source
+docstring alone.
+
+**The harness never edits `config/policy.yaml`.** `gauge-run` prints and
+writes a report; `calibrated: true` and moving V0/V3 out of `inert` remain a
+deliberate, human-reviewed edit, exactly as the file's own comment already
+says. Automating that edit would turn a measurement tool into a
+policy-changing one.
+
+**The second benign reference is a filter, not new writing.** M3b's audit
+found hand-written adversarial cases measure the author's assumptions, not
+real capability. `gauge/references.py`'s "adversarial-styled" split mines
+already-real M6 content for detector-relevant vocabulary (word-boundary
+matched, so "evaluate" doesn't trip on "eval") -- it does not invent what an
+attacker would say, so it does not repeat that mistake.
+
+**Benign items are sampled, not scored in full.** V3's ~180-220ms/window
+latency (`docs/M0-OBSERVATIONS.md`) against ~7,500 ingested benign lines would
+take tens of minutes per run. `DEFAULT_BENIGN_SAMPLE_SIZE = 300` (fixed seed)
+keeps a run in the low hundreds per reference, matching `prd.md`'s own
+corpus-scale target, and reproducible.
+
+### A real finding
+
+Running `gauge-run` against the full ingested corpus (187 adversarial items,
+300-item benign samples per reference, real V0/V3 weights) gave:
+
+| Detector | Reference | AUROC (DeLong 95% CI) |
+|---|---|---|
+| V0 | realistic | 0.616 [0.556, 0.676] |
+| V0 | adversarial-styled | 0.436 [0.369, 0.504] |
+| V3 | realistic | 0.330 [0.272, 0.388] |
+| V3 | adversarial-styled | 0.239 [0.187, 0.292] |
+
+V3 (`injection` score mode) separates real MCP-surface attacks from ordinary
+benign content **worse than chance** on both references. Consistent with
+every prior measurement since M0 that these detectors do not transfer
+cleanly to this surface -- carried forward as data for the eventual report,
+not smoothed over.
+
+**Also observed:** at this run's calibration sample size (~150 items per
+reference), the `block` (0.1%) and `redact` (1%) FPR budgets calibrated to
+the *identical* threshold for V0 on the realistic reference.
+`threshold_at_fpr`'s `floor(target * n)` rounds both down to the same small
+integer at this scale, and the algorithm always achieves `k-1` (a deliberate
+conservatism ported faithfully from `exp2_multi_fpr.py`'s convention, not a
+bug) -- closely-spaced budgets only differentiate once the calibration set is
+large enough. A real fix is a larger corpus (M6's scope), not a change to M7.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `uv run pytest -m "not models"` | **270 passed**, 16 deselected (26 new) |
+| `LLMSHIELD_MODELS_ROOT=... uv run pytest -m models` | **16 passed** (4 new) |
+| `uv run ruff check src tests scripts` | All checks passed |
+| `uv run ruff format --check src tests scripts` | Clean |
+| `uv run mypy` | Success, 29 source files |
+| `mcp-shield corpus-ingest` + `mcp-shield gauge-run` against real weights | Full run completed, real numbers above, `config/policy.yaml` untouched |
+
+### Known limitations
+
+- `config/policy.yaml` remains `calibrated: false` with V0/V3 `inert`.
+  Reviewing this run's report and deciding whether/how to promote them is a
+  deliberate follow-up action, not automated by this milestone.
+- Calibration at "low hundreds" scale cannot cleanly separate closely-spaced
+  FPR budgets (see "A real finding" above) -- a real fix needs a bigger
+  corpus, tracked against M6/M8's scope, not M7's.
+- M8's leave-one-source-out test still needs a third adversarial source
+  family (`plan.md` open question Q3); M7 does not add one.
+- `gauge/references.py`'s keyword list is a reasonable, documented net, not a
+  formally validated one -- it is meant to produce a plausible hard-negative
+  stress set, not a precisely calibrated category boundary.

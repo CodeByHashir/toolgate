@@ -2,13 +2,15 @@
 
 Factual map of what exists in this repository. Updated when structure changes.
 
-**As of M6.** 3602 lines of source, 3384 lines of tests, 256 tests (244
-weight-free + 12 marked `models`). All four detectors -- rules (both
+**As of M7.** 4412 lines of source, 3768 lines of tests, 286 tests (270
+weight-free + 16 marked `models`). All four detectors -- rules (both
 families), PII, V0, V3 -- run against every intercepted tool result through
 the fusion/policy engine (`gating/policy.py`); V0/V3 ship **inert** (scored,
-logged, zero decision weight) until M7 calibrates them. A payload corpus
-pipeline exists (`corpus/`): fetch, label, MinHash-decontaminate, store. No
-evaluation harness yet (M7).
+logged, zero decision weight). A payload corpus pipeline exists (`corpus/`):
+fetch, label, MinHash-decontaminate, store. A GAUGE harness (`gauge/`)
+calibrates V0/V3 at matched FPR budgets and reports ASR/AUROC with confidence
+intervals, but does not itself flip `config/policy.yaml`'s `calibrated` flag
+-- that remains a deliberate human decision after reviewing a run's report.
 
 ---
 
@@ -42,8 +44,12 @@ D:\LLMSHIELD-MCP\
 │                                loaders from llmshield_mcp.corpus.sources)
 ├── corpus/
 │   ├── external/                 fetched BIPIA/InjecAgent (gitignored)
-│   └── reference/                V0/V3 training-data reference corpus,
-│                                  train.jsonl (gitignored, not published)
+│   ├── reference/                V0/V3 training-data reference corpus,
+│   │                              train.jsonl (gitignored, not published)
+│   └── payload_corpus.sqlite     ingested corpus store (gitignored, *.sqlite)
+├── results/
+│   └── gauge/                    scores.csv + calibration_report.json per
+│                                  gauge-run (gitignored output directory)
 ├── docs/
 │   ├── PINNING.md               why scikit-learn and transformers are pinned
 │   └── M0-OBSERVATIONS.md       M0 probe observations (explicitly not results)
@@ -71,10 +77,16 @@ D:\LLMSHIELD-MCP\
 │   │   ├── rules.py             injection rule engine (135)
 │   │   ├── v0_lexical.py        V0 adapter (79)
 │   │   └── v3_transformer.py    V3 adapter (108)
-│   └── corpus/                  payload corpus pipeline (FR-10, M6)
-│       ├── sources.py           fetch()/load_adversarial()/load_benign()
-│       ├── decontaminate.py     MinHash shingling + datasketch.MinHashLSH
-│       └── store.py             PayloadCorpusItem, CorpusStore, export_jsonl()
+│   ├── corpus/                  payload corpus pipeline (FR-10, M6)
+│   │   ├── sources.py           fetch()/load_adversarial()/load_benign()
+│   │   ├── decontaminate.py     MinHash shingling + datasketch.MinHashLSH
+│   │   └── store.py             PayloadCorpusItem, CorpusStore, export_jsonl()
+│   └── gauge/                   GAUGE harness: stats, calibration (FR-11, M7)
+│       ├── stats.py             wilson_ci/clopper_pearson_ci/mcnemar_test
+│       │                        (statsmodels) + auroc_delong() (ported)
+│       ├── calibrate.py         threshold_at_fpr(): matched-FPR calibration
+│       ├── references.py        dual benign reference split (keyword filter)
+│       └── run.py               run_gauge(): the harness, scores.csv + report
 ├── tests/
 │   ├── fixtures/
 │   │   └── golden_set.json      frozen decision fixture (M4 regression test)
@@ -96,6 +108,10 @@ D:\LLMSHIELD-MCP\
 │   ├── test_gating_transport.py gate + fusion behaviour, stream wrappers (26)
 │   ├── test_gating_transport_with_models.py  V0/V3 wiring + ablation, marked
 │   │                              `models` (5)
+│   ├── test_gauge_stats.py      Wilson/CP/McNemar/DeLong known-answer tests (11)
+│   ├── test_gauge_calibrate.py  threshold_at_fpr correctness (8)
+│   ├── test_gauge_references.py dual benign reference split (7)
+│   ├── test_gauge_run_with_models.py  end-to-end harness, marked `models` (4)
 │   ├── test_golden_set.py       M4 golden-set regression test (6)
 │   ├── test_servers.py          server config + sandbox validation (8)
 │   └── test_adapters_with_models.py  reuse audit, marked `models` (7)
@@ -103,7 +119,7 @@ D:\LLMSHIELD-MCP\
 ```
 
 Not tracked by git: `.venv/`, `models/`, `.env`, `*.joblib`, `*.safetensors`,
-`logs/`, `*.sqlite`, `corpus/external/`, `corpus/reference/`.
+`logs/`, `*.sqlite`, `corpus/external/`, `corpus/reference/`, `results/`.
 
 ---
 
@@ -368,9 +384,41 @@ Behaviours worth knowing:
   vendored, for the same reason V0/V3's weights are not: mixed-license public
   datasets this project has no redistribution rights over.
 
+### `llmshield_mcp.gauge`
+
+The GAUGE harness (FR-11, NFR-6, NFR-7, M7): statistics, matched-FPR
+calibration, and the orchestrator that runs both against the real corpus and
+weights.
+
+| Symbol | Purpose |
+|---|---|
+| `wilson_ci(k, n)` / `clopper_pearson_ci(k, n)` | `stats.py`. Thin `statsmodels.stats.proportion.proportion_confint` wrappers (methods `"wilson"`/`"beta"`) -- not ported from either dissertation hand-rolled version |
+| `mcnemar_test(a_correct, b_correct)` | `statsmodels.stats.contingency_tables.mcnemar`, exact binomial |
+| `auroc_delong(positive, negative)` | Ported from `exp2_auroc_delong.py`'s pure-Python midrank DeLong implementation -- the one dissertation statistic confirmed correct rather than replaced |
+| `threshold_at_fpr(scores, target_fpr)` | `calibrate.py`. Places the threshold so achieved FPR is always `<= target` (never above); flags `unreachable` for a constant-scored detector instead of a fake number. Convention from `exp2_multi_fpr.py`/`exp2_eval.py`, not their code |
+| `partition_benign_references(items)` | `references.py`. Splits a benign pool into `(realistic, adversarial_styled)` via a word-boundary keyword filter -- independent of `config/rules.yaml`'s actual patterns |
+| `run_gauge(db, output_dir, sample_size, seed)` | `run.py`. Loads the clean M6 corpus, samples/splits the dual benign references, calibrates V0/V3 at each `config/policy.yaml` `fpr_budget`, computes ASR by threat type and DeLong AUROC (all with CIs), writes `scores.csv` and `calibration_report.json` |
+
+Behaviours worth knowing:
+
+- `run_gauge` never edits `config/policy.yaml`. Flipping `calibrated: true`
+  and moving `v0`/`v3` out of `inert` is a deliberate human decision after
+  reading a run's report, per that file's own comment.
+- Every item is scored by every detector (`gauge/run.py:build_detectors`,
+  distinct from `gating/transport.py`'s config-role-driven function of the
+  same name) -- GAUGE always wants the full picture, unlike the live gate.
+- Benign items are sampled (`DEFAULT_BENIGN_SAMPLE_SIZE = 300`, fixed seed)
+  rather than scored in full, because V3's latency against ~7,500 ingested
+  benign lines would take tens of minutes per run.
+- `scores.csv` carries every item/detector pair plus a `config_hash` column
+  fingerprinting the exact config files a run used -- the reproducibility
+  file `plan.md` section 2.6 requires, since the weights themselves cannot be
+  published.
+
 ### `llmshield_mcp.cli`
 
-`main(argv)` — argparse, `--version`, subcommand `verify-models`.
+`main(argv)` — argparse, `--version`. Subcommands: `verify-models`,
+`run-agent`, `corpus-ingest` (M6), `gauge-run` (M7).
 
 `verify_models(config_path, which)` loads V0 and/or V3, scores four probe texts
 (`PROBES` plus `LONG_PROBE`), and for V3 instantiates once per long-text
@@ -467,7 +515,8 @@ retained by default; a hash is stored instead.
 | HuggingFace `transformers` / `torch` | Active (V3) |
 | `scikit-learn` / `joblib` | Active (V0) |
 | `datasketch` | **Active** (M6) -- `MinHash`/`MinHashLSH` for corpus decontamination. |
-| `statsmodels` / `scipy` | Installed, unused. Statistics are M7. |
+| `statsmodels` | **Active** (M7) -- Wilson/Clopper-Pearson (`proportion_confint`), McNemar (`contingency_tables.mcnemar`). |
+| `scipy` | Active (dependency of `statsmodels`/`scikit-learn`); no direct call from this project's own code yet. |
 
 ---
 
@@ -485,7 +534,7 @@ transitive set locked in `uv.lock` (111 packages).
 | `scikit-learn` | 1.9.0 | **Load-bearing** — wrote V0's joblib |
 | `numpy` / `scipy` | 2.4.3 / 1.17.1 | |
 | `datasketch` | 2.0.0 | MinHash/LSH, M6 |
-| `statsmodels` | 0.15.0 | Wilson, Clopper-Pearson, McNemar, M7 |
+| `statsmodels` | 0.15.0 | **Active** (M7) -- Wilson, Clopper-Pearson, McNemar |
 | `pyyaml` | 6.0.3 | Config |
 | `joblib` | 1.5.2 | V0 artifact loading |
 

@@ -4,7 +4,7 @@ Companion to `prd.md` (what to build) and `whats_has_been_done.md` (what is
 built). This file holds the plan, the architecture decisions and their
 rationale, remaining work, and known risks.
 
-**Current position: M6 complete. Corpus schema, ingest CLI and MinHash decontamination exist and are verified against the real training-data reference corpus.**
+**Current position: M7 complete. GAUGE harness, calibration and statistics (Wilson/Clopper-Pearson/McNemar/DeLong) exist and are verified against real V0/V3 weights. `config/policy.yaml` still ships uncalibrated by deliberate choice -- see 2.20.**
 
 ---
 
@@ -22,7 +22,7 @@ Each milestone is independently testable and lands as its own commit.
 | M4 | Fusion and policy engine; golden-set regression test begins | FR-4, FR-5, FR-6, FR-7, FR-9 | Table-driven decision tests; threshold change in YAML alters decision with no code edit; thresholds refuse to block until calibrated | **Done** |
 | M5 | V0 and V3 wired into the live gating path | FR-2, FR-3 | Ablation by config alone | **Done** |
 | M6 | Corpus schema, ingest CLI, MinHash decontamination | FR-10, AC-6 | Drop-count report; no surviving near-duplicate above threshold | **Done** |
-| M7 | GAUGE harness; port LOBO and DeLong; replace hand-rolled CIs | FR-11, NFR-6, NFR-7 | Known-answer tests for Wilson, Clopper-Pearson, McNemar, DeLong | Not started |
+| M7 | GAUGE harness; DeLong ported, Wilson/CP/McNemar on statsmodels; replace hand-rolled CIs | FR-11, NFR-6, NFR-7 | Known-answer tests for Wilson, Clopper-Pearson, McNemar, DeLong | **Done** |
 | M8 | Leave-one-source-out generalisation test | FR-12 | Per-held-out-family table | Not started |
 | M9 | Latency benchmark: per-detector, fused, 20-call chain | FR-13, FR-14, NFR-1, NFR-2 | Reproducible script, committed numbers | Not started |
 | M10 | Report generation; README headline numbers | AC-7, [18] | Tables and plots as static files | Not started |
@@ -242,9 +242,9 @@ modified**).
 | Rule engine, PII scanner, ML classifier, risk fusion, policy engine, decision engine | `src/llmshield/pre_llm/` | Port in M3, M4 |
 | Audit logger, escalation queue, policy loader | `src/llmshield/governance/` | Port in M2, M4 |
 | 32 policy JSON files plus `schema.json` | `policies/` | Reference for M4 policy schema |
-| Leave-one-source-out | `evaluation/experiment2/exp2_lobo.py` | Port in M8 |
-| DeLong AUROC | `evaluation/experiment2/exp2_auroc_delong.py` | Port in M7 |
-| Multi-FPR calibration | `exp2_multi_fpr.py`, `exp2_calibration.py` | Port in M7 |
+| Leave-one-source-out | `evaluation/experiment2/exp2_lobo.py` | **Not portable** -- retrains V0/V1 per fold, and this project never retrains. M8 builds its own corpus-source-holdout test on M7's calibration machinery instead (`plan.md` 2.20) |
+| DeLong AUROC | `evaluation/experiment2/exp2_auroc_delong.py` | Ported in M7 (`gauge/stats.py:auroc_delong`) |
+| Matched-FPR thresholding convention | `exp2_multi_fpr.py`/`exp2_eval.py`'s `thr_at_fpr`/`asr` | Convention ported in M7 (`gauge/calibrate.py`): achieved FPR always `<= target`, degenerate detectors flagged `unreachable` rather than given a fake number. Wilson/CP/McNemar themselves came from `statsmodels`, not this file. |
 | MinHash decontamination method (shingle definition, 0.85 Jaccard threshold) | `exp2_data.py:_shingles/_minhash`, reused by `exp2_lobo.py` | Threshold/shingle-size reused in M6; reimplemented on `datasketch.MinHashLSH`, not ported line-for-line (`plan.md` 2.19) |
 | V0/V3 training-data reference corpus (19,026 rows, post-decontamination) | `evaluation/experiment2/data/train.jsonl` | Decontamination reference set for M6, via `LLMSHIELD_TRAINING_CORPUS`/`config/decontamination.yaml` |
 
@@ -532,6 +532,68 @@ contaminated -- expected, since M3b already established BIPIA/InjecAgent
 share no lineage with the training sources). Deciding exactly what goes into
 the *published* corpus snapshot, and when, is left as a deliberate operator
 action rather than something this milestone's commit decides unasked.
+
+### 2.20 M7: a milestone-table correction, and why the harness still doesn't flip the switch
+
+**"Port LOBO" was wrong, and reading the file is what caught it.** The
+original M7 row said "port LOBO and DeLong". `evaluation/experiment2/exp2_lobo.py`
+turned out to **retrain** V0/V1 on IN/OUT training pools per fold -- it tests
+whether retraining changes generalisation. This project never retrains
+anything (`prd.md` scope: "no retraining"), so that script cannot be ported
+at all, for either M7 or M8. What M8's actual leave-one-source-out test (FR-12)
+needs is far simpler and needs no model changes: partition the corpus by
+source, calibrate on the sources kept in, measure recall on the source held
+out. M7 built exactly the calibration/statistics machinery that simple test
+will reuse; `exp2_lobo.py` contributed nothing here beyond confirming, by
+inspection, that DeLong is the one statistic in that file worth porting
+(plan.md section 3's Reuse Inventory already said as much for a different
+reason -- this is now confirmed first-hand).
+
+**Wilson, Clopper-Pearson and McNemar came from `statsmodels`, not from
+either dissertation hand-rolled version.** Both `evaluation/metrics.py`
+*and* `evaluation/experiment2/exp2_eval.py` hand-roll these (the latter's
+`cp` calls `scipy.stats.beta.ppf` directly rather than using an
+interval-estimation library function). `PROPOSAL.md` section 9's "established
+library implementations" requirement rules out porting either. DeLong is
+still the one exception -- confirmed correct by reading
+`exp2_auroc_delong.py`'s pure-Python midrank implementation and cross-checking
+its point estimate against `sklearn.metrics.roc_auc_score` in a test, not by
+trusting the docstring's claim.
+
+**Dual benign references, and why the second one had to be built.**
+`config.decontamination` gave M6 a single "benign" pool; PROPOSAL.md section
+8.2 wants two -- realistic and adversarial-styled (hard negatives: genuinely
+benign text containing detector-relevant vocabulary). Building the second one
+is a MECHANICAL FILTER over already-real M6 content
+(`gauge/references.py`'s keyword list), not new authored sentences, so it
+does not repeat M3b's "hand-written cases measure the author's assumptions"
+mistake -- nothing here invents what an attacker would say.
+
+**The FPR-budget-collapse artefact at "low hundreds" scale.** A real
+`gauge-run` showed `block` (0.1%) and `redact` (1%) calibrating to the
+*identical* threshold on a 150-item calibration split: `threshold_at_fpr`'s
+`floor(target * n)` rounds both down to the same small integer at this
+sample size, and the algorithm (faithfully ported, see `calibrate.py`) always
+achieves `k-1`, never `k` -- a deliberate conservatism, not a bug, but one
+that only differentiates close-together budgets once the calibration set is
+large enough. Recorded honestly in `whats_has_been_done.md` rather than
+patched away; a genuinely larger corpus (M6's own scope, not M7's) is the
+real fix.
+
+**A real finding, not a smoke test.** A `gauge-run` against the full ingested
+corpus (187 adversarial, 300-item benign samples per reference) gave V3
+(`injection` score mode) an AUROC of ~0.33 against realistic benign
+content -- *worse than chance* at separating real MCP-surface attacks from
+ordinary repository text. Consistent with this project's standing finding
+(M0 onward) that these detectors do not transfer cleanly to this surface;
+worth carrying into the eventual report rather than only citing the earlier,
+smaller measurements.
+
+**The harness does not flip `config/policy.yaml`'s `calibrated` flag or move
+V0/V3 out of `inert`.** `gauge-run` writes a report; a human reviews it and
+edits the policy file deliberately, exactly as that file's own comment
+already specifies. Automating that edit would turn a measurement tool into a
+policy-changing one, which is not what FR-11 asks for.
 
 ## 4. Open Questions
 

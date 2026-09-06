@@ -32,3 +32,9 @@ corpus/external/
 # V0/V3 training-data reference corpus, for decontamination (M6). Mixed
 # licenses, not ours to redistribute -- see config/decontamination.yaml.
 corpus/reference/
+
+# GAUGE harness output (M7): scores.csv + calibration_report.json per
+# gauge-run. Regenerable; publishing a specific run's numbers is a
+# deliberate operator decision, not something a milestone commit makes
+# unasked (same reasoning as the corpus JSONL export, M6).
+results/

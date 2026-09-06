@@ -269,6 +269,51 @@ def ingest_corpus(
     return 0
 
 
+def gauge_run(db: Path, output_dir: Path, sample_size: int, seed: int) -> int:
+    """Calibrate V0/V3 and compute matched-FPR ASR with confidence intervals (FR-11, M7).
+
+    Needs the real reused weights (`config/models.yaml` / `LLMSHIELD_MODELS_ROOT`)
+    and a corpus already produced by `corpus-ingest`. Never edits
+    `config/policy.yaml` -- see `gauge/run.py`'s module docstring for why.
+    """
+    from llmshield_mcp.gauge.run import run_gauge
+
+    print(f"corpus     {db}")
+    print(f"output     {output_dir}")
+    report = run_gauge(db=db, output_dir=output_dir, sample_size=sample_size, seed=seed)
+
+    for reference_name, reference_report in report["references"].items():
+        print(f"\n--- {reference_name} ---")
+        for detector, detector_report in reference_report["detectors"].items():
+            for budget_name, budget in detector_report["budgets"].items():
+                if budget["calibration_unreachable"]:
+                    print(
+                        f"  {detector:4} {budget_name:10} UNREACHABLE (constant calibration scores)"
+                    )
+                    continue
+                asr = budget["asr_overall_wilson"]
+                asr_str = (
+                    f"{asr['point']:.1%} [{asr['low']:.1%}, {asr['high']:.1%}]" if asr else "n/a"
+                )
+                print(
+                    f"  {detector:4} {budget_name:10} thr={budget['threshold']:.4f}  "
+                    f"achieved_fpr_cal={budget['achieved_fpr_calibration']:.2%}  ASR={asr_str}"
+                )
+            if "auroc_delong" in detector_report:
+                d = detector_report["auroc_delong"]
+                print(
+                    f"  {detector:4} AUROC={d['auc']:.4f}  [{d['ci_low']:.3f}, {d['ci_high']:.3f}]"
+                )
+
+    print(f"\nwrote {report['scores_csv']}")
+    print(f"wrote {report['report_path']}")
+    print(
+        "\nconfig/policy.yaml unchanged -- review this report before deciding whether to "
+        "set calibrated: true and move v0/v3 out of `inert` (see gauge/run.py)."
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mcp-shield")
     parser.add_argument("--version", action="version", version=f"llmshield-mcp {__version__}")
@@ -338,6 +383,23 @@ def main(argv: list[str] | None = None) -> int:
         help="defaults to config/decontamination.yaml",
     )
 
+    gauge = subparsers.add_parser(
+        "gauge-run",
+        help="calibrate V0/V3 at config/policy.yaml's FPR budgets and report matched-FPR ASR",
+    )
+    gauge.add_argument(
+        "--db", type=Path, default=None, help="defaults to corpus/payload_corpus.sqlite"
+    )
+    gauge.add_argument("--output-dir", type=Path, default=None, help="defaults to results/gauge")
+    gauge.add_argument(
+        "--sample-size",
+        type=int,
+        default=None,
+        help="max benign items per reference set scored with V3 (defaults to 300); "
+        "keeps runtime bounded against V3's ~180-220ms/window latency",
+    )
+    gauge.add_argument("--seed", type=int, default=None, help="defaults to 42")
+
     args = parser.parse_args(argv)
     if args.command == "verify-models":
         return verify_models(args.config, args.detector)
@@ -357,6 +419,23 @@ def main(argv: list[str] | None = None) -> int:
             args.db,
             None if args.no_export else args.export,
             args.decontamination_config,
+        )
+    if args.command == "gauge-run":
+        # Aliased on import: cli.py already has module-level DEFAULT_CORPUS_DB
+        # (corpus-ingest's default). Importing the gauge module's own default
+        # under the same bare name here would make it a local shadowing the
+        # module-level one for this WHOLE function -- including the
+        # corpus-ingest argparse setup above, which runs first.
+        from llmshield_mcp.gauge.run import DEFAULT_BENIGN_SAMPLE_SIZE as _GAUGE_SAMPLE_SIZE
+        from llmshield_mcp.gauge.run import DEFAULT_CORPUS_DB as _GAUGE_DB
+        from llmshield_mcp.gauge.run import DEFAULT_OUTPUT_DIR as _GAUGE_OUTPUT_DIR
+        from llmshield_mcp.gauge.run import DEFAULT_SEED as _GAUGE_SEED
+
+        return gauge_run(
+            args.db or _GAUGE_DB,
+            args.output_dir or _GAUGE_OUTPUT_DIR,
+            args.sample_size if args.sample_size is not None else _GAUGE_SAMPLE_SIZE,
+            args.seed if args.seed is not None else _GAUGE_SEED,
         )
     parser.error(f"unhandled command {args.command}")
 
