@@ -1,9 +1,6 @@
-"""The GAUGE harness (FR-11, NFR-6, NFR-7).
+"""The GAUGE harness (FR-11, FR-12, NFR-6, NFR-7).
 
-Runs the workflow `PROPOSAL.md` section 8.2 describes, steps 3-4 and 6 (steps
-1-2 are M6's corpus-ingest; step 5, leave-one-source-out, is M8 -- this
-project's corpus has two adversarial source families today, `plan.md` open
-question Q3 wants a third before that step means anything):
+Runs the workflow `PROPOSAL.md` section 8.2 describes:
 
 1. Load the clean (decontaminated) corpus M6 produced.
 2. Split the benign pool into the two references PROPOSAL.md names --
@@ -12,12 +9,28 @@ question Q3 wants a third before that step means anything):
 3. Calibrate each graded detector (V0, V3) against each reference's
    calibration split, at each of `config/policy.yaml`'s `fpr_budget` values.
 4. Evaluate on the held-out adversarial items: attack-success-rate by threat
-   type, achieved FPR on the held-out benign test split, DeLong AUROC --
-   every figure with a confidence interval (NFR-7).
+   type AND by source family (FR-12, M8 -- see below), achieved FPR on the
+   held-out benign test split, DeLong AUROC -- every figure with a
+   confidence interval (NFR-7).
 5. Write `scores.csv` (`plan.md` section 2.6): every item, every detector,
    raw score plus the four class probabilities where they exist. Because the
    reused weights are not published (`prd.md` A1), this file -- not the
    models -- is what every downstream statistic must be recomputable from.
+
+**FR-12, leave-one-source-out, and why it is a report breakdown rather than a
+retraining loop.** The dissertation's own leave-one-out protocol
+(`exp2_lobo.py`) retrains a classifier with and without each benchmark family
+and compares the two. This project never retrains V0/V3 (`prd.md` scope), so
+there is no IN/OUT training distinction to make, and no meaningful sense in
+which a family could be "held out" of a training set that was never built
+from this corpus at all (`plan.md` section 2.20 records this correction).
+What generalisation means here instead: calibration never looks at adversarial
+data (only the benign reference sets, matched-FPR), so the *same* calibrated
+threshold already applies uniformly to every source family. FR-12's real
+question is whether recall at that threshold holds up consistently across
+families or is family-specific -- exactly a `by_source` breakdown of the ASR
+this harness already computes, parallel to the existing `by_threat_type` one.
+"Held out" is reporting language here, not a training-set exclusion.
 
 This does NOT edit `config/policy.yaml`. Flipping `calibrated: true` and
 moving V0/V3 out of `inert` is a deliberate, reviewed action for a human to
@@ -31,7 +44,7 @@ import csv
 import hashlib
 import json
 import random
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -226,6 +239,34 @@ def _interval_dict(interval: Interval) -> dict[str, float]:
     return {"point": interval.point, "low": interval.low, "high": interval.high}
 
 
+def _grouped_asr(
+    adversarial_items: list[CorpusItemRef],
+    adv_scores: dict[int, float],
+    threshold: float,
+    key_fn: Callable[[CorpusItemRef], str],
+) -> dict[str, Any]:
+    """ASR (with CIs) grouped by whatever `key_fn` returns.
+
+    Shared by the `by_threat_type` and `by_source` (FR-12) breakdowns in
+    `_build_report` -- both are "ASR at this threshold, split by some item
+    attribute", differing only in which attribute.
+    """
+    grouped: dict[str, Any] = {}
+    for key in sorted({key_fn(item) for item in adversarial_items}):
+        ids = [item.id for item in adversarial_items if key_fn(item) == key]
+        scores = [adv_scores[i] for i in ids if i in adv_scores]
+        if not scores:
+            continue
+        successes, total = attack_success_rate(scores, threshold)
+        grouped[key] = {
+            "asr_wilson": _interval_dict(wilson_ci(successes, total)),
+            "asr_clopper_pearson": _interval_dict(clopper_pearson_ci(successes, total)),
+            "successes": successes,
+            "total": total,
+        }
+    return grouped
+
+
 def _scores_for(
     records: list[ScoreRecord], detector: str, split: str, reference: str | None
 ) -> list[float]:
@@ -252,6 +293,18 @@ def run_gauge(
         raise ValueError(f"no clean adversarial items found in {db}; run `corpus-ingest` first")
     if not benign_by_id:
         raise ValueError(f"no clean benign items found in {db}; run `corpus-ingest` first")
+
+    source_families = sorted({item.source for item in adversarial_items})
+    if len(source_families) < 2:
+        # FR-12's by_source breakdown needs at least two families to say
+        # anything about generalisation -- one family is just the overall
+        # number again. Warn rather than raise: a run against a partial
+        # corpus is still useful for the other report sections.
+        print(
+            f"warning: only {len(source_families)} adversarial source family "
+            f"({', '.join(source_families) or 'none'}) in {db} -- the by_source "
+            "breakdown (FR-12) needs >= 2 to say anything about generalisation"
+        )
 
     references = _sample_benign_references(benign_by_id, sample_size, rng)
 
@@ -300,6 +353,7 @@ def run_gauge(
     report = _build_report(adversarial_items, cal_test_by_reference, all_records, fpr_budgets)
     report["config_hash"] = hash_
     report["scores_csv"] = str(scores_csv_path)
+    report["adversarial_source_families"] = source_families
 
     output_dir.mkdir(parents=True, exist_ok=True)
     report_path = output_dir / "calibration_report.json"
@@ -321,7 +375,6 @@ def _build_report(
                 record.raw_score
             )
 
-    threat_types = sorted({item.threat_type or "unknown" for item in adversarial_items})
     report: dict[str, Any] = {"references": {}}
 
     for reference_name in cal_test_by_reference:
@@ -347,23 +400,21 @@ def _build_report(
                     wilson_ci(achieved_test_count, len(held_out)) if held_out else None
                 )
 
-                by_threat_type: dict[str, Any] = {}
-                for threat_type in threat_types:
-                    ids = [
-                        item.id
-                        for item in adversarial_items
-                        if (item.threat_type or "unknown") == threat_type
-                    ]
-                    scores = [adv_scores[i] for i in ids if i in adv_scores]
-                    if not scores:
-                        continue
-                    successes, total = attack_success_rate(scores, calibration.threshold)
-                    by_threat_type[threat_type] = {
-                        "asr_wilson": _interval_dict(wilson_ci(successes, total)),
-                        "asr_clopper_pearson": _interval_dict(clopper_pearson_ci(successes, total)),
-                        "successes": successes,
-                        "total": total,
-                    }
+                by_threat_type = _grouped_asr(
+                    adversarial_items,
+                    adv_scores,
+                    calibration.threshold,
+                    lambda item: item.threat_type or "unknown",
+                )
+                # FR-12 / M8: the same ASR breakdown, grouped by source family
+                # instead of threat type -- see the module docstring for why
+                # this is the leave-one-source-out generalisation test here.
+                by_source = _grouped_asr(
+                    adversarial_items,
+                    adv_scores,
+                    calibration.threshold,
+                    lambda item: item.source,
+                )
 
                 overall_scores = list(adv_scores.values())
                 overall_successes, overall_total = (
@@ -386,6 +437,7 @@ def _build_report(
                         else None
                     ),
                     "by_threat_type": by_threat_type,
+                    "by_source": by_source,
                 }
 
             if adv_scores and test_benign_scores[detector]:

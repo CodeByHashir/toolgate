@@ -289,7 +289,8 @@ def ingest_corpus(
 
 
 def gauge_run(db: Path, output_dir: Path, sample_size: int, seed: int) -> int:
-    """Calibrate V0/V3 and compute matched-FPR ASR with confidence intervals (FR-11, M7).
+    """Calibrate V0/V3, compute matched-FPR ASR overall and per source family
+    (FR-11, FR-12; M7/M8), with confidence intervals throughout.
 
     Needs the real reused weights (`config/models.yaml` / `LLMSHIELD_MODELS_ROOT`)
     and a corpus already produced by `corpus-ingest`. Never edits
@@ -300,6 +301,9 @@ def gauge_run(db: Path, output_dir: Path, sample_size: int, seed: int) -> int:
     print(f"corpus     {db}")
     print(f"output     {output_dir}")
     report = run_gauge(db=db, output_dir=output_dir, sample_size=sample_size, seed=seed)
+
+    families = report["adversarial_source_families"]
+    print(f"adversarial source families ({len(families)}): {', '.join(families)}")
 
     for reference_name, reference_report in report["references"].items():
         print(f"\n--- {reference_name} ---")
@@ -318,6 +322,14 @@ def gauge_run(db: Path, output_dir: Path, sample_size: int, seed: int) -> int:
                     f"  {detector:4} {budget_name:10} thr={budget['threshold']:.4f}  "
                     f"achieved_fpr_cal={budget['achieved_fpr_calibration']:.2%}  ASR={asr_str}"
                 )
+                # FR-12 / M8: per-source-family ASR at this same threshold --
+                # the "leave-one-source-out" table (see gauge/run.py).
+                for source, by_source in budget["by_source"].items():
+                    s = by_source["asr_wilson"]
+                    print(
+                        f"       {source:16} ASR={s['point']:.1%} "
+                        f"[{s['low']:.1%}, {s['high']:.1%}]  (n={by_source['total']})"
+                    )
             if "auroc_delong" in detector_report:
                 d = detector_report["auroc_delong"]
                 print(

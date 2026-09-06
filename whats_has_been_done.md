@@ -1129,3 +1129,77 @@ already use, with no new dependency.
   downstream analysis are not columns in the raw export this project reads).
 - A fourth family (the MCP-specific dilution corpus, `plan.md` 2.19) remains
   a candidate but is no longer blocking M8.
+
+---
+
+## M8 — Leave-one-source-out generalisation test
+
+FR-12, built directly on M7's calibration machinery and the correction
+already recorded in `plan.md` 2.20: this project never retrains V0/V3, so
+there is no training-set-exclusion sense in which a source family can be
+"held out". What M8 actually measures: does the same calibrated threshold
+produce consistent recall across the three adversarial source families Q3
+resolved, or not.
+
+### What changed
+
+- `src/llmshield_mcp/gauge/run.py` -- `_grouped_asr()` extracted (shared by
+  the existing `by_threat_type` breakdown and the new `by_source` one, so
+  both are the same grouping logic over a different item attribute).
+  `_build_report()` now emits `by_source` inside every budget alongside
+  `by_threat_type`. `run_gauge()` records `adversarial_source_families` in
+  the report and warns (does not raise) if fewer than two are present --
+  `by_source` needs at least two to say anything about generalisation.
+- `src/llmshield_mcp/cli.py` -- `gauge_run` prints the per-family ASR table
+  under each budget line, plus the family count/list up front.
+- `tests/test_gauge_report.py` (2, weight-free) -- `_build_report` is pure
+  post-processing over `ScoreRecord`s, so the grouping logic is fully
+  testable with synthetic scores: one test confirms `by_source` separates
+  two families with deliberately different recall while `by_threat_type`
+  (grouping the same items together) does not; one confirms a single-family
+  corpus still produces a one-entry breakdown rather than erroring.
+- `tests/test_gauge_run_with_models.py` -- fixture now uses two distinct
+  `source` values (`family_alpha`/`family_beta`) instead of one, and a new
+  test confirms `by_source` covers both with real V0/V3 scores.
+
+### A real finding
+
+`gauge-run` against the full corpus (V0, `escalate` budget, `realistic`
+benign reference) gave attack-success-rate of:
+
+| Source family | ASR (Wilson 95% CI) | n |
+|---|---|---|
+| BIPIA | 97.6% [93.2%, 99.2%] | 125 |
+| InjecAgent | 75.8% [63.8%, 84.8%] | 62 |
+| LLMail-Inject | 40.0% [32.5%, 48.0%] | 150 |
+
+The same detector, the same threshold, a ~58-point swing depending purely on
+which family is measured. A report citing only the original BIPIA+InjecAgent
+numbers (this project's own earlier measurements, before Q3 was resolved)
+would have significantly overstated how consistently V0 fails to detect
+real attacks. V3 is more uniform at the same budget (92.8%/96.8%/94.7%
+across the three) but uniformly close to useless either way -- a different
+failure shape, not a better one. Full numbers: `results/gauge/` (gitignored;
+regenerate with `mcp-shield gauge-run`).
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `uv run pytest -m "not models"` | **278 passed**, 17 deselected (2 new) |
+| `LLMSHIELD_MODELS_ROOT=... uv run pytest -m models` | **17 passed** (1 new) |
+| `uv run ruff check` / `mypy` | Clean, 29 source files |
+| `mcp-shield gauge-run` against the real 337-item, 3-family corpus | Full run completed, table above, `config/policy.yaml` untouched |
+
+### Known limitations
+
+- `by_source` is computed at every FPR budget and every benign reference,
+  same as `by_threat_type` -- no new statistical test (e.g. a formal
+  cross-family significance test) compares families to each other pairwise.
+  Non-overlapping Wilson CIs are visually convincing here but a McNemar-style
+  paired test does not apply across families (different items, not paired
+  observations); a two-independent-proportions test (Fisher's exact) would
+  be the correct tool if a formal pairwise claim is needed later.
+- The fourth candidate family (MCP-specific dilution corpus, `plan.md` 2.19)
+  is still not built; three families were enough to produce the finding
+  above.

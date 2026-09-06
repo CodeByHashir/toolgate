@@ -2,16 +2,16 @@
 
 Factual map of what exists in this repository. Updated when structure changes.
 
-**As of M7 + Q3 resolution.** 4544 lines of source, 3876 lines of tests, 292
-tests (276 weight-free + 16 marked `models`). All four detectors -- rules
-(both families), PII, V0, V3 -- run against every intercepted tool result
-through the fusion/policy engine (`gating/policy.py`); V0/V3 ship **inert**
-(scored, logged, zero decision weight). A payload corpus pipeline exists
-(`corpus/`): fetch, label, MinHash-decontaminate, store -- three distinct
-adversarial source families (BIPIA, InjecAgent, LLMail-Inject, 337 items) are
-now ingested, resolving `plan.md` open question Q3 ahead of M8. A GAUGE
+**As of M8.** 4608 lines of source, 4063 lines of tests, 295 tests (278
+weight-free + 17 marked `models`). All four detectors -- rules (both
+families), PII, V0, V3 -- run against every intercepted tool result through
+the fusion/policy engine (`gating/policy.py`); V0/V3 ship **inert** (scored,
+logged, zero decision weight). A payload corpus pipeline exists (`corpus/`):
+fetch, label, MinHash-decontaminate, store -- three distinct adversarial
+source families (BIPIA, InjecAgent, LLMail-Inject, 337 items). A GAUGE
 harness (`gauge/`) calibrates V0/V3 at matched FPR budgets and reports
-ASR/AUROC with confidence intervals, but does not itself flip
+ASR/AUROC by threat type AND by source family (FR-12, leave-one-source-out)
+with confidence intervals throughout, but does not itself flip
 `config/policy.yaml`'s `calibrated` flag -- that remains a deliberate human
 decision after reviewing a run's report.
 
@@ -92,6 +92,7 @@ D:\LLMSHIELD-MCP\
 │       ├── calibrate.py         threshold_at_fpr(): matched-FPR calibration
 │       ├── references.py        dual benign reference split (keyword filter)
 │       └── run.py               run_gauge(): the harness, scores.csv + report
+│                                (ASR by threat_type AND by source, FR-12)
 ├── tests/
 │   ├── fixtures/
 │   │   └── golden_set.json      frozen decision fixture (M4 regression test)
@@ -117,7 +118,8 @@ D:\LLMSHIELD-MCP\
 │   ├── test_gauge_stats.py      Wilson/CP/McNemar/DeLong known-answer tests (11)
 │   ├── test_gauge_calibrate.py  threshold_at_fpr correctness (8)
 │   ├── test_gauge_references.py dual benign reference split (7)
-│   ├── test_gauge_run_with_models.py  end-to-end harness, marked `models` (4)
+│   ├── test_gauge_report.py     by_source grouping (FR-12), weight-free (2)
+│   ├── test_gauge_run_with_models.py  end-to-end harness, marked `models` (5)
 │   ├── test_golden_set.py       M4 golden-set regression test (6)
 │   ├── test_servers.py          server config + sandbox validation (8)
 │   └── test_adapters_with_models.py  reuse audit, marked `models` (7)
@@ -393,9 +395,9 @@ Behaviours worth knowing:
 
 ### `llmshield_mcp.gauge`
 
-The GAUGE harness (FR-11, NFR-6, NFR-7, M7): statistics, matched-FPR
-calibration, and the orchestrator that runs both against the real corpus and
-weights.
+The GAUGE harness (FR-11, FR-12, NFR-6, NFR-7, M7/M8): statistics,
+matched-FPR calibration, and the orchestrator that runs both against the
+real corpus and weights.
 
 | Symbol | Purpose |
 |---|---|
@@ -404,13 +406,19 @@ weights.
 | `auroc_delong(positive, negative)` | Ported from `exp2_auroc_delong.py`'s pure-Python midrank DeLong implementation -- the one dissertation statistic confirmed correct rather than replaced |
 | `threshold_at_fpr(scores, target_fpr)` | `calibrate.py`. Places the threshold so achieved FPR is always `<= target` (never above); flags `unreachable` for a constant-scored detector instead of a fake number. Convention from `exp2_multi_fpr.py`/`exp2_eval.py`, not their code |
 | `partition_benign_references(items)` | `references.py`. Splits a benign pool into `(realistic, adversarial_styled)` via a word-boundary keyword filter -- independent of `config/rules.yaml`'s actual patterns |
-| `run_gauge(db, output_dir, sample_size, seed)` | `run.py`. Loads the clean M6 corpus, samples/splits the dual benign references, calibrates V0/V3 at each `config/policy.yaml` `fpr_budget`, computes ASR by threat type and DeLong AUROC (all with CIs), writes `scores.csv` and `calibration_report.json` |
+| `run_gauge(db, output_dir, sample_size, seed)` | `run.py`. Loads the clean M6/M8 corpus, samples/splits the dual benign references, calibrates V0/V3 at each `config/policy.yaml` `fpr_budget`, computes ASR by threat type AND by source family (FR-12, M8 -- `_grouped_asr` shares one grouping implementation for both) and DeLong AUROC (all with CIs), writes `scores.csv` and `calibration_report.json` |
 
 Behaviours worth knowing:
 
 - `run_gauge` never edits `config/policy.yaml`. Flipping `calibrated: true`
   and moving `v0`/`v3` out of `inert` is a deliberate human decision after
   reading a run's report, per that file's own comment.
+- Leave-one-source-out (FR-12) is a `by_source` ASR breakdown at the same
+  calibrated threshold, not a retrain-with/without-family loop -- this
+  project never retrains V0/V3, so there is no training-set-exclusion sense
+  in which a family could be "held out" (`plan.md` 2.20/2.22). `run_gauge`
+  warns (does not raise) if the corpus has fewer than two adversarial
+  `source` values, since `by_source` needs at least two to compare.
 - Every item is scored by every detector (`gauge/run.py:build_detectors`,
   distinct from `gating/transport.py`'s config-role-driven function of the
   same name) -- GAUGE always wants the full picture, unlike the live gate.

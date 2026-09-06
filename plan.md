@@ -4,7 +4,7 @@ Companion to `prd.md` (what to build) and `whats_has_been_done.md` (what is
 built). This file holds the plan, the architecture decisions and their
 rationale, remaining work, and known risks.
 
-**Current position: M7 complete. GAUGE harness, calibration and statistics (Wilson/Clopper-Pearson/McNemar/DeLong) exist and are verified against real V0/V3 weights. `config/policy.yaml` still ships uncalibrated by deliberate choice -- see 2.20.**
+**Current position: M8 complete. Leave-one-source-out (FR-12) is a `by_source` ASR breakdown on M7's calibration machinery -- no retraining, since this project never trains anything. `config/policy.yaml` still ships uncalibrated by deliberate choice -- see 2.20.**
 
 ---
 
@@ -23,7 +23,7 @@ Each milestone is independently testable and lands as its own commit.
 | M5 | V0 and V3 wired into the live gating path | FR-2, FR-3 | Ablation by config alone | **Done** |
 | M6 | Corpus schema, ingest CLI, MinHash decontamination | FR-10, AC-6 | Drop-count report; no surviving near-duplicate above threshold | **Done** |
 | M7 | GAUGE harness; DeLong ported, Wilson/CP/McNemar on statsmodels; replace hand-rolled CIs | FR-11, NFR-6, NFR-7 | Known-answer tests for Wilson, Clopper-Pearson, McNemar, DeLong | **Done** |
-| M8 | Leave-one-source-out generalisation test | FR-12 | Per-held-out-family table | Not started |
+| M8 | Leave-one-source-out generalisation test | FR-12 | Per-held-out-family table | **Done** |
 | M9 | Latency benchmark: per-detector, fused, 20-call chain | FR-13, FR-14, NFR-1, NFR-2 | Reproducible script, committed numbers | Not started |
 | M10 | Report generation; README headline numbers | AC-7, [18] | Tables and plots as static files | Not started |
 | M11 | *(optional)* Standalone stdio proxy over the same gating core | [11.1] option A | Agent config points at proxy, nothing else changes | Not started |
@@ -647,6 +647,36 @@ Verified end to end: `corpus-ingest` against the real training-data reference
 corpus ingested 125 + 62 + 150 = 337 adversarial items plus benign lines,
 **0 contaminated** for any of the three families -- consistent with all three
 being genuinely disjoint from V0/V3's training sources.
+
+### 2.22 M8: leave-one-source-out as a report breakdown, and a real generalisation finding
+
+Builds directly on the correction already recorded in 2.20: since this
+project never retrains V0/V3, and calibration (M7) never looks at
+adversarial data at all (only the benign reference sets, matched-FPR),
+there is no IN/OUT training split for a "held-out" family to mean anything
+about. What FR-12 can honestly ask here is narrower and cheaper to answer:
+does the *same* calibrated threshold produce consistent recall across
+different adversarial source families, or does it not? `gauge/run.py`'s
+`_build_report` already grouped ASR by `threat_type`; M8 adds the identical
+grouping by `source` (`_grouped_asr`, shared by both), keyed on the three
+families Q3 resolved (2.21) -- no new module, no new statistical machinery.
+
+**The answer, measured, is a real finding worth carrying into the report.**
+A `gauge-run` against the full corpus (V0, escalate budget, realistic
+reference) gave attack-success-rate of **97.6% on BIPIA, 75.8% on
+InjecAgent, but only 40.0% on LLMail-Inject** -- the same threshold, the
+same detector, a nearly 60-point swing depending purely on which family is
+being measured. Anyone citing only the original two-family number (matching
+this project's own earlier BIPIA+InjecAgent-only measurements) would have
+significantly overstated how consistently V0 fails. V3 is more uniform --
+92-98% ASR across all three families at the same budget -- but uniformly
+close to useless either way. This is exactly the generalisation gap FR-12
+exists to surface, and it would not have been visible with two families.
+
+A minimum-family-count check (`run_gauge` warns, does not raise, below two
+distinct adversarial `source` values) keeps the `by_source` breakdown from
+silently looking meaningful when the corpus can't actually support the
+comparison.
 
 ## 4. Open Questions
 
