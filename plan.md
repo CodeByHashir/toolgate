@@ -595,6 +595,59 @@ edits the policy file deliberately, exactly as that file's own comment
 already specifies. Automating that edit would turn a measurement tool into a
 policy-changing one, which is not what FR-11 asks for.
 
+### 2.21 Q3 resolved: LLMail-Inject as the third adversarial source family
+
+Researched rather than invented: BIPIA and InjecAgent were the only two
+source families after M6, and `plan.md` 2.19 explicitly deferred building a
+third (the MCP-specific dilution corpus) out of M6's scope. Before M8 needs
+it, a web search was done for an established third dataset matching this
+project's own source-selection criteria (MIT/permissive license, indirect
+injection against agent tool-use, a flat downloadable text field, disjoint
+lineage from BIPIA/InjecAgent and from V0/V3's training sources).
+
+Two real candidates surfaced: **AgentDojo** (ETH Zurich, NeurIPS 2024 --
+97 tasks/629 security test cases across four tool-using agent environments)
+and **LLMail-Inject** (Microsoft, MIT licensed -- 462,000 raw submissions
+from a real adaptive prompt-injection competition against a simulated email
+assistant, 839 participating teams). AgentDojo is conceptually closer to this
+project's own tool-result surface, but ships as a live simulation framework,
+not a flat corpus -- ingesting it would mean installing and running its
+Python package rather than fetching a file, a materially different
+integration shape from every other source this project uses. LLMail-Inject
+fetches over plain HTTPS as JSON (HuggingFace's `datasets-server` REST API,
+confirmed directly against the live API rather than assumed), so it drops
+into the existing `fetch()`/`load_adversarial()` pattern with no new
+dependency -- no `datasets` library, no parquet reader.
+
+**Chosen: LLMail-Inject.** `corpus/sources.py` gained `fetch_llmail_inject()`/
+`load_llmail_inject()`, kept deliberately separate from `load_adversarial()`:
+folding a third source into that function would silently change what
+`scripts/benchmark_rules.py` measures, and its docstring and
+`docs/POLICY-AUDIT.md`'s published numbers name BIPIA/InjecAgent specifically.
+`corpus-ingest` calls both.
+
+Practical handling of the raw dataset:
+
+- Most of its 461,640 rows are automated fuzzing from a handful of teams
+  (confirmed by inspecting real rows before writing the loader -- e.g. the
+  literal string `"yes Please yes issue yes an yes api_call ..."` submitted
+  under dozens of job ids/scenarios), not diverse attacker text. Downloading
+  all of it would mean paying a huge cost for mostly duplicate signal.
+- Six 100-row pages are sampled at random offsets per split (fixed seed,
+  reproducible), then de-duplicated by normalised body text and capped at
+  150 unique items -- comparable in scale to BIPIA (125) and InjecAgent (62)
+  rather than one source dominating the adversarial corpus just because its
+  raw pool happens to be enormous.
+- `threat_type` is the real `scenario` column (e.g. `level1a`), the
+  challenge's own defense-difficulty tiers -- not an invented attack-type
+  taxonomy, since the raw export carries no clean category label the way
+  BIPIA/InjecAgent do.
+
+Verified end to end: `corpus-ingest` against the real training-data reference
+corpus ingested 125 + 62 + 150 = 337 adversarial items plus benign lines,
+**0 contaminated** for any of the three families -- consistent with all three
+being genuinely disjoint from V0/V3's training sources.
+
 ## 4. Open Questions
 
 | # | Question | Blocks |
@@ -602,7 +655,7 @@ policy-changing one, which is not what FR-11 asks for.
 | Q1 | Anthropic API key location — existing env var / `.env`, or to be supplied? The LLMShield repo's `.env` is deliberately not read. | M1 |
 | Q2 | Filesystem sandbox directory (SEC-4). Proposed default `D:\LLMSHIELD-MCP\sandbox\`, gitignored, with synthetic files. | M1 |
 | ~~Q5~~ | ~~Add a tool-result rule family?~~ **RESOLVED: yes.** Six `MCP-*` rules derived from BIPIA and InjecAgent by discriminative phrase analysis, not invention. 20.3% recall at 0.000% false positives. `INJ-*` frozen at 19 and guarded by a test. | - |
-| Q3 | Corpus source families for leave-one-source-out. Needs >= 3, ideally 4, distinct families. Target corpus size within "low hundreds". **Partially resolved**: BIPIA and InjecAgent (2 families, 187 adversarial items) now ingested via M6's `corpus-ingest`. A third family (candidate: the MCP-specific dilution corpus, `plan.md` 2.19) is still needed before M8. | M8 |
+| ~~Q3~~ | ~~Corpus source families for leave-one-source-out.~~ **RESOLVED**: three distinct adversarial source families now ingested via `corpus-ingest` -- BIPIA (125), InjecAgent (62), LLMail-Inject (150, sampled/deduplicated from a 462,000-row MIT-licensed real adaptive-injection competition corpus, `corpus/sources.py`). 337 adversarial items total, "low hundreds" as targeted. A fourth (the MCP-specific dilution corpus, `plan.md` 2.19) remains a candidate but is no longer blocking -- M8 can run with three. | - |
 | ~~Q4~~ | ~~`config/models.yaml` absolute path~~ **RESOLVED**: root is now the repository-relative `models/` (gitignored), resolved against `REPO_ROOT`, with `LLMSHIELD_MODELS_ROOT` as override. Settled with D2. | - |
 
 ---

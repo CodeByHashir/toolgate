@@ -6,7 +6,13 @@ from llmshield_mcp.corpus.decontaminate import (
     decontaminate,
     load_decontamination_config,
 )
-from llmshield_mcp.corpus.sources import fetch, load_adversarial, load_benign
+from llmshield_mcp.corpus.sources import (
+    fetch,
+    fetch_llmail_inject,
+    load_adversarial,
+    load_benign,
+    load_llmail_inject,
+)
 from llmshield_mcp.corpus.store import (
     CorpusLabel,
     CorpusStore,
@@ -25,7 +31,9 @@ __all__ = [
     "corpus_store",
     "decontaminate",
     "fetch",
+    "fetch_llmail_inject",
     "load_adversarial",
     "load_benign",
     "load_decontamination_config",
+    "load_llmail_inject",
 ]

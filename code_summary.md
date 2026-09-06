@@ -2,15 +2,18 @@
 
 Factual map of what exists in this repository. Updated when structure changes.
 
-**As of M7.** 4412 lines of source, 3768 lines of tests, 286 tests (270
-weight-free + 16 marked `models`). All four detectors -- rules (both
-families), PII, V0, V3 -- run against every intercepted tool result through
-the fusion/policy engine (`gating/policy.py`); V0/V3 ship **inert** (scored,
-logged, zero decision weight). A payload corpus pipeline exists (`corpus/`):
-fetch, label, MinHash-decontaminate, store. A GAUGE harness (`gauge/`)
-calibrates V0/V3 at matched FPR budgets and reports ASR/AUROC with confidence
-intervals, but does not itself flip `config/policy.yaml`'s `calibrated` flag
--- that remains a deliberate human decision after reviewing a run's report.
+**As of M7 + Q3 resolution.** 4544 lines of source, 3876 lines of tests, 292
+tests (276 weight-free + 16 marked `models`). All four detectors -- rules
+(both families), PII, V0, V3 -- run against every intercepted tool result
+through the fusion/policy engine (`gating/policy.py`); V0/V3 ship **inert**
+(scored, logged, zero decision weight). A payload corpus pipeline exists
+(`corpus/`): fetch, label, MinHash-decontaminate, store -- three distinct
+adversarial source families (BIPIA, InjecAgent, LLMail-Inject, 337 items) are
+now ingested, resolving `plan.md` open question Q3 ahead of M8. A GAUGE
+harness (`gauge/`) calibrates V0/V3 at matched FPR budgets and reports
+ASR/AUROC with confidence intervals, but does not itself flip
+`config/policy.yaml`'s `calibrated` flag -- that remains a deliberate human
+decision after reviewing a run's report.
 
 ---
 
@@ -77,8 +80,10 @@ D:\LLMSHIELD-MCP\
 │   │   ├── rules.py             injection rule engine (135)
 │   │   ├── v0_lexical.py        V0 adapter (79)
 │   │   └── v3_transformer.py    V3 adapter (108)
-│   ├── corpus/                  payload corpus pipeline (FR-10, M6)
-│   │   ├── sources.py           fetch()/load_adversarial()/load_benign()
+│   ├── corpus/                  payload corpus pipeline (FR-10, M6, M8)
+│   │   ├── sources.py           fetch()/load_adversarial()/load_benign();
+│   │   │                        fetch_llmail_inject()/load_llmail_inject()
+│   │   │                        (3rd source family, Q3)
 │   │   ├── decontaminate.py     MinHash shingling + datasketch.MinHashLSH
 │   │   └── store.py             PayloadCorpusItem, CorpusStore, export_jsonl()
 │   └── gauge/                   GAUGE harness: stats, calibration (FR-11, M7)
@@ -96,6 +101,7 @@ D:\LLMSHIELD-MCP\
 │   ├── test_chain.py            chain round-trip and schema (6)
 │   ├── test_config.py           config + score-mode tests (15)
 │   ├── test_corpus_decontaminate.py  MinHash correctness, config loading (13)
+│   ├── test_corpus_llmail_inject.py  parsing, dedup, sampling cap (6)
 │   ├── test_corpus_sources.py   load_benign() sanity (offline) (2)
 │   ├── test_corpus_store.py     PayloadCorpusItem round-trip, export (7)
 │   ├── test_detector_normalise.py  canonicalisation + dual scan (22)
@@ -361,6 +367,7 @@ check them against V0/V3's own training data, store the result.
 | Symbol | Purpose |
 |---|---|
 | `fetch()` / `load_adversarial()` / `load_benign()` | `sources.py`. BIPIA/InjecAgent (cached under `corpus/external/`, gitignored) and benign lines from this repository's own content. Moved here from `scripts/benchmark_rules.py`, which now imports them. |
+| `fetch_llmail_inject()` / `load_llmail_inject()` | The third adversarial source family (`plan.md` Q3): `microsoft/llmail-inject-challenge` via HuggingFace's `datasets-server` REST API, sampled/deduplicated to 150 items. Deliberately separate from `load_adversarial()` -- folding it in would change what `scripts/benchmark_rules.py` measures. |
 | `DecontaminationConfig` / `load_decontamination_config()` | `decontaminate.py`. Validated `config/decontamination.yaml`: shingle size, `num_perm`, Jaccard threshold, and the training-corpus reference path (`LLMSHIELD_TRAINING_CORPUS` override, same pattern as `config.py`'s `LLMSHIELD_MODELS_ROOT`) |
 | `decontaminate(items, config, reference_texts=None)` | Flags near-duplicates (Jaccard >= threshold via `datasketch.MinHashLSH`) or exact normalised-text matches against the reference corpus. `reference_texts` lets tests supply a small in-memory reference set instead of the real ~19k-row file |
 | `CorpusLabel` | `benign` / `adversarial` |

@@ -1072,3 +1072,60 @@ large enough. A real fix is a larger corpus (M6's scope), not a change to M7.
 - `gauge/references.py`'s keyword list is a reasonable, documented net, not a
   formally validated one -- it is meant to produce a plausible hard-negative
   stress set, not a precisely calibrated category boundary.
+
+---
+
+## Q3 resolved — LLMail-Inject as the third adversarial source family
+
+Closes `plan.md` open question Q3 ahead of M8: leave-one-source-out needs
+>= 3 distinct adversarial source families; only BIPIA and InjecAgent existed
+after M6.
+
+### What changed
+
+- `src/llmshield_mcp/corpus/sources.py` -- `fetch_llmail_inject()` /
+  `load_llmail_inject()`, fetching `microsoft/llmail-inject-challenge` (MIT,
+  HuggingFace) via the `datasets-server` REST API (plain JSON over HTTPS, no
+  new dependency). Six random 100-row pages sampled per split (Phase1:
+  370,724 rows; Phase2: 90,916 -- confirmed via the API's own `/size`
+  endpoint), de-duplicated by normalised body text, capped at 150 items.
+  Kept deliberately separate from `load_adversarial()` -- see `plan.md` 2.21
+  for why.
+- `src/llmshield_mcp/corpus/__init__.py` -- exports the two new functions.
+- `src/llmshield_mcp/cli.py` -- `ingest_corpus()` fetches and ingests
+  LLMail-Inject by default (`--no-llmail-inject` to skip, since it is 12
+  network requests to a different host than BIPIA/InjecAgent).
+- `tests/test_corpus_llmail_inject.py` (6) -- parsing, de-duplication and
+  the sampling cap, against synthetic cached pages shaped like a real
+  `datasets-server` response (confirmed against the live API before writing
+  the loader, not assumed). No network call in the test itself, matching
+  `fetch()`'s own untested-network-path precedent.
+
+### Why LLMail-Inject over AgentDojo
+
+Both are real, well-documented, MIT-licensed indirect-injection-against-agents
+benchmarks (researched via web search, `plan.md` 2.21 has the full
+comparison). AgentDojo is conceptually closer to this project's own
+tool-result surface but ships as a live simulation framework -- ingesting it
+would mean installing and running its Python package, not fetching a file.
+LLMail-Inject fetches as plain JSON via HuggingFace's `datasets-server`,
+dropping into the exact `fetch()`/`load_adversarial()` pattern BIPIA/InjecAgent
+already use, with no new dependency.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `uv run pytest -m "not models"` | **276 passed**, 16 deselected (6 new) |
+| `uv run ruff check` / `mypy` | Clean, 29 source files |
+| Live fetch against the real `datasets-server` API | 150 unique items after de-duplication, spanning scenarios `level1a`-`level3f` |
+| `mcp-shield corpus-ingest` against the real training-data reference corpus | 125 + 62 + 150 = 337 adversarial items ingested, **0 contaminated** across all three families |
+
+### Known limitations
+
+- The `scenario` column used as `threat_type` reflects the challenge's
+  defense-difficulty tiers, not an attacker-intent taxonomy (the "13
+  objective categories"/"5 injection classes" reported in the paper's own
+  downstream analysis are not columns in the raw export this project reads).
+- A fourth family (the MCP-specific dilution corpus, `plan.md` 2.19) remains
+  a candidate but is no longer blocking M8.

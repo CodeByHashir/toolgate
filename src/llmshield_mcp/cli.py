@@ -192,14 +192,17 @@ def ingest_corpus(
     db: Path,
     export: Path | None,
     decontamination_config: Path | None,
+    include_llmail_inject: bool = True,
 ) -> int:
-    """Fetch, label, decontaminate and store the payload corpus (FR-10, M6).
+    """Fetch, label, decontaminate and store the payload corpus (FR-10, M6, M8).
 
-    Adversarial items come from BIPIA/InjecAgent (`corpus.sources`); benign
-    items are lines from this repository's own real content. Both labels are
-    checked against the V0/V3 training-data reference corpus -- the reused
-    training set includes a benign class too (dolly/alpaca), so a benign item
-    can be contaminated exactly as an adversarial one can.
+    Adversarial items come from BIPIA/InjecAgent and, by default, LLMail-Inject
+    (`corpus.sources`) -- the third adversarial source family `plan.md` open
+    question Q3 asked for. Benign items are lines from this repository's own
+    real content. All labels are checked against the V0/V3 training-data
+    reference corpus -- the reused training set includes a benign class too
+    (dolly/alpaca), so a benign item can be contaminated exactly as an
+    adversarial one can.
     """
     from llmshield_mcp.corpus import (
         CorpusLabel,
@@ -208,23 +211,39 @@ def ingest_corpus(
         corpus_store,
         decontaminate,
         fetch,
+        fetch_llmail_inject,
         load_adversarial,
         load_benign,
         load_decontamination_config,
+        load_llmail_inject,
     )
 
     fetch()
     adversarial = load_adversarial()
+    llmail_inject: list[tuple[str, str, str]] = []
+    if include_llmail_inject:
+        fetch_llmail_inject()
+        llmail_inject = load_llmail_inject()
     benign = load_benign()
-    print(f"fetched {len(adversarial)} adversarial payloads, {len(benign)} benign lines")
+    print(
+        f"fetched {len(adversarial)} adversarial payloads (BIPIA/InjecAgent), "
+        f"{len(llmail_inject)} LLMail-Inject payloads, {len(benign)} benign lines"
+    )
 
     config = load_decontamination_config(decontamination_config)
     print(f"decontaminating against {config.training_corpus_path} ...")
 
-    candidates: list[tuple[str, str | None, CorpusLabel, str]] = [
-        (family, threat_type, CorpusLabel.ADVERSARIAL, text)
-        for family, threat_type, text in adversarial
-    ] + [("repository", None, CorpusLabel.BENIGN, text) for text in benign]
+    candidates: list[tuple[str, str | None, CorpusLabel, str]] = (
+        [
+            (family, threat_type, CorpusLabel.ADVERSARIAL, text)
+            for family, threat_type, text in adversarial
+        ]
+        + [
+            (family, threat_type, CorpusLabel.ADVERSARIAL, text)
+            for family, threat_type, text in llmail_inject
+        ]
+        + [("repository", None, CorpusLabel.BENIGN, text) for text in benign]
+    )
 
     results = decontaminate((text for _, _, _, text in candidates), config)
 
@@ -377,6 +396,12 @@ def main(argv: list[str] | None = None) -> int:
         "--no-export", action="store_true", help="skip writing the JSONL snapshot"
     )
     corpus_ingest.add_argument(
+        "--no-llmail-inject",
+        action="store_true",
+        help="skip fetching the LLMail-Inject third source family (network-heavy: "
+        "up to 12 paginated requests to HuggingFace's datasets-server)",
+    )
+    corpus_ingest.add_argument(
         "--decontamination-config",
         type=Path,
         default=None,
@@ -419,6 +444,7 @@ def main(argv: list[str] | None = None) -> int:
             args.db,
             None if args.no_export else args.export,
             args.decontamination_config,
+            not args.no_llmail_inject,
         )
     if args.command == "gauge-run":
         # Aliased on import: cli.py already has module-level DEFAULT_CORPUS_DB
