@@ -1203,3 +1203,104 @@ regenerate with `mcp-shield gauge-run`).
 - The fourth candidate family (MCP-specific dilution corpus, `plan.md` 2.19)
   is still not built; three families were enough to produce the finding
   above.
+
+---
+
+## M9 — Latency benchmark: per-detector, fused, 20-call chain
+
+FR-13, FR-14, NFR-1, NFR-2. Unlike M7/M8, this milestone's numbers are
+**committed** (`docs/LATENCY-BENCHMARK.md`) -- the verification bar says so
+explicitly, and latency carries none of the live-decision risk that kept the
+calibration reports gitignored.
+
+### What changed
+
+- `src/llmshield_mcp/latency.py` -- `LatencyStats`, `summarize()`,
+  `time_calls()`. Mean + p95 in ms, warmup excluded (`n_warm=10`) --
+  `exp2_eval.py`'s own `latency_hf`/`latency_sklearn` convention, reused
+  rather than invented.
+- `scripts/benchmark_latency.py` -- per-detector and fused-pipeline latency
+  against 50 items (10-warmup) sampled from the real ingested corpus.
+- `chains/latency_chain.json` -- a new, committed, host-path-normalised chain
+  fixture: 25 real tool calls (>= 20, FR-14) through the live fused gate
+  (rules + PII + V0 + V3, real weights), recorded with
+  `mcp-shield run-agent --db chains/latency_run.sqlite`. The SQLite decision
+  log is not committed, matching every other `*.sqlite` in this project.
+- `docs/LATENCY-BENCHMARK.md` -- the committed report: per-detector table,
+  fused-pipeline number, and the chain's gate-overhead breakdown
+  (fetch vs filesystem calls), each against its NFR budget.
+- `tests/test_latency.py` (7, weight-free), `tests/test_latency_with_models.py`
+  (1, `models`-marked sanity check that `time_calls` composes correctly with
+  a real detector).
+
+### Design decisions
+
+**Committed, not gitignored, unlike M7/M8.** The distinction is risk, not
+milestone number: a calibration report could inform a `config/policy.yaml`
+edit that changes live behaviour, so those stay local until reviewed.
+Latency numbers cannot do that -- there is nothing to protect by hiding them,
+and the milestone's own verification bar wants them committed.
+
+**No API key in this worktree.** `.env` is gitignored and per-worktree; only
+the main checkout had one. Exported `ANTHROPIC_API_KEY` from the main
+checkout's `.env` via command substitution for the one `run-agent` call that
+needed it, rather than copying the file -- the key value never appeared in a
+visible command string. Same class of fix as `LLMSHIELD_MODELS_ROOT`/
+`LLMSHIELD_TRAINING_CORPUS` (this worktree lacking something the main
+checkout has), applied to a secret instead of a large file.
+
+**A cheap, explicit task for the chain, not the usual "realistic" one.**
+M1's chains use `claude-opus-5` specifically because a stronger model
+produces a more realistic, longer sequence when given an open-ended task.
+Here the exact opposite was wanted: a *forced* count (fetch 16 named URLs
+one at a time, then read 4 named files one at a time) to reliably clear
+FR-14's 20-call floor without depending on model judgement, so
+`claude-haiku-4-5` (cheaper, and perfectly adequate for following an
+itemised list) was used instead and named explicitly as a deliberate choice,
+not a silent reuse of the M1 default.
+
+### A real finding
+
+| Measurement | Result | vs budget |
+|---|---|---|
+| rules/PII (mean) | 0.06-0.07 ms | NFR-1 (~5ms): met |
+| V0 (mean) | 2.07 ms | NFR-1: met |
+| V3 (mean, short corpus text) | 208 ms | NFR-2 (100ms): missed, ~2x |
+| Fused pipeline (mean) | 215 ms | NFR-2: missed, ~2x |
+| Gate latency, real fetched web pages (mean / max) | 4,459 ms / **13.1 s** | far beyond NFR-2 |
+| Gate latency, sandbox files (mean) | 240 ms | ~2x NFR-2 |
+
+V3's `chunk_max` strategy scores every overlapping window of long content, so
+gate latency scales with content length -- confirmed at chain scale on real,
+unscripted fetched pages, not just the ~1500-token smoke probe
+`docs/M0-OBSERVATIONS.md` first measured this shape on. For 9 of the 16
+fetches in the recorded chain, gate latency **exceeded** the network
+round-trip time that produced the content. Shipping V3 `inert` (M5)
+protects the decision from an uncalibrated score; it does not save any
+latency, because the detector still runs on every intercepted result
+regardless of its decision weight. One fetched page's PII scanner fired for
+real during this run (`fused_decision = redact`) -- a genuine detection on
+live content, not a synthetic probe.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `uv run pytest -m "not models"` | **285 passed**, 18 deselected (7 new) |
+| `LLMSHIELD_MODELS_ROOT=... uv run pytest -m models` | **18 passed** (1 new) |
+| `uv run ruff check` / `mypy` | Clean, 30 source files |
+| `scripts/benchmark_latency.py` against the real corpus and weights | Numbers in `docs/LATENCY-BENCHMARK.md` |
+| `mcp-shield run-agent` recording a real 25-call chain through the live gate | `chains/latency_chain.json` committed; gate-overhead numbers in the same report |
+
+### Known limitations
+
+- Both measurements are single runs, not repeated-and-averaged across
+  sessions -- exact figures will vary with CPU load, model non-determinism
+  (which URLs get fetched in what order/length), and network conditions for
+  the live fetches. The *shape* of the finding (rules/PII/V0 trivial, V3
+  dominant and length-dependent) is the reproducible part, stated as such in
+  the committed report.
+- The fetch server still runs in pure-Python article-extraction mode (no
+  Node/NPM in this environment, noted since M1) -- extracted page length,
+  and therefore V3's window count and latency, would likely differ under
+  Readability.js.

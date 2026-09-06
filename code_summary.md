@@ -2,8 +2,8 @@
 
 Factual map of what exists in this repository. Updated when structure changes.
 
-**As of M8.** 4608 lines of source, 4063 lines of tests, 295 tests (278
-weight-free + 17 marked `models`). All four detectors -- rules (both
+**As of M9.** 4688 lines of source, 4160 lines of tests, 303 tests (285
+weight-free + 18 marked `models`). All four detectors -- rules (both
 families), PII, V0, V3 -- run against every intercepted tool result through
 the fusion/policy engine (`gating/policy.py`); V0/V3 ship **inert** (scored,
 logged, zero decision weight). A payload corpus pipeline exists (`corpus/`):
@@ -13,7 +13,10 @@ harness (`gauge/`) calibrates V0/V3 at matched FPR budgets and reports
 ASR/AUROC by threat type AND by source family (FR-12, leave-one-source-out)
 with confidence intervals throughout, but does not itself flip
 `config/policy.yaml`'s `calibrated` flag -- that remains a deliberate human
-decision after reviewing a run's report.
+decision after reviewing a run's report. Latency is benchmarked and
+committed (`docs/LATENCY-BENCHMARK.md`): rules/PII/V0 trivial, V3 (and
+therefore the fused pipeline) ~2x over its NFR-2 budget on short text and up
+to 13 seconds on real fetched web content.
 
 ---
 
@@ -41,10 +44,13 @@ D:\LLMSHIELD-MCP\
 ├── sandbox/                     synthetic benign corpus; filesystem server is
 │                                confined to this directory (SEC-4)
 ├── chains/
-│   └── baseline.json            recorded benign tool-call chain (M1 fixture)
+│   ├── baseline.json            recorded benign tool-call chain (M1 fixture)
+│   └── latency_chain.json       25-call chain through the live fused gate,
+│                                for FR-14 (M9)
 ├── scripts/
-│   └── benchmark_rules.py       rule recall vs BIPIA + InjecAgent (imports
-│                                loaders from llmshield_mcp.corpus.sources)
+│   ├── benchmark_rules.py       rule recall vs BIPIA + InjecAgent (imports
+│   │                            loaders from llmshield_mcp.corpus.sources)
+│   └── benchmark_latency.py     per-detector + fused latency (FR-13, M9)
 ├── corpus/
 │   ├── external/                 fetched BIPIA/InjecAgent (gitignored)
 │   ├── reference/                V0/V3 training-data reference corpus,
@@ -55,7 +61,9 @@ D:\LLMSHIELD-MCP\
 │                                  gauge-run (gitignored output directory)
 ├── docs/
 │   ├── PINNING.md               why scikit-learn and transformers are pinned
-│   └── M0-OBSERVATIONS.md       M0 probe observations (explicitly not results)
+│   ├── M0-OBSERVATIONS.md       M0 probe observations (explicitly not results)
+│   ├── POLICY-AUDIT.md          pre-M4 policy/threshold audit, measured
+│   └── LATENCY-BENCHMARK.md     M9: per-detector, fused, 20-call chain latency
 ├── src/llmshield_mcp/
 │   ├── __init__.py              __version__ = "0.1.0"
 │   ├── __main__.py              python -m llmshield_mcp
@@ -63,6 +71,7 @@ D:\LLMSHIELD-MCP\
 │   ├── chain.py                 recorded tool-call chain format (107)
 │   ├── cli.py                   CLI entry point (188)
 │   ├── config.py                config loading + score-mode collapse (145)
+│   ├── latency.py               LatencyStats, summarize(), time_calls() (FR-13, M9)
 │   ├── servers.py               MCP server config + sandbox resolution (88)
 │   ├── settings.py              .env / environment secrets (38)
 │   ├── gating/
@@ -121,6 +130,8 @@ D:\LLMSHIELD-MCP\
 │   ├── test_gauge_report.py     by_source grouping (FR-12), weight-free (2)
 │   ├── test_gauge_run_with_models.py  end-to-end harness, marked `models` (5)
 │   ├── test_golden_set.py       M4 golden-set regression test (6)
+│   ├── test_latency.py          LatencyStats/summarize/time_calls, weight-free (7)
+│   ├── test_latency_with_models.py  real-detector sanity check, marked `models` (1)
 │   ├── test_servers.py          server config + sandbox validation (8)
 │   └── test_adapters_with_models.py  reuse audit, marked `models` (7)
 └── .github/workflows/ci.yml     lint, format, type-check, test (CURRENTLY FAILING)
@@ -430,10 +441,25 @@ Behaviours worth knowing:
   file `plan.md` section 2.6 requires, since the weights themselves cannot be
   published.
 
+### `llmshield_mcp.latency`
+
+Latency measurement primitives (FR-13, FR-14, NFR-1, NFR-2, M9).
+
+| Symbol | Purpose |
+|---|---|
+| `LatencyStats` | `mean_ms`, `p95_ms`, `n` |
+| `summarize(durations_ms)` | Mean + p95 (linear-interpolation percentile, matching `numpy.percentile`'s default -- `exp2_eval.py`'s own convention) |
+| `time_calls(fn, items, n_warm=10)` | Calls `fn` once per item, timing every call after the first `n_warm` -- warmup runs but is not counted, so one-time costs (lazy imports, cache fills) don't pollute the numbers |
+
+`scripts/benchmark_latency.py` is the thin script pointing this at the real
+detectors and corpus, mirroring the `corpus/sources.py` /
+`scripts/benchmark_rules.py` split -- the reusable logic lives in `src/`,
+the script is a runner with no logic of its own worth unit-testing.
+
 ### `llmshield_mcp.cli`
 
 `main(argv)` — argparse, `--version`. Subcommands: `verify-models`,
-`run-agent`, `corpus-ingest` (M6), `gauge-run` (M7).
+`run-agent`, `corpus-ingest` (M6), `gauge-run` (M7/M8).
 
 `verify_models(config_path, which)` loads V0 and/or V3, scores four probe texts
 (`PROBES` plus `LONG_PROBE`), and for V3 instantiates once per long-text

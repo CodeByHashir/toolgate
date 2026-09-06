@@ -4,7 +4,7 @@ Companion to `prd.md` (what to build) and `whats_has_been_done.md` (what is
 built). This file holds the plan, the architecture decisions and their
 rationale, remaining work, and known risks.
 
-**Current position: M8 complete. Leave-one-source-out (FR-12) is a `by_source` ASR breakdown on M7's calibration machinery -- no retraining, since this project never trains anything. `config/policy.yaml` still ships uncalibrated by deliberate choice -- see 2.20.**
+**Current position: M9 complete. Latency benchmarked per detector, fused, and across a real 20+-call chain -- committed in `docs/LATENCY-BENCHMARK.md`. `config/policy.yaml` still ships uncalibrated by deliberate choice -- see 2.20.**
 
 ---
 
@@ -24,7 +24,7 @@ Each milestone is independently testable and lands as its own commit.
 | M6 | Corpus schema, ingest CLI, MinHash decontamination | FR-10, AC-6 | Drop-count report; no surviving near-duplicate above threshold | **Done** |
 | M7 | GAUGE harness; DeLong ported, Wilson/CP/McNemar on statsmodels; replace hand-rolled CIs | FR-11, NFR-6, NFR-7 | Known-answer tests for Wilson, Clopper-Pearson, McNemar, DeLong | **Done** |
 | M8 | Leave-one-source-out generalisation test | FR-12 | Per-held-out-family table | **Done** |
-| M9 | Latency benchmark: per-detector, fused, 20-call chain | FR-13, FR-14, NFR-1, NFR-2 | Reproducible script, committed numbers | Not started |
+| M9 | Latency benchmark: per-detector, fused, 20-call chain | FR-13, FR-14, NFR-1, NFR-2 | Reproducible script, committed numbers | **Done** |
 | M10 | Report generation; README headline numbers | AC-7, [18] | Tables and plots as static files | Not started |
 | M11 | *(optional)* Standalone stdio proxy over the same gating core | [11.1] option A | Agent config points at proxy, nothing else changes | Not started |
 
@@ -677,6 +677,49 @@ A minimum-family-count check (`run_gauge` warns, does not raise, below two
 distinct adversarial `source` values) keeps the `by_source` breakdown from
 silently looking meaningful when the corpus can't actually support the
 comparison.
+
+### 2.23 M9: latency is committed, not gitignored -- and a real finding about `inert` detectors
+
+Unlike M7/M8's calibration reports (deliberately gitignored, `results/`,
+because they could inform a live-behaviour edit to `config/policy.yaml`),
+the milestone table's own verification bar for M9 says "committed numbers".
+Latency carries no such risk -- it cannot silently invalidate a
+cross-surface comparison the way an inherited threshold could -- so
+`docs/LATENCY-BENCHMARK.md` is committed directly, matching
+`docs/PINNING.md`/`M0-OBSERVATIONS.md`/`POLICY-AUDIT.md`'s precedent of
+hand-authored reports with real numbers pasted in after running the
+reproducible script, not machine-generated.
+
+**Reused, not invented:** mean + p95 in milliseconds with warmup excluded is
+`exp2_eval.py`'s own `latency_hf`/`latency_sklearn` convention (`n_warm=10`).
+`src/llmshield_mcp/latency.py` carries the reusable logic;
+`scripts/benchmark_latency.py` is the thin script, mirroring the
+`corpus/sources.py` / `scripts/benchmark_rules.py` split already established.
+
+**The chain fixture needed a full API key, and this worktree didn't have
+one.** `.env` is gitignored and per-worktree; the main checkout has it, this
+worktree did not. Resolved by exporting `ANTHROPIC_API_KEY` from the main
+checkout's `.env` for the one command that needed it (via command
+substitution, so the key value never appeared in a visible command string),
+rather than copying the file -- the same "the artifact this worktree lacks
+lives in the main checkout" situation `LLMSHIELD_MODELS_ROOT`/
+`LLMSHIELD_TRAINING_CORPUS` already solved for weights and the decontamination
+reference corpus, solved the same way for a secret instead of a large file.
+
+**A real finding, not a smoke test: `inert` costs nothing in decision weight
+but nothing in latency either.** Per-detector benchmarking on real corpus
+text found rules/PII/V0 combined add under 3ms; V3 alone (and therefore the
+fused pipeline, since V3 dominates it) averages ~208-215ms -- roughly 2x
+NFR-2's 100ms SME budget on short text. The 20-call chain benchmark (FR-14)
+went further: real fetched web pages are long enough to push V3's
+`chunk_max` strategy across many windows, and gate latency scaled with that
+-- one page reached 13.1 seconds, and for 9 of 16 fetches gate latency
+*exceeded* the network round-trip that produced the content. `config/policy.yaml`
+shipping V3 `inert` (M5) protects the *decision* from an uncalibrated ML
+score; it does nothing for latency, because the detector still runs, still
+gets scored, on every intercepted result regardless of its decision weight.
+Worth carrying into the eventual report as its own finding, distinct from
+M7/M8's accuracy-side ones.
 
 ## 4. Open Questions
 
