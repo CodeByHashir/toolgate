@@ -1,0 +1,108 @@
+# Fusion and policy configuration (FR-4, FR-5, FR-6, FR-7, FR-9).
+#
+# Every setting here traces to a measurement in docs/POLICY-AUDIT.md and a
+# decision recorded in plan.md 2.15 -- nothing is a default carried over from
+# LLMShield's policies/default.json (plan.md 2.12 explains why that file is
+# not safe to adopt on this surface).
+#
+#   * Max/OR fusion, never weighted-linear averaging. Detectors are
+#     near-orthogonal (pairwise Jaccard 0.00-0.09) and none exceeds 20.3%
+#     recall; averaging weak orthogonal signals at ~0.3 weight cannot cross
+#     any useful threshold -- the FM-5 failure the inherited dissertation
+#     blames for 75.7% of bypasses. There is therefore no "weights" block
+#     below: each detector's own threshold decides whether IT fires, and any
+#     firing detector in a role is enough (OR).
+#   * PII carries zero injection-decision weight (see `detectors.redaction`
+#     below). Its apparent 19.3% recall on the pre-M3b audit was an
+#     InjecAgent benchmark artefact (34/35 hits were the fixed literal
+#     amy.watson@gmail.com). Its job is SEC-3/NFR-4 style redaction, not
+#     detecting injection.
+#   * INJ-* stays enabled but scored-but-inert (see `detectors.inert`). It
+#     catches 0 of 187 real indirect-injection payloads and produces every
+#     rule false positive (docs/POLICY-AUDIT.md section 2). Logging its score
+#     every run keeps that 0.0% transfer finding visible without letting it
+#     degrade a live decision.
+#   * V0 and V3 (M5) ship inert for the identical reason. Their thresholds in
+#     docs/POLICY-AUDIT.md section 3 are ad-hoc percentile splits on ~800
+#     benign lines -- the document's own words are "directional, not a
+#     result". V0 alone scores README.md-style benign content at 0.986
+#     not_benign (section 4.1); promoting either to `injection` on today's
+#     numbers would repeat the exact ML-circuit-breaker mistake this file
+#     exists to avoid, just relabelled from Block to Escalate-spam. They run
+#     against every intercepted tool result and their real scores reach the
+#     audit log regardless (FR-2, FR-3) -- promotion to `injection` is a
+#     one-line, no-code-change ablation once M7 actually calibrates them.
+#   * Escalate is the default action on detection, not Block. With 74.3% of
+#     payloads caught by nothing at all, a Block-by-default policy would pay
+#     the full false-positive cost while still missing three quarters of
+#     attacks.
+#
+# `calibrated: false` is load-bearing, not a placeholder. FR-11 requires
+# matched-FPR calibration on THIS surface before Block is safe to use; until
+# this flips to true, PolicyEngine.decide() (src/llmshield_mcp/gating/policy.py)
+# refuses to ever return Decision.BLOCK, downgrading it to Decision.ESCALATE
+# instead. Flip it only after an M7 calibration run has actually produced
+# thresholds for this file -- not by hand, and not to unblock a test.
+calibrated: false
+
+# SEC-6: a detector that raised has "no opinion", not a benign vote. This is
+# the decision that opinion becomes instead. Must be "escalate" or "block"
+# (never "allow" -- that would make a crashed detector indistinguishable from
+# a clean scan) and is itself subject to the `calibrated` gate above.
+on_detector_failure: escalate
+
+# Which logical detector KEYS (assigned by the gate -- see
+# gating/transport.py:build_detectors -- not the same as DetectorResult.detector)
+# participate in which role. `injection` and `redaction` feed the decision;
+# `inert` is scored and logged only. A key only gets constructed (and only
+# then pays its load cost -- real for v0/v3) if it appears in one of these
+# three lists. rules_mcp/rules_inj are the same RuleDetector class
+# constructed twice with different `families`, so this is the only place
+# their roles differ.
+detectors:
+  injection:
+    - rules_mcp
+  redaction:
+    - pii
+  inert:
+    - rules_inj
+    - v0
+    - v3
+
+# Per-detector, per-action score thresholds, in [0, 1]. Rules today are
+# binary (0.0 or 1.0), so 1.0 means "the family fired at all". No entries
+# for v0/v3 here: PolicyEngine.decide() never reads a threshold for a key
+# that isn't in `injection` or `redaction`, so one would be dead
+# configuration while they stay inert. To ablate one in, add it under
+# `detectors.injection` above AND a threshold here -- e.g. (NOT calibrated,
+# see docs/POLICY-AUDIT.md section 3 for where these ad-hoc numbers came
+# from): `v0: {escalate: 0.94}` reaches roughly the 5.3%-recall-at-1%-FPR
+# operating point measured there.
+thresholds:
+  rules_mcp:
+    escalate: 1.0
+    # Additionally requires calibrated: true AND detail.normalisation_only
+    # (detectors/normalise.py) -- a detection normalisation exposed but that
+    # cannot be redacted precisely against the original text. See policy.py.
+    # Severity-aware refinement of this rule is deferred to M7 calibration
+    # (docs/POLICY-AUDIT.md recommendation 4), not assumed here.
+    block: 1.0
+  pii:
+    # Matches detectors/pii.py DEFAULT_CONFIDENCE_THRESHOLD. Any entity at or
+    # above this confidence gets its span masked, independently of whatever
+    # the injection signal decides.
+    redact: 0.7
+
+# Indicative per-action false-positive budgets from plan.md 2.15. Not
+# enforced numerically anywhere yet -- there is no calibration data until M7.
+# Recorded here so the target survives the gap between design and calibration.
+fpr_budget:
+  block: 0.001
+  redact: 0.01
+  escalate: 0.05
+
+gate:
+  # FR-16 / SEC-2. Moved here from the --max-result-chars CLI flag (M2) now
+  # that a policy file exists to hold it, per FR-9. The flag still overrides
+  # this when passed explicitly (see cli.py / gating/transport.py Gate.__init__).
+  max_result_chars: 200000

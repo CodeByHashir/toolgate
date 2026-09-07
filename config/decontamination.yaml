@@ -1,0 +1,36 @@
+# Decontamination configuration (FR-10, AC-6, M6).
+#
+# Ported from the dissertation's own decontamination check
+# (evaluation/experiment2/exp2_data.py), which is what was actually used to
+# keep V0/V3's training set disjoint from their own eval suite. Reusing the
+# same shingle definition and threshold means a corpus item flagged
+# "contaminated" here is being held to the identical standard V0/V3's
+# training pipeline used -- not a threshold invented for this project.
+#
+# `shingle_size: 5` and `jaccard_threshold: 0.85` are exp2_data.py's own
+# values (`_shingles(text, k=5)`, `maxj >= 0.85`). `num_perm: 64` matches its
+# `perms = np.random.randint(..., size=(64, 2))`.
+#
+# The MinHash/LSH implementation itself is NOT ported line-for-line: this
+# project uses `datasketch.MinHashLSH` (already pinned in pyproject.toml for
+# exactly this purpose) rather than the dissertation's hand-rolled numpy
+# version, for the same reason M7 replaces hand-rolled statistics with
+# statsmodels/scipy -- an established, tested implementation over a bespoke
+# one solving the same problem. See src/llmshield_mcp/corpus/decontaminate.py
+# for why the shingle hash itself also had to change (stable hash vs Python's
+# per-process-randomized `hash()`).
+shingle_size: 5
+num_perm: 64
+jaccard_threshold: 0.85
+
+# Where the V0/V3 training-data reference corpus lives. Like
+# config/models.yaml's model weights, this is NOT vendored into the
+# repository -- it is a ~19k-row JSONL assembled from mixed-license public
+# datasets (deepset, safe-guard, jayavibhav, jackhhao, in-the-wild, rubend18,
+# dolly, alpaca; see plan.md section 3's Reuse Inventory) and this project has
+# no redistribution rights over it. Override with LLMSHIELD_TRAINING_CORPUS.
+#
+# Relative paths resolve against the repository root. `corpus/reference/` is
+# gitignored, so the default works for anyone who copies their own copy of
+# evaluation/experiment2/data/train.jsonl there.
+training_corpus_path: "corpus/reference/train.jsonl"

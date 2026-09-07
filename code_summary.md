@@ -2,11 +2,25 @@
 
 Factual map of what exists in this repository. Updated when structure changes.
 
-**As of M3b.** 2508 lines of source, 2358 lines of tests, 194 tests. Four
-detector adapters exist (rules, PII, V0, V3), and the interception layer logs
-every tool result — but the detectors are **not yet wired into the gate**,
-because the gate cannot act on multiple scores until fusion exists (M4). No
-policy engine, no corpus, no evaluation harness yet.
+**As of M10.** 4688 lines of source, 4160 lines of tests, 303 tests (285
+weight-free + 18 marked `models`) -- unchanged from M9, since M10 is
+reporting/documentation only, no new code. All four detectors -- rules
+(both families), PII, V0, V3 -- run against every intercepted tool result
+through the fusion/policy engine (`gating/policy.py`); V0/V3 ship **inert**
+(scored, logged, zero decision weight). A payload corpus pipeline exists
+(`corpus/`): fetch, label, MinHash-decontaminate, store -- three distinct
+adversarial source families (BIPIA, InjecAgent, LLMail-Inject, 337 items). A
+GAUGE harness (`gauge/`) calibrates V0/V3 at matched FPR budgets and reports
+ASR/AUROC by threat type AND by source family (FR-12, leave-one-source-out)
+with confidence intervals throughout, but does not itself flip
+`config/policy.yaml`'s `calibrated` flag. Latency is benchmarked and
+committed (`docs/LATENCY-BENCHMARK.md`): rules/PII/V0 trivial, V3 (and
+therefore the fused pipeline) ~2x over its NFR-2 budget on short text and up
+to 13 seconds on real fetched web content. The full write-up is
+`docs/REPORT.md`, with three committed SVG figures (`docs/figures/`) and a
+rewritten `README.md` stating the headline findings in plain English (M10,
+AC-7): detectors do not transfer reliably, and whatever signal exists does
+not generalise across source families.
 
 ---
 
@@ -24,19 +38,39 @@ D:\LLMSHIELD-MCP\
 ├── pyproject.toml               package metadata, exact pins, tool config
 ├── uv.lock                      full transitive lock (111 packages)
 ├── config/
+│   ├── decontamination.yaml      MinHash shingle/threshold + training-corpus
+│   │                             reference path (FR-10, M6)
 │   ├── models.yaml              paths + runtime settings for reused detectors
-│   ├── rules.yaml               19 injection regexes, ported verbatim
+│   ├── policy.yaml               fusion/policy config: calibrated flag, roles,
+│   │                             thresholds, gate.max_result_chars (FR-9)
+│   ├── rules.yaml               25 rules: 19 INJ-* (frozen) + 6 MCP-*
 │   └── servers.yaml             reference MCP server launch specs + sandbox
 ├── sandbox/                     synthetic benign corpus; filesystem server is
 │                                confined to this directory (SEC-4)
 ├── chains/
-│   └── baseline.json            recorded benign tool-call chain (M1 fixture)
+│   ├── baseline.json            recorded benign tool-call chain (M1 fixture)
+│   └── latency_chain.json       25-call chain through the live fused gate,
+│                                for FR-14 (M9)
 ├── scripts/
-│   └── benchmark_rules.py       rule recall vs BIPIA + InjecAgent
-├── corpus/external/             fetched benchmarks (gitignored)
+│   ├── benchmark_rules.py       rule recall vs BIPIA + InjecAgent (imports
+│   │                            loaders from llmshield_mcp.corpus.sources)
+│   ├── benchmark_latency.py     per-detector + fused latency (FR-13, M9)
+│   └── generate_report.py       SVG figures from a GAUGE run (AC-7, M10)
+├── corpus/
+│   ├── external/                 fetched BIPIA/InjecAgent (gitignored)
+│   ├── reference/                V0/V3 training-data reference corpus,
+│   │                              train.jsonl (gitignored, not published)
+│   └── payload_corpus.sqlite     ingested corpus store (gitignored, *.sqlite)
+├── results/
+│   └── gauge/                    scores.csv + calibration_report.json per
+│                                  gauge-run (gitignored output directory)
 ├── docs/
 │   ├── PINNING.md               why scikit-learn and transformers are pinned
-│   └── M0-OBSERVATIONS.md       M0 probe observations (explicitly not results)
+│   ├── M0-OBSERVATIONS.md       M0 probe observations (explicitly not results)
+│   ├── POLICY-AUDIT.md          pre-M4 policy/threshold audit, measured
+│   ├── LATENCY-BENCHMARK.md     M9: per-detector, fused, 20-call chain latency
+│   ├── REPORT.md                M10: the public write-up (AC-7)
+│   └── figures/                 committed SVG charts REPORT.md embeds
 ├── src/llmshield_mcp/
 │   ├── __init__.py              __version__ = "0.1.0"
 │   ├── __main__.py              python -m llmshield_mcp
@@ -44,38 +78,74 @@ D:\LLMSHIELD-MCP\
 │   ├── chain.py                 recorded tool-call chain format (107)
 │   ├── cli.py                   CLI entry point (188)
 │   ├── config.py                config loading + score-mode collapse (145)
+│   ├── latency.py               LatencyStats, summarize(), time_calls() (FR-13, M9)
 │   ├── servers.py               MCP server config + sandbox resolution (88)
 │   ├── settings.py              .env / environment secrets (38)
 │   ├── gating/
 │   │   ├── audit.py             SQLite decision log, Decision/Outcome (173)
-│   │   ├── content.py           result extraction + size policy (133)
-│   │   └── transport.py         Gate + stream wrappers (281)
-│   └── detectors/
-│       ├── __init__.py          exports; V3 imported lazily (31)
-│       ├── base.py              detector contract (118)
-│       ├── normalise.py         canonicalisation + dual scan (187)
-│       ├── pii.py               PII scanner + redact() (183)
-│       ├── rules.py             injection rule engine (135)
-│       ├── v0_lexical.py        V0 adapter (79)
-│       └── v3_transformer.py    V3 adapter (108)
+│   │   ├── content.py           extraction, apply_redaction(),
+│   │   │                        build_block_result() (FR-5/FR-6) (231)
+│   │   ├── policy.py            fusion + policy engine (FR-4/FR-9) (240)
+│   │   └── transport.py         Gate + stream wrappers; wires detectors +
+│   │                            PolicyEngine into observe_inbound (M4) (340)
+│   ├── detectors/
+│   │   ├── __init__.py          exports; V3 imported lazily (31)
+│   │   ├── base.py              detector contract (118)
+│   │   ├── normalise.py         canonicalisation + dual scan (187)
+│   │   ├── pii.py               PII scanner + redact() (183)
+│   │   ├── rules.py             injection rule engine (135)
+│   │   ├── v0_lexical.py        V0 adapter (79)
+│   │   └── v3_transformer.py    V3 adapter (108)
+│   ├── corpus/                  payload corpus pipeline (FR-10, M6, M8)
+│   │   ├── sources.py           fetch()/load_adversarial()/load_benign();
+│   │   │                        fetch_llmail_inject()/load_llmail_inject()
+│   │   │                        (3rd source family, Q3)
+│   │   ├── decontaminate.py     MinHash shingling + datasketch.MinHashLSH
+│   │   └── store.py             PayloadCorpusItem, CorpusStore, export_jsonl()
+│   └── gauge/                   GAUGE harness: stats, calibration (FR-11, M7)
+│       ├── stats.py             wilson_ci/clopper_pearson_ci/mcnemar_test
+│       │                        (statsmodels) + auroc_delong() (ported)
+│       ├── calibrate.py         threshold_at_fpr(): matched-FPR calibration
+│       ├── references.py        dual benign reference split (keyword filter)
+│       └── run.py               run_gauge(): the harness, scores.csv + report
+│                                (ASR by threat_type AND by source, FR-12)
 ├── tests/
+│   ├── fixtures/
+│   │   └── golden_set.json      frozen decision fixture (M4 regression test)
+│   ├── conftest.py               `light_detectors` fixture: the weight-free,
+│   │                              decision-relevant detector set (M5)
 │   ├── test_agent.py            tool-use loop, faked client + sessions (13)
 │   ├── test_chain.py            chain round-trip and schema (6)
 │   ├── test_config.py           config + score-mode tests (15)
+│   ├── test_corpus_decontaminate.py  MinHash correctness, config loading (13)
+│   ├── test_corpus_llmail_inject.py  parsing, dedup, sampling cap (6)
+│   ├── test_corpus_sources.py   load_benign() sanity (offline) (2)
+│   ├── test_corpus_store.py     PayloadCorpusItem round-trip, export (7)
 │   ├── test_detector_normalise.py  canonicalisation + dual scan (22)
 │   ├── test_detector_pii.py     PII, redaction, SEC-3 leakage (31)
 │   ├── test_detector_rules.py   rule loading, matching, SEC-6 (24)
 │   ├── test_detector_base.py    contract tests (7)
 │   ├── test_gating_audit.py     decision log store (7)
-│   ├── test_gating_content.py   extraction, size policy, section 19 cases (18)
-│   ├── test_gating_transport.py gate behaviour + stream wrappers (20)
+│   ├── test_gating_content.py   extraction, size policy, redaction, block (24)
+│   ├── test_gating_policy.py    table-driven PolicyEngine.decide, FR-9 proof (23)
+│   ├── test_gating_transport.py gate + fusion behaviour, stream wrappers (26)
+│   ├── test_gating_transport_with_models.py  V0/V3 wiring + ablation, marked
+│   │                              `models` (5)
+│   ├── test_gauge_stats.py      Wilson/CP/McNemar/DeLong known-answer tests (11)
+│   ├── test_gauge_calibrate.py  threshold_at_fpr correctness (8)
+│   ├── test_gauge_references.py dual benign reference split (7)
+│   ├── test_gauge_report.py     by_source grouping (FR-12), weight-free (2)
+│   ├── test_gauge_run_with_models.py  end-to-end harness, marked `models` (5)
+│   ├── test_golden_set.py       M4 golden-set regression test (6)
+│   ├── test_latency.py          LatencyStats/summarize/time_calls, weight-free (7)
+│   ├── test_latency_with_models.py  real-detector sanity check, marked `models` (1)
 │   ├── test_servers.py          server config + sandbox validation (8)
 │   └── test_adapters_with_models.py  reuse audit, marked `models` (7)
 └── .github/workflows/ci.yml     lint, format, type-check, test (CURRENTLY FAILING)
 ```
 
 Not tracked by git: `.venv/`, `models/`, `.env`, `*.joblib`, `*.safetensors`,
-`logs/`, `*.sqlite`.
+`logs/`, `*.sqlite`, `corpus/external/`, `corpus/reference/`, `results/`.
 
 ---
 
@@ -269,25 +339,34 @@ Loop invariants worth knowing:
 
 ### `llmshield_mcp.gating`
 
-The interception layer (M2). Observes every frame and logs a decision per tool
-result; **runs no detectors**.
+The interception layer (M2) plus the fusion/policy engine wired into it (M4),
+now running all four detectors (M5). Observes every frame, runs whichever
+detectors the policy names, fuses their results into one decision, and logs
+it -- rewriting the frame itself for Redact/Block.
 
 | Symbol | Purpose |
 |---|---|
-| `Decision` | `allow` / `redact` / `block` / `escalate` (FR-4). M2 only emits `allow`. |
+| `Decision` | `allow` / `redact` / `block` / `escalate` (FR-4) |
 | `Outcome` | `result` / `protocol_error` / `detector_failure` — what kind of frame the row is about |
 | `DecisionRecord` | One log row. `latency_ms` is time inside the gate; `roundtrip_ms` is client-to-server-and-back, kept separate so NFR-1 stays measurable |
 | `DecisionLog` | Append-only SQLite store. Content is **hashed, never stored** (section 12) |
 | `extract(result, max_chars)` | Raw `tools/call` result -> scannable text, block types, truncation flag, SHA-256 of the *full* pre-truncation text |
-| `GateConfig` | `max_result_chars` (FR-16/SEC-2), `max_pending` (NFR-5) |
-| `Gate` | Correlates requests to responses, logs one row per tool result |
+| `apply_redaction(result, spans)` | Rebuilds `result` with `spans` masked in their originating content block (FR-5). Shares `_walk_blocks()` with `extract()` so offsets always agree. |
+| `build_block_result(is_error)` | The FR-6 replacement result: one text block, `BLOCK_MESSAGE`, nothing of the original carried forward |
+| `PolicyConfig` / `load_policy_config()` | Validated `config/policy.yaml`: `calibrated`, `on_detector_failure`, detector-role sets, per-detector thresholds, `max_result_chars` |
+| `PolicyEngine.decide(results)` | Pure fusion function: `dict[str, DetectorResult]` -> `FusionOutcome`. Max/OR across `injection_detectors`; PII (`redaction_detectors`) masks independently of the decision label; `calibrated: false` caps `BLOCK` to `ESCALATE` |
+| `GateConfig` | `max_result_chars` (FR-16/SEC-2, now sourced from `policy.yaml` by default), `max_pending` (NFR-5) |
+| `Gate` | Runs `build_detectors(policy.config)` (or an injected set) through `scan_normalised`, calls `PolicyEngine.decide`, logs one row per tool result, and returns the (possibly rewritten) frame |
+| `build_detectors(config)` | Factory registry keyed `rules_mcp`/`rules_inj`/`pii`/`v0`/`v3`; constructs exactly the union of keys named in `config`'s three role sets. `v0`/`v3` factories call `load_models_config()` lazily, so nothing imports torch/transformers or reads a joblib file unless a policy role actually names them |
 | `gating_transport(inner, gate)` | Wraps any `Transport`, satisfying the same protocol |
 
 Behaviours worth knowing:
 
-- Frames are forwarded **byte-identical** — the wrappers return the same object
-  they received. Truncation bounds *detection input only* and never alters what
-  the agent sees.
+- Frames are forwarded **byte-identical** for `Allow` and `Escalate` — the
+  wrappers return the same object they received. For `Redact` and `Block`,
+  `observe_inbound` returns a *new* `SessionMessage` built via
+  `payload.model_copy()` + `dataclasses.replace()`; the original object is
+  never mutated. Truncation still bounds *detection input only*.
 - A JSON-RPC error is logged as `protocol_error` with no content extraction
   (FR-15). A tool-level failure (`isError`) is a normal `result` row with
   `tool_is_error` set — a different thing entirely.
@@ -296,10 +375,98 @@ Behaviours worth knowing:
   growing state (NFR-5).
 - Only `tools/call` is tracked. `initialize`, `tools/list` and server-initiated
   requests produce no rows.
+- `BLOCK` cannot surface while `config/policy.yaml` ships `calibrated: false`
+  (FR-11) — `PolicyEngine._ceiling()` downgrades it to `ESCALATE` regardless of
+  which branch produced it.
+
+### `llmshield_mcp.corpus`
+
+The payload corpus pipeline (FR-10, AC-6, M6): fetch raw sources, label them,
+check them against V0/V3's own training data, store the result.
+
+| Symbol | Purpose |
+|---|---|
+| `fetch()` / `load_adversarial()` / `load_benign()` | `sources.py`. BIPIA/InjecAgent (cached under `corpus/external/`, gitignored) and benign lines from this repository's own content. Moved here from `scripts/benchmark_rules.py`, which now imports them. |
+| `fetch_llmail_inject()` / `load_llmail_inject()` | The third adversarial source family (`plan.md` Q3): `microsoft/llmail-inject-challenge` via HuggingFace's `datasets-server` REST API, sampled/deduplicated to 150 items. Deliberately separate from `load_adversarial()` -- folding it in would change what `scripts/benchmark_rules.py` measures. |
+| `DecontaminationConfig` / `load_decontamination_config()` | `decontaminate.py`. Validated `config/decontamination.yaml`: shingle size, `num_perm`, Jaccard threshold, and the training-corpus reference path (`LLMSHIELD_TRAINING_CORPUS` override, same pattern as `config.py`'s `LLMSHIELD_MODELS_ROOT`) |
+| `decontaminate(items, config, reference_texts=None)` | Flags near-duplicates (Jaccard >= threshold via `datasketch.MinHashLSH`) or exact normalised-text matches against the reference corpus. `reference_texts` lets tests supply a small in-memory reference set instead of the real ~19k-row file |
+| `CorpusLabel` | `benign` / `adversarial` |
+| `DecontaminationStatus` | `clean` / `contaminated` / `unchecked` -- distinct from `clean` so an unrun check cannot look decontaminated by construction |
+| `PayloadCorpusItem` / `CorpusStore` | `store.py`. SQLite schema per `PROPOSAL.md` section 12. Unlike `DecisionLog`, stores the actual text -- the corpus is a project deliverable, not an audit trail |
+| `CorpusStore.export_jsonl(path)` | The publishable snapshot -- one JSON object per row, field order matching the `PayloadCorpusItem` schema |
+
+Behaviours worth knowing:
+
+- Reused, not reinvented: the 5-char shingle definition and the 0.85 Jaccard
+  threshold are `evaluation/experiment2/exp2_data.py`'s own values, so an item
+  flagged contaminated here is held to the exact standard that kept V0/V3's
+  training set disjoint from their eval suite. The MinHash *implementation*
+  is `datasketch`, not a port of the dissertation's hand-rolled numpy version.
+- Both labels are checked against the reference corpus, not just adversarial
+  items -- the training set has a benign class too (dolly/alpaca), so a
+  benign corpus item can be contaminated exactly as an adversarial one can.
+- Contaminated items are kept, flagged via `decontamination_status`, never
+  deleted -- a drop-count report needs them still visible.
+- The training-data reference corpus (`corpus/reference/train.jsonl`) is not
+  vendored, for the same reason V0/V3's weights are not: mixed-license public
+  datasets this project has no redistribution rights over.
+
+### `llmshield_mcp.gauge`
+
+The GAUGE harness (FR-11, FR-12, NFR-6, NFR-7, M7/M8): statistics,
+matched-FPR calibration, and the orchestrator that runs both against the
+real corpus and weights.
+
+| Symbol | Purpose |
+|---|---|
+| `wilson_ci(k, n)` / `clopper_pearson_ci(k, n)` | `stats.py`. Thin `statsmodels.stats.proportion.proportion_confint` wrappers (methods `"wilson"`/`"beta"`) -- not ported from either dissertation hand-rolled version |
+| `mcnemar_test(a_correct, b_correct)` | `statsmodels.stats.contingency_tables.mcnemar`, exact binomial |
+| `auroc_delong(positive, negative)` | Ported from `exp2_auroc_delong.py`'s pure-Python midrank DeLong implementation -- the one dissertation statistic confirmed correct rather than replaced |
+| `threshold_at_fpr(scores, target_fpr)` | `calibrate.py`. Places the threshold so achieved FPR is always `<= target` (never above); flags `unreachable` for a constant-scored detector instead of a fake number. Convention from `exp2_multi_fpr.py`/`exp2_eval.py`, not their code |
+| `partition_benign_references(items)` | `references.py`. Splits a benign pool into `(realistic, adversarial_styled)` via a word-boundary keyword filter -- independent of `config/rules.yaml`'s actual patterns |
+| `run_gauge(db, output_dir, sample_size, seed)` | `run.py`. Loads the clean M6/M8 corpus, samples/splits the dual benign references, calibrates V0/V3 at each `config/policy.yaml` `fpr_budget`, computes ASR by threat type AND by source family (FR-12, M8 -- `_grouped_asr` shares one grouping implementation for both) and DeLong AUROC (all with CIs), writes `scores.csv` and `calibration_report.json` |
+
+Behaviours worth knowing:
+
+- `run_gauge` never edits `config/policy.yaml`. Flipping `calibrated: true`
+  and moving `v0`/`v3` out of `inert` is a deliberate human decision after
+  reading a run's report, per that file's own comment.
+- Leave-one-source-out (FR-12) is a `by_source` ASR breakdown at the same
+  calibrated threshold, not a retrain-with/without-family loop -- this
+  project never retrains V0/V3, so there is no training-set-exclusion sense
+  in which a family could be "held out" (`plan.md` 2.20/2.22). `run_gauge`
+  warns (does not raise) if the corpus has fewer than two adversarial
+  `source` values, since `by_source` needs at least two to compare.
+- Every item is scored by every detector (`gauge/run.py:build_detectors`,
+  distinct from `gating/transport.py`'s config-role-driven function of the
+  same name) -- GAUGE always wants the full picture, unlike the live gate.
+- Benign items are sampled (`DEFAULT_BENIGN_SAMPLE_SIZE = 300`, fixed seed)
+  rather than scored in full, because V3's latency against ~7,500 ingested
+  benign lines would take tens of minutes per run.
+- `scores.csv` carries every item/detector pair plus a `config_hash` column
+  fingerprinting the exact config files a run used -- the reproducibility
+  file `plan.md` section 2.6 requires, since the weights themselves cannot be
+  published.
+
+### `llmshield_mcp.latency`
+
+Latency measurement primitives (FR-13, FR-14, NFR-1, NFR-2, M9).
+
+| Symbol | Purpose |
+|---|---|
+| `LatencyStats` | `mean_ms`, `p95_ms`, `n` |
+| `summarize(durations_ms)` | Mean + p95 (linear-interpolation percentile, matching `numpy.percentile`'s default -- `exp2_eval.py`'s own convention) |
+| `time_calls(fn, items, n_warm=10)` | Calls `fn` once per item, timing every call after the first `n_warm` -- warmup runs but is not counted, so one-time costs (lazy imports, cache fills) don't pollute the numbers |
+
+`scripts/benchmark_latency.py` is the thin script pointing this at the real
+detectors and corpus, mirroring the `corpus/sources.py` /
+`scripts/benchmark_rules.py` split -- the reusable logic lives in `src/`,
+the script is a runner with no logic of its own worth unit-testing.
 
 ### `llmshield_mcp.cli`
 
-`main(argv)` — argparse, `--version`, subcommand `verify-models`.
+`main(argv)` — argparse, `--version`. Subcommands: `verify-models`,
+`run-agent`, `corpus-ingest` (M6), `gauge-run` (M7/M8).
 
 `verify_models(config_path, which)` loads V0 and/or V3, scores four probe texts
 (`PROBES` plus `LONG_PROBE`), and for V3 instantiates once per long-text
@@ -314,21 +481,36 @@ also imported by `tests/test_adapters_with_models.py`.
 ## 3. Data Flow (current)
 
 ```
-config/models.yaml
-   │  load_models_config()  → validates, applies LLMSHIELD_MODELS_ROOT
+config/rules.yaml, config/models.yaml, config/policy.yaml
+   │  load_rules() / load_models_config() / load_policy_config()
    ▼
-ModelsConfig ──► V0LexicalDetector / V3TransformerDetector  (construction)
-                          │
-   text ──────────────────┤ Detector.score(text)
-                          │   ├── times the call
-                          │   ├── delegates to _score(text) → RawScore
-                          │   └── contains any exception
-                          ▼
-                   DetectorResult   (score | None, detail, spans, latency, error)
+build_detectors(policy.config) ──► {rules_mcp, rules_inj, pii, v0, v3}
+     (only the keys a role names;         │
+      v0/v3 factories load weights        │
+      lazily -- see gating/transport.py)  │
+                                           ▼
+                    tool-result text ────────┤ scan_normalised(detector, text)
+                                              │   → DetectorResult (score|None, ...)
+                                              ▼
+                              {detector_key: DetectorResult}   (ALL detectors, incl. inert)
+                                              │
+                                              ▼
+                             PolicyEngine.decide()  →  FusionOutcome
+                                (Decision, redacted, redact_spans, note)
+                                              │
+                          ┌───────────────────┼────────────────────┐
+                          ▼                   ▼                     ▼
+                apply_redaction()   build_block_result()      DecisionLog.append()
+                (Redact: mask       (Block: replace whole     (always: EVERY detector's
+                 PII spans only)     result, FR-6)             score, incl. inert ones)
 ```
 
-There is no consumer of `DetectorResult` yet. The fusion and policy engine
-(M4) will be the first.
+V0 and V3 are real detectors in this diagram (M5), but sit in
+`config/policy.yaml`'s `detectors.inert`, not `detectors.injection` --
+`PolicyEngine.decide()` reads every detector's score into the log
+unconditionally, but only consults `injection_detectors`/`redaction_detectors`
+when deciding. Promoting either to `injection` (plus a threshold) is the
+whole ablation; no code changes (`plan.md` 2.18).
 
 ---
 
@@ -373,15 +555,16 @@ retained by default; a hash is stored instead.
 
 | Integration | Status |
 |---|---|
-| Reused LLMShield V0/V3 artifacts | Active. Read from an external path; never modified. |
+| Reused LLMShield V0/V3 artifacts | Active, wired into the live gate as inert detectors (M5). Read from an external path; never modified. |
 | Anthropic Claude API (`anthropic==0.86.0`) | **Active** — `ReferenceAgent`, model `claude-opus-5` |
 | MCP Python SDK (`mcp==2.1.1`) | **Active** — client sessions over stdio. Transport interception is M2. |
 | Official MCP filesystem server (`@modelcontextprotocol/server-filesystem@2026.8.31`, via `npx`) | **Active** — 14 tools, confined to `sandbox/` |
 | Official MCP fetch server (`mcp-server-fetch==2026.8.18`, via `uvx`) | **Active** — 1 tool |
 | HuggingFace `transformers` / `torch` | Active (V3) |
 | `scikit-learn` / `joblib` | Active (V0) |
-| `datasketch` | Installed, unused. Decontamination is M6. |
-| `statsmodels` / `scipy` | Installed, unused. Statistics are M7. |
+| `datasketch` | **Active** (M6) -- `MinHash`/`MinHashLSH` for corpus decontamination. |
+| `statsmodels` | **Active** (M7) -- Wilson/Clopper-Pearson (`proportion_confint`), McNemar (`contingency_tables.mcnemar`). |
+| `scipy` | Active (dependency of `statsmodels`/`scikit-learn`); no direct call from this project's own code yet. |
 
 ---
 
@@ -399,7 +582,7 @@ transitive set locked in `uv.lock` (111 packages).
 | `scikit-learn` | 1.9.0 | **Load-bearing** — wrote V0's joblib |
 | `numpy` / `scipy` | 2.4.3 / 1.17.1 | |
 | `datasketch` | 2.0.0 | MinHash/LSH, M6 |
-| `statsmodels` | 0.15.0 | Wilson, Clopper-Pearson, McNemar, M7 |
+| `statsmodels` | 0.15.0 | **Active** (M7) -- Wilson, Clopper-Pearson, McNemar |
 | `pyyaml` | 6.0.3 | Config |
 | `joblib` | 1.5.2 | V0 artifact loading |
 

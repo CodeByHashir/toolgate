@@ -620,3 +620,780 @@ baseline, and its 0.0% is the finding — not a bug to patch away.
   detectors, it waits on fusion in M4.
 - Homoglyph coverage is a 25-character table, not the full Unicode confusables
   set.
+
+---
+
+## M4 — Fusion and policy engine
+
+Wires the rules and PII detectors (M3/M3b) into the gate for the first time,
+via a new fusion/policy layer. V0 and V3 stay out of the live path -- that is
+M5's job (`plan.md` milestone table); M4's scope is exactly what M3/M3b
+already ported.
+
+### What changed
+
+- `config/policy.yaml` -- new versioned policy file (FR-9). `calibrated:
+  false`, `on_detector_failure: escalate`, detector-role groupings
+  (`injection: [rules_mcp]`, `redaction: [pii]`, `inert: [rules_inj]`),
+  per-detector per-action thresholds, and `gate.max_result_chars` (moved here
+  from the `--max-result-chars` CLI flag, per the comment left in `cli.py` at
+  M2).
+- `src/llmshield_mcp/gating/policy.py` -- `PolicyConfig`, `load_policy_config()`,
+  `FusionOutcome`, `PolicyEngine.decide()`. Pure function: a
+  `dict[str, DetectorResult]` in, one `FusionOutcome` out, no I/O.
+- `src/llmshield_mcp/gating/content.py` -- `_walk_blocks()` (shared by
+  `extract()` and the new `apply_redaction()`), `apply_redaction()` (FR-5),
+  `build_block_result()` / `BLOCK_MESSAGE` (FR-6).
+- `src/llmshield_mcp/gating/transport.py` -- `default_detectors()` (two
+  `RuleDetector` instances, `families={"mcp"}` and `families={"inj"}`, plus
+  `PiiDetector`). `Gate.__init__` gained `policy` and `detectors` parameters
+  (both optional; default `Gate()` now runs real detection). `observe_inbound`
+  runs every configured detector through `scan_normalised()`, calls
+  `PolicyEngine.decide()`, and returns the (possibly rewritten) frame instead
+  of a bare `None`.
+- `tests/test_gating_policy.py` (23 tests) -- table-driven `PolicyEngine.decide`
+  cases, SEC-6 fail-closed cases, and the FR-9 proof (`config/policy.yaml`
+  threshold changed in a temp file, same code, decision flips).
+- `tests/test_golden_set.py` + `tests/fixtures/golden_set.json` -- the M4
+  golden-set regression test: five frozen texts run through the real detector
+  set and the shipped policy file, decisions pinned.
+- `tests/test_gating_transport.py`, `tests/test_gating_content.py` -- extended
+  for the M4 behaviour (see below).
+- `src/llmshield_mcp/cli.py` -- `--max-result-chars` default changed to `None`
+  (meaning "use the policy file"); still overrides it when passed explicitly.
+
+### Design decisions
+
+**Escalate is the default action on detection, not Block** (plan.md 2.15,
+carried into `PolicyEngine._injection_signal`): an `rules_mcp` hit alone
+produces `ESCALATE`. `BLOCK` additionally requires `calibrated: true` *and*
+`detail["normalisation_only"] == 1.0` (the case `detectors/normalise.py`
+flags as "found only after canonicalisation, cannot be redacted precisely").
+Severity-aware refinement of that condition is left to M7 calibration
+(`docs/POLICY-AUDIT.md` recommendation 4) rather than assumed now -- it would
+be unreachable and untestable-for-real while `calibrated: false` anyway.
+
+**`calibrated: false` is a hard ceiling, enforced once.**
+`PolicyEngine._ceiling()` downgrades any `BLOCK` to `ESCALATE` whenever the
+policy is uncalibrated, regardless of which branch produced it (a fired
+detector or `on_detector_failure: block`). `test_block_is_downgraded_to_escalate_while_uncalibrated`
+and `test_on_detector_failure_block_is_also_downgraded_while_uncalibrated`
+both exercise this. FR-11 requires matched-FPR calibration on this surface
+before Block is safe to ship live.
+
+**Decision-label precedence is BLOCK > ESCALATE > REDACT > ALLOW, and PII
+redaction is independent of which label wins.** A result can be logged
+`ESCALATE` while its PII spans are still masked in the content actually
+forwarded (`FusionOutcome.redacted`/`redact_spans` are separate fields from
+`decision`). `test_mcp_rule_hit_escalates_and_still_masks_the_pii_span`
+exercises the combined case directly: MCP-006 (exfiltration destination) and
+a PII email in the same text. Full rationale in `plan.md` 2.17.
+
+**Redaction has to survive multi-block results.** `extract()` joins every
+text-contributing content block with `"\n"` before detection, so a `Span`'s
+offset is only meaningful against that joined string, not the original
+per-block JSON. `_walk_blocks()` is now the one routine both `extract()` and
+`apply_redaction()` use to find block boundaries, so they cannot disagree
+about where a block starts.
+`test_apply_redaction_targets_only_the_block_the_span_falls_in` is the
+regression guard for that offset arithmetic.
+
+**Two `RuleDetector` instances, not one.** `RuleDetector.name` is a fixed
+`"rules"` for both the `INJ-*` and `MCP-*` families, so the gate -- not the
+detector -- assigns the keys `rules_mcp` / `rules_inj` used everywhere else
+(policy config, `detector_scores` in the audit log). This kept `rules.py`
+and `rules.yaml` completely untouched, which matters because `INJ-*` is
+frozen and guarded by its own test (M3b).
+
+**Frame rewriting is new, and deliberately narrow.** M2's stream wrappers
+always forwarded the exact object they received; `observe_inbound` now
+returns a different `SessionMessage` (built via `payload.model_copy()` +
+`dataclasses.replace()`) whenever the fused decision is `BLOCK` or produces a
+non-empty `redact_spans`. For `ALLOW`/`ESCALATE` the identity guarantee is
+unchanged --
+`test_read_wrapper_forwards_the_identical_object` still asserts `is message`
+on ordinary benign text, and the new
+`test_redact_returns_a_new_object_and_leaves_the_original_untouched` pins the
+opposite case.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `uv run pytest -m "not models"` | **224 passed**, 7 deselected (30 new) |
+| `uv run ruff check src tests scripts` | All checks passed |
+| `uv run ruff format --check src tests scripts` | 36 files already formatted |
+| `uv run mypy` | Success, 20 source files |
+
+### Known limitations
+
+- V0 and V3 are not in `detectors.injection` yet -- M5 wires them in and the
+  same `PolicyEngine` machinery (thresholds already keyed generically, not
+  rules-specific) is what will carry their graded scores.
+- `BLOCK` cannot be reached through the shipped `config/policy.yaml`
+  (`calibrated: false` by design) or through the real rule set today, since no
+  `MCP-*` rule is currently written to set `normalisation_only` on its own --
+  that detail comes from `scan_normalised`'s canonical-form comparison, not
+  from a rule. The BLOCK path is therefore only exercised in tests via a fake
+  detector (`_FixedDetector`) and a hand-built calibrated `PolicyConfig`.
+  Real BLOCK reachability is an M7 calibration question.
+- Only PII's own spans are ever redacted; `rules_mcp`'s matched spans exist
+  (FR-5's span machinery is generic) but are not redaction candidates in M4 --
+  2.15 assigns rules to Escalate/Block, not Redact.
+- The golden-set fixture (`tests/fixtures/golden_set.json`) has five cases.
+  It is a wiring regression guard, not a recall measurement -- recall claims
+  still come only from `scripts/benchmark_rules.py` against BIPIA/InjecAgent.
+
+---
+
+## M5 — V0 and V3 wired into the live gating path
+
+Runs the two reused classifiers against every intercepted tool result for the
+first time. They ship **inert** (scored, logged, zero decision weight) in
+`config/policy.yaml`, not weighted into `injection` -- promoting them on
+today's uncalibrated numbers would repeat the exact ML-circuit-breaker mistake
+`docs/POLICY-AUDIT.md` section 4.1 already measured, just relabelled from
+Block to Escalate-spam. Full rationale in `plan.md` 2.18.
+
+### What changed
+
+- `src/llmshield_mcp/gating/transport.py` -- `default_detectors()` replaced by
+  `build_detectors(config: PolicyConfig)`: a small factory registry
+  (`rules_mcp`, `rules_inj`, `pii`, `v0`, `v3`) that constructs exactly the
+  union of keys a `PolicyConfig`'s three role sets actually name. `_build_v0`/
+  `_build_v3` import `V0LexicalDetector`/`V3TransformerDetector` and call
+  `load_models_config()` lazily, inside the factory -- nothing pays for torch,
+  transformers or a joblib load unless a policy file actually names "v0" or
+  "v3" in a role.
+- `config/policy.yaml` -- `detectors.inert` gained `v0` and `v3`, with a
+  comment recording the specific ad-hoc threshold docs/POLICY-AUDIT.md section
+  3 measured (`v0: {escalate: 0.94}` for roughly its 5.3%-recall-at-1%-FPR
+  point) as a documented ablation starting point, not a live setting.
+- `tests/conftest.py` -- new. `light_detectors` fixture: the decision-relevant,
+  weight-free set (rules_mcp, rules_inj, pii), used by the bulk of the gating
+  test suite so it stays independent of the reused (unpublished, CI-absent)
+  LLMShield weights.
+- `tests/test_gating_transport_with_models.py` -- new, `models`-marked (like
+  `tests/test_adapters_with_models.py`). Proves, against the real weights:
+  the shipped policy builds V0/V3 as inert; their real scores reach both an
+  in-memory `PolicyEngine.decide` call and a real `Gate`'s audit log; the
+  shipped policy does not escalate on benign-but-trigger-word-bearing text
+  that scores V0 highly; and promoting `v0` to `injection` via a YAML file
+  alone -- no code change -- escalates that same real detector on that same
+  text. That last pair is the milestone's own verification bar, "ablation by
+  config alone," proven with a real graded detector rather than only the
+  binary rules.
+- `tests/test_gating_transport.py`, `tests/test_golden_set.py`,
+  `tests/test_gating_policy.py` -- updated to use `light_detectors` (or the
+  updated `inert_detectors` set) instead of the removed `default_detectors()`.
+
+### Design decisions
+
+**Ablation is genuinely config-only, including the constructor cost.**
+`build_detectors` does not construct-then-discard an unused V0/V3; it never
+imports `v0_lexical`/`v3_transformer` at all unless a role names them. A
+policy file that doesn't mention "v0"/"v3" costs nothing extra -- important
+given V3's measured ~180-220ms single-window / ~5300ms chunked CPU latency
+(`docs/M0-OBSERVATIONS.md`), which the rest of the system should not pay for
+until M9 says it should.
+
+**Weight-dependent tests are opt-in, not incidental.** Before M5, no ordinary
+`Gate()` construction needed model weights. Making V0/V3 part of the shipped
+inert set would have made that untrue for most of the existing suite by
+accident. `tests/conftest.py`'s `light_detectors` fixture keeps that
+invariant explicit and provable (inert detectors are provably inert to
+`PolicyEngine.decide`, so substituting them changes no test's expected
+outcome) rather than quietly making 224 tests need a private, unpublished
+artifact.
+
+**Verified with the real artifacts, not just asserted.** `LLMSHIELD_MODELS_ROOT`
+(already a supported override in `config.py`, see M0/M1 finalisation) was
+pointed at the author's local LLMShield checkout for this milestone's
+verification; the artifacts are not vendored into this repository or this
+worktree (`models/` is gitignored and absent here by default) but are
+reachable at `<LLMShield checkout>\evaluation\experiment2\models`.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `uv run pytest -m "not models"` | **224 passed**, 12 deselected |
+| `LLMSHIELD_MODELS_ROOT=... uv run pytest -m models` | **12 passed** (5 new), 224 deselected |
+| `uv run ruff check src tests scripts` | All checks passed |
+| `uv run ruff format --check src tests scripts` | 38 files already formatted |
+| `uv run mypy` | Success, 20 source files |
+
+### Known limitations
+
+- V0/V3's only thresholds anywhere are the ad-hoc percentile numbers in
+  `docs/POLICY-AUDIT.md` section 3, recorded as a comment for a future
+  ablation run, not applied. Real promotion to `injection` is an M7
+  calibration decision.
+- `build_detectors` raises if a policy role names a key with no registered
+  factory. There is no test corpus of "policy files with typos" yet -- the
+  existing `load_policy_config` validation catches structural errors (bad
+  YAML shape, out-of-range thresholds); an unknown detector *name* inside an
+  otherwise well-formed role list is caught one layer later, at `Gate`
+  construction, not at `load_policy_config` time.
+- The new `models`-marked test file duplicates two small JSON-RPC frame
+  helpers from `tests/test_gating_transport.py` rather than importing them
+  (they are underscore-prefixed there). Small, deliberate duplication over a
+  cross-test-module import of private helpers.
+
+---
+
+## M6 — Corpus schema, ingest CLI, MinHash decontamination
+
+Builds the payload corpus infrastructure (FR-10, AC-6): a schema, a CLI that
+fetches/labels/decontaminates/stores items, and MinHash decontamination
+against V0/V3's own training data. Scope deliberately excludes the
+"MCP-specific dilution corpus" (embedding payloads in benign carrier text at
+varying ratios, `prd.md` 9.3) -- confirmed with the user before implementation
+as out of scope for this milestone's stated verification bar; see `plan.md`
+2.19.
+
+### What changed
+
+- `config/decontamination.yaml` -- new. `shingle_size: 5`, `num_perm: 64`,
+  `jaccard_threshold: 0.85` (all three straight from `exp2_data.py`'s own
+  calibration), `training_corpus_path` (default `corpus/reference/train.jsonl`,
+  gitignored, `LLMSHIELD_TRAINING_CORPUS` override -- same pattern as
+  `config/models.yaml`'s `LLMSHIELD_MODELS_ROOT`).
+- `src/llmshield_mcp/corpus/sources.py` -- `fetch()`, `load_adversarial()`,
+  `load_benign()`, moved here from `scripts/benchmark_rules.py` verbatim, now
+  that `corpus-ingest` needs the same loaders. `scripts/benchmark_rules.py`
+  imports them instead of defining its own copy.
+- `src/llmshield_mcp/corpus/decontaminate.py` -- `_norm`, `_shingles`,
+  `_minhash` (5-char shingles over NFKC-normalised, casefolded text),
+  `DecontaminationConfig`/`load_decontamination_config()`,
+  `ContaminationResult`/`decontaminate()`. Uses `datasketch.MinHash`/
+  `MinHashLSH`, not `exp2_data.py`'s hand-rolled numpy version.
+- `src/llmshield_mcp/corpus/store.py` -- `PayloadCorpusItem`, `CorpusLabel`,
+  `DecontaminationStatus`, `CorpusStore` (SQLite, schema per `PROPOSAL.md`
+  section 12), `export_jsonl()`.
+- `src/llmshield_mcp/cli.py` -- new `corpus-ingest` subcommand:
+  `ingest_corpus()` fetches, labels (adversarial from BIPIA/InjecAgent, benign
+  from this repository's own content), decontaminates both labels against the
+  training-data reference corpus, stores every item (clean and contaminated),
+  prints a drop-count report, and exports a JSONL snapshot.
+- `tests/test_corpus_decontaminate.py` (13 tests), `tests/test_corpus_store.py`
+  (7), `tests/test_corpus_sources.py` (2) -- all run without network or model
+  weights; `test_corpus_decontaminate.py` is the test PROPOSAL.md section 9
+  names explicitly ("no near-duplicate above the similarity threshold survives
+  decontamination").
+- `pyproject.toml` -- `datasketch.*` added to the mypy untyped-third-party
+  override list (already pinned as a dependency since M0; now actually used).
+
+### Sources read before writing anything
+
+`evaluation/experiment2/exp2_data.py` and `exp2_lobo.py` in the LLMShield
+repository (read-only reference; nothing written there). Found, rather than
+assumed: the "existing MinHash decontamination method" `PROPOSAL.md` refers to
+is real and already calibrated (5-char shingles, 64 permutations, Jaccard
+>= 0.85 or exact match), and `evaluation/experiment2/data/train.jsonl`
+(19,026 rows) is the actual decontaminated set V0/V3 were trained on -- the
+natural reference corpus, not something to reconstruct from raw HuggingFace
+dataset names.
+
+### Design decisions
+
+**`datasketch.MinHashLSH`, not a ported reimplementation.** Already pinned in
+`pyproject.toml` for this exact purpose and unused since M0. Follows the same
+principle M7 states for statistics (established libraries over hand-rolled
+code solving the same problem) and turned out to fix a reproducibility gap:
+`exp2_data.py` hashes shingles with Python's `hash()`, randomised per process,
+which would make a stored `minhash_signature` incomparable across separate
+`corpus ingest` invocations. `datasketch`'s default `hashfunc` (SHA1-based) is
+deterministic across processes -- confirmed directly by running the same hash
+twice in separate process invocations, not assumed from documentation.
+
+**The reference corpus is gitignored, matching V0/V3's own weights.**
+`corpus/reference/` joins `models/` in `.gitignore`. Neither this project nor
+the author has redistribution rights over eight mixed-license public datasets
+merged into one file.
+
+**Contaminated items are flagged, never deleted.** The store's whole point is
+different from `DecisionLog`'s: it holds actual corpus text (a project
+deliverable, per AC-6/AC-7) rather than hashing it away, and the milestone's
+drop-count report needs dropped items still queryable.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `uv run pytest -m "not models"` | **244 passed**, 12 deselected (20 new) |
+| `uv run ruff check src tests scripts` | All checks passed |
+| `uv run ruff format --check src tests scripts` | Clean |
+| `uv run mypy` | Success, 24 source files |
+| `mcp-shield corpus-ingest` against the real `train.jsonl` | 187 adversarial + 6,617 benign lines ingested, **0 contaminated** (expected -- M3b already established BIPIA/InjecAgent share no lineage with V0/V3's training sources) |
+
+### Known limitations
+
+- The "MCP-specific dilution corpus" (prd.md 9.3, a real third source family
+  for M8) is not built. `plan.md` open question Q3 stays open for this.
+- The exported JSONL snapshot from the verification run was not committed --
+  publishing a specific corpus snapshot is left as a deliberate operator
+  decision, not something this milestone's commit makes unasked.
+- Benign items are ingested at line granularity (`load_benign()`, unchanged
+  from `scripts/benchmark_rules.py`); adversarial items are whole attacker
+  instructions. `docs/POLICY-AUDIT.md` section 3 already documents the
+  resulting length mismatch (median 65 vs 106 characters) as a caveat on any
+  recall comparison -- inherited here, not solved.
+- `CorpusStore.count()`/row queries are unindexed beyond the three columns in
+  `SCHEMA`; fine at "low hundreds to low thousands" of rows, not something to
+  scale past without revisiting.
+
+---
+
+## M7 — GAUGE harness: statistics, calibration, and a real calibration run
+
+Builds the statistics and matched-FPR calibration machinery FR-11/NFR-6/NFR-7
+require, and runs it against the real V0/V3 weights and the real M6 corpus.
+Does not edit `config/policy.yaml` -- see "Design decisions" below.
+
+### A milestone-table correction, found by reading the file
+
+The M7 row said "port LOBO and DeLong". `evaluation/experiment2/exp2_lobo.py`
+turned out to **retrain** V0/V1 per fold to test whether retraining changes
+generalisation -- this project never retrains anything, so that script is not
+portable for M7 or M8. `plan.md` section 2.20 records the correction; M8's
+leave-one-source-out test (FR-12) will build its own, much simpler,
+no-retraining source-holdout check on top of this milestone's calibration
+code instead.
+
+### What changed
+
+- `src/llmshield_mcp/gauge/stats.py` -- `wilson_ci()`/`clopper_pearson_ci()`
+  (thin `statsmodels.stats.proportion.proportion_confint` wrappers, methods
+  `"wilson"`/`"beta"`), `mcnemar_test()` (`statsmodels.stats.contingency_tables.mcnemar`),
+  `auroc_delong()` (ported from `exp2_auroc_delong.py`'s pure-Python midrank
+  DeLong implementation -- the one dissertation statistic confirmed correct
+  rather than replaced).
+- `src/llmshield_mcp/gauge/calibrate.py` -- `threshold_at_fpr()`, porting
+  `exp2_multi_fpr.py`/`exp2_eval.py`'s thresholding *convention* (achieved FPR
+  always `<= target`; a constant-scored detector is flagged `unreachable`
+  rather than given a fake threshold), not their code.
+- `src/llmshield_mcp/gauge/references.py` -- `partition_benign_references()`:
+  splits M6's benign pool into PROPOSAL.md section 8.2's two references
+  (realistic / adversarial-styled) via a keyword filter over already-real
+  content, independent of `config/rules.yaml`'s actual patterns.
+- `src/llmshield_mcp/gauge/run.py` -- `run_gauge()`: loads the clean corpus,
+  samples/splits the dual benign references, calibrates V0 and V3 at each of
+  `config/policy.yaml`'s `fpr_budget` values, computes ASR by threat type
+  (Wilson + Clopper-Pearson) and DeLong AUROC, writes `scores.csv` (`plan.md`
+  section 2.6's per-item/per-detector reproducibility file) and a
+  `calibration_report.json`.
+- `src/llmshield_mcp/cli.py` -- new `gauge-run` subcommand.
+- `tests/test_gauge_stats.py` (11), `tests/test_gauge_calibrate.py` (8),
+  `tests/test_gauge_references.py` (7) -- weight-free. `tests/test_gauge_run_with_models.py`
+  (4, `models`-marked) -- the real end-to-end run, against a small synthetic
+  corpus for speed.
+- `pyproject.toml` -- `statsmodels.*` added to the mypy untyped-third-party
+  override list (already pinned since M0; now actually used).
+
+### Design decisions
+
+**DeLong is ported; Wilson/Clopper-Pearson/McNemar are not.** Both hand-rolled
+dissertation versions (`evaluation/metrics.py` and `exp2_eval.py`) fail
+`PROPOSAL.md` section 9's "established library implementations" requirement.
+`statsmodels` was already pinned and unused for exactly this. DeLong has no
+ready library implementation, so the one dissertation file confirmed correct
+by direct inspection is ported, with its point estimate cross-checked against
+`sklearn.metrics.roc_auc_score` in a test rather than trusted from the source
+docstring alone.
+
+**The harness never edits `config/policy.yaml`.** `gauge-run` prints and
+writes a report; `calibrated: true` and moving V0/V3 out of `inert` remain a
+deliberate, human-reviewed edit, exactly as the file's own comment already
+says. Automating that edit would turn a measurement tool into a
+policy-changing one.
+
+**The second benign reference is a filter, not new writing.** M3b's audit
+found hand-written adversarial cases measure the author's assumptions, not
+real capability. `gauge/references.py`'s "adversarial-styled" split mines
+already-real M6 content for detector-relevant vocabulary (word-boundary
+matched, so "evaluate" doesn't trip on "eval") -- it does not invent what an
+attacker would say, so it does not repeat that mistake.
+
+**Benign items are sampled, not scored in full.** V3's ~180-220ms/window
+latency (`docs/M0-OBSERVATIONS.md`) against ~7,500 ingested benign lines would
+take tens of minutes per run. `DEFAULT_BENIGN_SAMPLE_SIZE = 300` (fixed seed)
+keeps a run in the low hundreds per reference, matching `prd.md`'s own
+corpus-scale target, and reproducible.
+
+### A real finding
+
+Running `gauge-run` against the full ingested corpus (187 adversarial items,
+300-item benign samples per reference, real V0/V3 weights) gave:
+
+| Detector | Reference | AUROC (DeLong 95% CI) |
+|---|---|---|
+| V0 | realistic | 0.616 [0.556, 0.676] |
+| V0 | adversarial-styled | 0.436 [0.369, 0.504] |
+| V3 | realistic | 0.330 [0.272, 0.388] |
+| V3 | adversarial-styled | 0.239 [0.187, 0.292] |
+
+V3 (`injection` score mode) separates real MCP-surface attacks from ordinary
+benign content **worse than chance** on both references. Consistent with
+every prior measurement since M0 that these detectors do not transfer
+cleanly to this surface -- carried forward as data for the eventual report,
+not smoothed over.
+
+**Also observed:** at this run's calibration sample size (~150 items per
+reference), the `block` (0.1%) and `redact` (1%) FPR budgets calibrated to
+the *identical* threshold for V0 on the realistic reference.
+`threshold_at_fpr`'s `floor(target * n)` rounds both down to the same small
+integer at this scale, and the algorithm always achieves `k-1` (a deliberate
+conservatism ported faithfully from `exp2_multi_fpr.py`'s convention, not a
+bug) -- closely-spaced budgets only differentiate once the calibration set is
+large enough. A real fix is a larger corpus (M6's scope), not a change to M7.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `uv run pytest -m "not models"` | **270 passed**, 16 deselected (26 new) |
+| `LLMSHIELD_MODELS_ROOT=... uv run pytest -m models` | **16 passed** (4 new) |
+| `uv run ruff check src tests scripts` | All checks passed |
+| `uv run ruff format --check src tests scripts` | Clean |
+| `uv run mypy` | Success, 29 source files |
+| `mcp-shield corpus-ingest` + `mcp-shield gauge-run` against real weights | Full run completed, real numbers above, `config/policy.yaml` untouched |
+
+### Known limitations
+
+- `config/policy.yaml` remains `calibrated: false` with V0/V3 `inert`.
+  Reviewing this run's report and deciding whether/how to promote them is a
+  deliberate follow-up action, not automated by this milestone.
+- Calibration at "low hundreds" scale cannot cleanly separate closely-spaced
+  FPR budgets (see "A real finding" above) -- a real fix needs a bigger
+  corpus, tracked against M6/M8's scope, not M7's.
+- M8's leave-one-source-out test still needs a third adversarial source
+  family (`plan.md` open question Q3); M7 does not add one.
+- `gauge/references.py`'s keyword list is a reasonable, documented net, not a
+  formally validated one -- it is meant to produce a plausible hard-negative
+  stress set, not a precisely calibrated category boundary.
+
+---
+
+## Q3 resolved — LLMail-Inject as the third adversarial source family
+
+Closes `plan.md` open question Q3 ahead of M8: leave-one-source-out needs
+>= 3 distinct adversarial source families; only BIPIA and InjecAgent existed
+after M6.
+
+### What changed
+
+- `src/llmshield_mcp/corpus/sources.py` -- `fetch_llmail_inject()` /
+  `load_llmail_inject()`, fetching `microsoft/llmail-inject-challenge` (MIT,
+  HuggingFace) via the `datasets-server` REST API (plain JSON over HTTPS, no
+  new dependency). Six random 100-row pages sampled per split (Phase1:
+  370,724 rows; Phase2: 90,916 -- confirmed via the API's own `/size`
+  endpoint), de-duplicated by normalised body text, capped at 150 items.
+  Kept deliberately separate from `load_adversarial()` -- see `plan.md` 2.21
+  for why.
+- `src/llmshield_mcp/corpus/__init__.py` -- exports the two new functions.
+- `src/llmshield_mcp/cli.py` -- `ingest_corpus()` fetches and ingests
+  LLMail-Inject by default (`--no-llmail-inject` to skip, since it is 12
+  network requests to a different host than BIPIA/InjecAgent).
+- `tests/test_corpus_llmail_inject.py` (6) -- parsing, de-duplication and
+  the sampling cap, against synthetic cached pages shaped like a real
+  `datasets-server` response (confirmed against the live API before writing
+  the loader, not assumed). No network call in the test itself, matching
+  `fetch()`'s own untested-network-path precedent.
+
+### Why LLMail-Inject over AgentDojo
+
+Both are real, well-documented, MIT-licensed indirect-injection-against-agents
+benchmarks (researched via web search, `plan.md` 2.21 has the full
+comparison). AgentDojo is conceptually closer to this project's own
+tool-result surface but ships as a live simulation framework -- ingesting it
+would mean installing and running its Python package, not fetching a file.
+LLMail-Inject fetches as plain JSON via HuggingFace's `datasets-server`,
+dropping into the exact `fetch()`/`load_adversarial()` pattern BIPIA/InjecAgent
+already use, with no new dependency.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `uv run pytest -m "not models"` | **276 passed**, 16 deselected (6 new) |
+| `uv run ruff check` / `mypy` | Clean, 29 source files |
+| Live fetch against the real `datasets-server` API | 150 unique items after de-duplication, spanning scenarios `level1a`-`level3f` |
+| `mcp-shield corpus-ingest` against the real training-data reference corpus | 125 + 62 + 150 = 337 adversarial items ingested, **0 contaminated** across all three families |
+
+### Known limitations
+
+- The `scenario` column used as `threat_type` reflects the challenge's
+  defense-difficulty tiers, not an attacker-intent taxonomy (the "13
+  objective categories"/"5 injection classes" reported in the paper's own
+  downstream analysis are not columns in the raw export this project reads).
+- A fourth family (the MCP-specific dilution corpus, `plan.md` 2.19) remains
+  a candidate but is no longer blocking M8.
+
+---
+
+## M8 — Leave-one-source-out generalisation test
+
+FR-12, built directly on M7's calibration machinery and the correction
+already recorded in `plan.md` 2.20: this project never retrains V0/V3, so
+there is no training-set-exclusion sense in which a source family can be
+"held out". What M8 actually measures: does the same calibrated threshold
+produce consistent recall across the three adversarial source families Q3
+resolved, or not.
+
+### What changed
+
+- `src/llmshield_mcp/gauge/run.py` -- `_grouped_asr()` extracted (shared by
+  the existing `by_threat_type` breakdown and the new `by_source` one, so
+  both are the same grouping logic over a different item attribute).
+  `_build_report()` now emits `by_source` inside every budget alongside
+  `by_threat_type`. `run_gauge()` records `adversarial_source_families` in
+  the report and warns (does not raise) if fewer than two are present --
+  `by_source` needs at least two to say anything about generalisation.
+- `src/llmshield_mcp/cli.py` -- `gauge_run` prints the per-family ASR table
+  under each budget line, plus the family count/list up front.
+- `tests/test_gauge_report.py` (2, weight-free) -- `_build_report` is pure
+  post-processing over `ScoreRecord`s, so the grouping logic is fully
+  testable with synthetic scores: one test confirms `by_source` separates
+  two families with deliberately different recall while `by_threat_type`
+  (grouping the same items together) does not; one confirms a single-family
+  corpus still produces a one-entry breakdown rather than erroring.
+- `tests/test_gauge_run_with_models.py` -- fixture now uses two distinct
+  `source` values (`family_alpha`/`family_beta`) instead of one, and a new
+  test confirms `by_source` covers both with real V0/V3 scores.
+
+### A real finding
+
+`gauge-run` against the full corpus (V0, `escalate` budget, `realistic`
+benign reference) gave attack-success-rate of:
+
+| Source family | ASR (Wilson 95% CI) | n |
+|---|---|---|
+| BIPIA | 97.6% [93.2%, 99.2%] | 125 |
+| InjecAgent | 75.8% [63.8%, 84.8%] | 62 |
+| LLMail-Inject | 40.0% [32.5%, 48.0%] | 150 |
+
+The same detector, the same threshold, a ~58-point swing depending purely on
+which family is measured. A report citing only the original BIPIA+InjecAgent
+numbers (this project's own earlier measurements, before Q3 was resolved)
+would have significantly overstated how consistently V0 fails to detect
+real attacks. V3 is more uniform at the same budget (92.8%/96.8%/94.7%
+across the three) but uniformly close to useless either way -- a different
+failure shape, not a better one. Full numbers: `results/gauge/` (gitignored;
+regenerate with `mcp-shield gauge-run`).
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `uv run pytest -m "not models"` | **278 passed**, 17 deselected (2 new) |
+| `LLMSHIELD_MODELS_ROOT=... uv run pytest -m models` | **17 passed** (1 new) |
+| `uv run ruff check` / `mypy` | Clean, 29 source files |
+| `mcp-shield gauge-run` against the real 337-item, 3-family corpus | Full run completed, table above, `config/policy.yaml` untouched |
+
+### Known limitations
+
+- `by_source` is computed at every FPR budget and every benign reference,
+  same as `by_threat_type` -- no new statistical test (e.g. a formal
+  cross-family significance test) compares families to each other pairwise.
+  Non-overlapping Wilson CIs are visually convincing here but a McNemar-style
+  paired test does not apply across families (different items, not paired
+  observations); a two-independent-proportions test (Fisher's exact) would
+  be the correct tool if a formal pairwise claim is needed later.
+- The fourth candidate family (MCP-specific dilution corpus, `plan.md` 2.19)
+  is still not built; three families were enough to produce the finding
+  above.
+
+---
+
+## M9 — Latency benchmark: per-detector, fused, 20-call chain
+
+FR-13, FR-14, NFR-1, NFR-2. Unlike M7/M8, this milestone's numbers are
+**committed** (`docs/LATENCY-BENCHMARK.md`) -- the verification bar says so
+explicitly, and latency carries none of the live-decision risk that kept the
+calibration reports gitignored.
+
+### What changed
+
+- `src/llmshield_mcp/latency.py` -- `LatencyStats`, `summarize()`,
+  `time_calls()`. Mean + p95 in ms, warmup excluded (`n_warm=10`) --
+  `exp2_eval.py`'s own `latency_hf`/`latency_sklearn` convention, reused
+  rather than invented.
+- `scripts/benchmark_latency.py` -- per-detector and fused-pipeline latency
+  against 50 items (10-warmup) sampled from the real ingested corpus.
+- `chains/latency_chain.json` -- a new, committed, host-path-normalised chain
+  fixture: 25 real tool calls (>= 20, FR-14) through the live fused gate
+  (rules + PII + V0 + V3, real weights), recorded with
+  `mcp-shield run-agent --db chains/latency_run.sqlite`. The SQLite decision
+  log is not committed, matching every other `*.sqlite` in this project.
+- `docs/LATENCY-BENCHMARK.md` -- the committed report: per-detector table,
+  fused-pipeline number, and the chain's gate-overhead breakdown
+  (fetch vs filesystem calls), each against its NFR budget.
+- `tests/test_latency.py` (7, weight-free), `tests/test_latency_with_models.py`
+  (1, `models`-marked sanity check that `time_calls` composes correctly with
+  a real detector).
+
+### Design decisions
+
+**Committed, not gitignored, unlike M7/M8.** The distinction is risk, not
+milestone number: a calibration report could inform a `config/policy.yaml`
+edit that changes live behaviour, so those stay local until reviewed.
+Latency numbers cannot do that -- there is nothing to protect by hiding them,
+and the milestone's own verification bar wants them committed.
+
+**No API key in this worktree.** `.env` is gitignored and per-worktree; only
+the main checkout had one. Exported `ANTHROPIC_API_KEY` from the main
+checkout's `.env` via command substitution for the one `run-agent` call that
+needed it, rather than copying the file -- the key value never appeared in a
+visible command string. Same class of fix as `LLMSHIELD_MODELS_ROOT`/
+`LLMSHIELD_TRAINING_CORPUS` (this worktree lacking something the main
+checkout has), applied to a secret instead of a large file.
+
+**A cheap, explicit task for the chain, not the usual "realistic" one.**
+M1's chains use `claude-opus-5` specifically because a stronger model
+produces a more realistic, longer sequence when given an open-ended task.
+Here the exact opposite was wanted: a *forced* count (fetch 16 named URLs
+one at a time, then read 4 named files one at a time) to reliably clear
+FR-14's 20-call floor without depending on model judgement, so
+`claude-haiku-4-5` (cheaper, and perfectly adequate for following an
+itemised list) was used instead and named explicitly as a deliberate choice,
+not a silent reuse of the M1 default.
+
+### A real finding
+
+| Measurement | Result | vs budget |
+|---|---|---|
+| rules/PII (mean) | 0.06-0.07 ms | NFR-1 (~5ms): met |
+| V0 (mean) | 2.07 ms | NFR-1: met |
+| V3 (mean, short corpus text) | 208 ms | NFR-2 (100ms): missed, ~2x |
+| Fused pipeline (mean) | 215 ms | NFR-2: missed, ~2x |
+| Gate latency, real fetched web pages (mean / max) | 4,459 ms / **13.1 s** | far beyond NFR-2 |
+| Gate latency, sandbox files (mean) | 240 ms | ~2x NFR-2 |
+
+V3's `chunk_max` strategy scores every overlapping window of long content, so
+gate latency scales with content length -- confirmed at chain scale on real,
+unscripted fetched pages, not just the ~1500-token smoke probe
+`docs/M0-OBSERVATIONS.md` first measured this shape on. For 9 of the 16
+fetches in the recorded chain, gate latency **exceeded** the network
+round-trip time that produced the content. Shipping V3 `inert` (M5)
+protects the decision from an uncalibrated score; it does not save any
+latency, because the detector still runs on every intercepted result
+regardless of its decision weight. One fetched page's PII scanner fired for
+real during this run (`fused_decision = redact`) -- a genuine detection on
+live content, not a synthetic probe.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `uv run pytest -m "not models"` | **285 passed**, 18 deselected (7 new) |
+| `LLMSHIELD_MODELS_ROOT=... uv run pytest -m models` | **18 passed** (1 new) |
+| `uv run ruff check` / `mypy` | Clean, 30 source files |
+| `scripts/benchmark_latency.py` against the real corpus and weights | Numbers in `docs/LATENCY-BENCHMARK.md` |
+| `mcp-shield run-agent` recording a real 25-call chain through the live gate | `chains/latency_chain.json` committed; gate-overhead numbers in the same report |
+
+### Known limitations
+
+- Both measurements are single runs, not repeated-and-averaged across
+  sessions -- exact figures will vary with CPU load, model non-determinism
+  (which URLs get fetched in what order/length), and network conditions for
+  the live fetches. The *shape* of the finding (rules/PII/V0 trivial, V3
+  dominant and length-dependent) is the reproducible part, stated as such in
+  the committed report.
+- The fetch server still runs in pure-Python article-extraction mode (no
+  Node/NPM in this environment, noted since M1) -- extracted page length,
+  and therefore V3's window count and latency, would likely differ under
+  Readability.js.
+
+---
+
+## M10 — Report generation, README headline numbers
+
+AC-7, PROPOSAL.md section 18. Turns M4-M9's measurements into the public
+deliverable: a written report, three committed figures, and a README that
+actually says what was found instead of the M0-era placeholder it had
+carried through nine completed milestones.
+
+### What changed
+
+- `scripts/generate_report.py` -- reads `results/gauge/calibration_report.json`
+  (M7/M8's output; gitignored, regenerable) and writes three plain SVG bar
+  charts to `docs/figures/` (committed): ASR by source family (the
+  leave-one-source-out finding), latency by component (log scale, against
+  `docs/LATENCY-BENCHMARK.md`'s committed numbers), and DeLong AUROC by
+  benign reference. No plotting library -- see design decisions.
+- `docs/figures/asr_by_source_family.svg`, `latency_by_component.svg`,
+  `auroc_by_reference.svg` -- committed, generated from the same real
+  3-family GAUGE run already reported in M8's `whats_has_been_done.md`
+  entry.
+- `docs/REPORT.md` -- the full write-up: what the system is, the corpus,
+  rule recall, GAUGE calibration/AUROC, the leave-one-source-out gap,
+  latency, why the fusion/policy design follows from these numbers, and an
+  explicit "what this does not claim" section (mirrors `plan.md` 2.16's
+  framing, in public-facing form).
+- `README.md` -- rewritten status banner (was still "milestone 0 of 11,
+  no results" from M0), a new "Headline result" section stating the
+  transfer-failure and generalisation-gap findings in plain English, and
+  new "Build the corpus" / "Run the evaluation" sections documenting
+  `corpus-ingest`, `gauge-run`, and all three benchmark/report scripts --
+  none of which had been documented in the README since they were built.
+
+### Design decisions
+
+**No plotting library added.** Three grouped bar charts do not need one;
+`scripts/generate_report.py` writes plain SVG directly (string
+templating), keeping NFR-8's pinned dependency set unchanged and the
+figures themselves diffable text rather than binary images.
+
+**A specific run's numbers become the frozen, published figures.** M7/M8
+kept `results/gauge/` gitignored because an inherited or stale calibration
+number could invalidate a live policy decision, and its sampling varies run
+to run. M10 is the deliberate point where one particular run -- the same
+3-family, real-weights run M8 already reported -- gets promoted to a cited,
+committed figure. The raw JSON stays local and regenerable; the curated
+SVGs and prose derived from it are what ships, the same split M6 already
+drew between the corpus SQLite store and its JSONL export.
+
+### A bug worth recording
+
+The first cut of the log-scale bar-height calculation could produce a
+negative fraction for a value far below the chosen axis floor (rules/PII at
+~0.06ms plotted against V3 at ~215ms on the same 1-1000ms log axis). SVG
+does not render a `<rect>` with negative height -- it just doesn't appear,
+no error, no exception. Three bars and their value labels vanished
+silently; caught only by actually opening the generated SVG in the browser
+and screenshotting it, not by reading the generation code. Fixed by
+clamping the computed fraction to `[0, 1]` before converting to a pixel
+position, so an out-of-range value renders as a visible sliver at the axis
+boundary instead of disappearing.
+
+### Two pre-existing bugs, fixed while already in the file
+
+- README's status banner had said "milestone 0 of 11... no results are
+  claimed" since M0, through nine subsequent completed milestones -- nothing
+  enforces that a status line tracks the code, so it had simply gone stale
+  and unnoticed.
+- The Windows junction command example had been silently corrupted: what
+  should read `C:\path\to\artifacts` contained a literal tab character and a
+  literal bell character in place of two `\t`/`\a`-style backslash
+  sequences that were evidently escape-processed at some point before this
+  session. Invisible on a normal read; found with `cat -A`.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `uv run pytest -m "not models"` | **285 passed**, 18 deselected (no test changes this milestone) |
+| `uv run ruff check` / `mypy` | Clean, 30 source files |
+| `uv run python scripts/generate_report.py` against the real M8 calibration data | Three SVGs written, visually verified in-browser |
+
+### Known limitations
+
+- The figures are generated from one specific historical run
+  (`results/gauge/calibration_report.json` as it stood after M8), not
+  regenerated fresh for this milestone -- re-running `gauge-run` today would
+  resample the benign reference sets (different seed state across sessions)
+  and could shift the exact numbers slightly, though not the reported shape.
+- `docs/REPORT.md` and the README's headline numbers will need a manual
+  refresh if M7/M8 are ever re-run with different calibration budgets or a
+  fourth source family; nothing regenerates them automatically.

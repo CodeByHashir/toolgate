@@ -7,18 +7,40 @@ from llmshield_mcp.gating.audit import (
     Outcome,
     decision_log,
 )
-from llmshield_mcp.gating.content import ExtractedContent, extract
-from llmshield_mcp.gating.transport import Gate, GateConfig, gating_transport
+from llmshield_mcp.gating.content import (
+    BLOCK_MESSAGE,
+    ExtractedContent,
+    apply_redaction,
+    build_block_result,
+    extract,
+)
+from llmshield_mcp.gating.policy import (
+    DEFAULT_POLICY_PATH,
+    FusionOutcome,
+    PolicyConfig,
+    PolicyEngine,
+    load_policy_config,
+)
+from llmshield_mcp.gating.transport import Gate, GateConfig, build_detectors, gating_transport
 
 __all__ = [
+    "BLOCK_MESSAGE",
+    "DEFAULT_POLICY_PATH",
     "Decision",
     "DecisionLog",
     "DecisionRecord",
     "ExtractedContent",
+    "FusionOutcome",
     "Gate",
     "GateConfig",
     "Outcome",
+    "PolicyConfig",
+    "PolicyEngine",
+    "apply_redaction",
+    "build_block_result",
     "decision_log",
+    "build_detectors",
     "extract",
     "gating_transport",
+    "load_policy_config",
 ]

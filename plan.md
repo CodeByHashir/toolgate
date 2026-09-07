@@ -4,7 +4,7 @@ Companion to `prd.md` (what to build) and `whats_has_been_done.md` (what is
 built). This file holds the plan, the architecture decisions and their
 rationale, remaining work, and known risks.
 
-**Current position: M3b complete. M4 designed (plan.md 2.15) but not started.**
+**Current position: M10 complete. `docs/REPORT.md` + three committed SVG figures + a rewritten README state the headline findings in plain English. Only M11 (optional standalone proxy) remains. `config/policy.yaml` still ships uncalibrated by deliberate choice -- see 2.20.**
 
 ---
 
@@ -19,13 +19,13 @@ Each milestone is independently testable and lands as its own commit.
 | M2 | Interception layer, **logging only, zero detectors** | FR-1, FR-8, FR-15, FR-16, NFR-5 | 10-call run produced exactly 10 log rows; gate overhead 0.03-0.06 ms | **Done** |
 | M3 | Port rule engine and PII scanner as detector adapters | FR-2 (part), NFR-4, SEC-3, SEC-6 | 55 unit tests incl. fail-closed for both adapters; zero false positives on the benign sandbox | **Done** |
 | M3b | Normaliser as a pre-detection stage; MCP-* rule family derived from benchmark data | FR-2 | 194 tests; MCP-* 20.3% recall at 0.00% FP where INJ-* scores 0.0% | **Done** |
-| M4 | Fusion and policy engine; golden-set regression test begins | FR-4, FR-5, FR-6, FR-7, FR-9 | Table-driven decision tests; threshold change in YAML alters decision with no code edit; thresholds refuse to block until calibrated | Not started |
-| M5 | V0 and V3 wired into the live gating path | FR-2, FR-3 | Ablation by config alone | Not started |
-| M6 | Corpus schema, ingest CLI, MinHash decontamination | FR-10, AC-6 | Drop-count report; no surviving near-duplicate above threshold | Not started |
-| M7 | GAUGE harness; port LOBO and DeLong; replace hand-rolled CIs | FR-11, NFR-6, NFR-7 | Known-answer tests for Wilson, Clopper-Pearson, McNemar, DeLong | Not started |
-| M8 | Leave-one-source-out generalisation test | FR-12 | Per-held-out-family table | Not started |
-| M9 | Latency benchmark: per-detector, fused, 20-call chain | FR-13, FR-14, NFR-1, NFR-2 | Reproducible script, committed numbers | Not started |
-| M10 | Report generation; README headline numbers | AC-7, [18] | Tables and plots as static files | Not started |
+| M4 | Fusion and policy engine; golden-set regression test begins | FR-4, FR-5, FR-6, FR-7, FR-9 | Table-driven decision tests; threshold change in YAML alters decision with no code edit; thresholds refuse to block until calibrated | **Done** |
+| M5 | V0 and V3 wired into the live gating path | FR-2, FR-3 | Ablation by config alone | **Done** |
+| M6 | Corpus schema, ingest CLI, MinHash decontamination | FR-10, AC-6 | Drop-count report; no surviving near-duplicate above threshold | **Done** |
+| M7 | GAUGE harness; DeLong ported, Wilson/CP/McNemar on statsmodels; replace hand-rolled CIs | FR-11, NFR-6, NFR-7 | Known-answer tests for Wilson, Clopper-Pearson, McNemar, DeLong | **Done** |
+| M8 | Leave-one-source-out generalisation test | FR-12 | Per-held-out-family table | **Done** |
+| M9 | Latency benchmark: per-detector, fused, 20-call chain | FR-13, FR-14, NFR-1, NFR-2 | Reproducible script, committed numbers | **Done** |
+| M10 | Report generation; README headline numbers | AC-7, [18] | Tables and plots as static files | **Done** |
 | M11 | *(optional)* Standalone stdio proxy over the same gating core | [11.1] option A | Agent config points at proxy, nothing else changes | Not started |
 
 Ordering rule: do not skip ahead. M2 deliberately ships with **no detection**
@@ -242,9 +242,11 @@ modified**).
 | Rule engine, PII scanner, ML classifier, risk fusion, policy engine, decision engine | `src/llmshield/pre_llm/` | Port in M3, M4 |
 | Audit logger, escalation queue, policy loader | `src/llmshield/governance/` | Port in M2, M4 |
 | 32 policy JSON files plus `schema.json` | `policies/` | Reference for M4 policy schema |
-| Leave-one-source-out | `evaluation/experiment2/exp2_lobo.py` | Port in M8 |
-| DeLong AUROC | `evaluation/experiment2/exp2_auroc_delong.py` | Port in M7 |
-| Multi-FPR calibration | `exp2_multi_fpr.py`, `exp2_calibration.py` | Port in M7 |
+| Leave-one-source-out | `evaluation/experiment2/exp2_lobo.py` | **Not portable** -- retrains V0/V1 per fold, and this project never retrains. M8 builds its own corpus-source-holdout test on M7's calibration machinery instead (`plan.md` 2.20) |
+| DeLong AUROC | `evaluation/experiment2/exp2_auroc_delong.py` | Ported in M7 (`gauge/stats.py:auroc_delong`) |
+| Matched-FPR thresholding convention | `exp2_multi_fpr.py`/`exp2_eval.py`'s `thr_at_fpr`/`asr` | Convention ported in M7 (`gauge/calibrate.py`): achieved FPR always `<= target`, degenerate detectors flagged `unreachable` rather than given a fake number. Wilson/CP/McNemar themselves came from `statsmodels`, not this file. |
+| MinHash decontamination method (shingle definition, 0.85 Jaccard threshold) | `exp2_data.py:_shingles/_minhash`, reused by `exp2_lobo.py` | Threshold/shingle-size reused in M6; reimplemented on `datasketch.MinHashLSH`, not ported line-for-line (`plan.md` 2.19) |
+| V0/V3 training-data reference corpus (19,026 rows, post-decontamination) | `evaluation/experiment2/data/train.jsonl` | Decontamination reference set for M6, via `LLMSHIELD_TRAINING_CORPUS`/`config/decontamination.yaml` |
 
 **Not reusable as-is:** `evaluation/metrics.py` uses hand-rolled `_t_value`,
 `_confidence_interval` and `_percentile`. Proposal [9] requires established
@@ -379,6 +381,388 @@ so. PROPOSAL.md section 15 anticipates exactly this: a well-evidenced negative
 result is a legitimate and valuable outcome. The project's value is the
 measurement, not the protection.
 
+### 2.17 M4 implementation: precedence, ceiling and where redaction actually happens
+
+`src/llmshield_mcp/gating/policy.py` implements 2.15's design. Three decisions
+made during implementation, not measurement-driven like 2.15's but worth
+recording because they resolve real ambiguity in "fuse into exactly one
+decision" (FR-4):
+
+**Decision-label precedence is BLOCK > ESCALATE > REDACT > ALLOW.** A tool
+result can trigger both an injection signal (rules_mcp) and a redaction signal
+(PII) at once. Since FR-4 allows only one label, the louder, more
+security-relevant label wins the *log entry* -- Escalate over Redact -- rather
+than picking whichever fired "first" or averaging anything (that would be the
+FM-5 mistake again, just moved one level up).
+
+**PII redaction is orthogonal to the decision label, not a competing action.**
+`FusionOutcome.redacted` and `redact_spans` are separate fields from
+`decision`. A result can be logged as `escalate` and still have its PII spans
+masked in the content actually forwarded -- the two questions ("what do we
+tell the reviewer" and "does sensitive data leave this gate") are independent,
+matching 2.15's framing that PII carries zero injection weight and exists
+purely for SEC-3/NFR-4. `redacted` is forced `False` whenever the decision is
+BLOCK, since the whole result is replaced and a per-span mask is moot.
+
+**`calibrated: false` is enforced once, centrally, not scattered across every
+branch that could produce BLOCK.** `PolicyEngine._ceiling()` downgrades BLOCK
+to ESCALATE regardless of whether the BLOCK came from a fired detector or from
+`on_detector_failure: block`. `load_policy_config` also rejects
+`on_detector_failure: allow` outright (SEC-6: a crashed detector must never
+look like a clean scan) and validates every threshold is in `[0, 1]` at load
+time, not at first use.
+
+**Redaction has to survive multi-block results, not just the common
+single-text-block case.** `extract()` in `gating/content.py` joins every
+text-contributing content block with `"\n"` before a detector ever sees it, so
+a `Span`'s offsets are only meaningful against that joined string. Masking the
+*original* `tools/call` result therefore has to translate a joined-string
+offset back to the specific block (and, for an embedded resource, the nested
+`resource.text`) it came from. `_walk_blocks` is the single block-walking
+routine both `extract()` and the new `apply_redaction()` call, so the two can
+never disagree about where a block starts. `build_block_result()` is the
+FR-6 counterpart: it does not carry any field of the original result forward,
+so nothing survives a Block by accident.
+
+**V0/V3 stay out of the gate in M4.** `detectors.injection` in
+`config/policy.yaml` lists only `rules_mcp`. Wiring them in is explicitly M5's
+job (`plan.md` milestone table); M4 fuses what M3/M3b already ported (rules,
+PII) rather than pulling two more milestones' scope forward.
+
+### 2.18 M5: V0/V3 wired in, shipped inert -- a deliberate departure from "use them fully now"
+
+The instruction going into M5 was to actually use V0 and V3 to complete the
+project, and defer any "what do we ship publicly" question to later. That is
+what happened -- both are real, constructed with the real reused weights, and
+run against every intercepted tool result -- but they ship in `config/policy.yaml`
+`detectors.inert`, not `detectors.injection`. Reasoning:
+
+`docs/POLICY-AUDIT.md` section 4.1 already measured the failure mode of
+turning an unmeasured ML score into a live decision: `ml_probability >= 0.95`
+hard-blocked 7 of 8 benign documents, because V0's `not_benign` score on
+ordinary README-and-config-style content sits at 0.7-1.0. Promoting V0 to
+`injection` today, on the ad-hoc percentile thresholds in section 3 ("directional,
+not a result", by that document's own words), would reproduce exactly that
+failure relabelled from Block to Escalate -- not destroying the result, but
+drowning the audit log and defeating the entire point of Escalate being a rare
+flag rather than the default outcome. `calibrated: false` already stops this
+class of mistake for Block (2.15); there was no equivalent guard for Escalate
+before M5, so "inert until calibrated" is that guard.
+
+**What "wired in" means concretely:** `build_detectors()` (renamed from M4's
+`default_detectors()`) is now a registry keyed by every name a policy's
+`detectors.*` roles may use (`rules_mcp`, `rules_inj`, `pii`, `v0`, `v3`), and
+constructs exactly the union of keys the given `PolicyConfig` actually names.
+V0 and V3 sit in the registry unconditionally; whether they get built, and
+whether building them costs a joblib load or a transformers/torch import,
+is entirely a property of `config/policy.yaml`. Moving `v0` from `inert` to
+`injection` and adding one threshold line is the whole ablation -- no code
+changes, which is the milestone's own verification bar.
+
+**Why this needed a companion decision about the test suite.** `models/` is
+gitignored (`prd.md` A1: the weights are not publishable) and is not present
+in CI or in a fresh git worktree -- only the original checkout has the local
+junction to the author's copy. Once V0/V3 became part of the *shipped*
+policy's inert set, a literal `Gate()` with no explicit detector override
+would try to load them, which would have made most of the existing
+plumbing-level gating tests suddenly require weights they were never about.
+`tests/conftest.py`'s `light_detectors` fixture pins the M4-era,
+decision-relevant set (rules + PII) for that majority of the suite -- provably
+equivalent to the full set for every `outcome.decision`/`.redacted`, since
+`PolicyEngine.decide` never reads a key outside `injection_detectors`/
+`redaction_detectors`. `tests/test_gating_transport_with_models.py` (new,
+`models`-marked) is where the real weights are actually exercised: that V0/V3
+get constructed, that their real scores reach the audit log, and that the
+same real V0 detector escalates once promoted via YAML alone on text that the
+shipped policy allows.
+
+### 2.19 M6: corpus infrastructure, dilution corpus deferred to M8
+
+**The reference repository already had the decontamination method PROPOSAL.md
+refers to.** `evaluation/experiment2/exp2_data.py` decontaminates V0/V3's own
+training set against its eval suite with 5-character shingles over
+normalised text, 64-permutation MinHash, and a Jaccard >= 0.85 (or exact
+match) threshold. `evaluation/experiment2/data/train.jsonl` (19,026 rows) is
+the actual post-decontamination training set -- the natural reference corpus
+for checking whether a new item is too close to what V0/V3 already learned.
+Both are reused for calibration continuity: an item flagged contaminated here
+is held to the exact standard V0/V3's own training pipeline used, not a
+number invented for this project.
+
+**`datasketch.MinHashLSH`, not the dissertation's hand-rolled numpy version.**
+`datasketch` was already pinned in `pyproject.toml` for exactly this purpose
+and had gone unused since M0. Using it over reimplementing `exp2_data.py`'s
+matrix-comparison approach follows the same principle M7 states for
+statistics (established libraries over bespoke reimplementations), and
+happens to fix a reproducibility gap for free: the dissertation script hashes
+shingles with Python's `hash()`, which is randomised per process and would
+make `minhash_signature` incomparable across separate `corpus ingest`
+invocations. `datasketch`'s default `hashfunc` (SHA1-based) is deterministic
+across processes -- verified directly (`src/llmshield_mcp/corpus/decontaminate.py`
+docstring) rather than assumed.
+
+**The training-data reference corpus is not vendored**, the same way V0/V3's
+weights are not: `corpus/reference/` is gitignored, `config/decontamination.yaml`
+resolves it against the repository root with an `LLMSHIELD_TRAINING_CORPUS`
+override, mirroring `config/models.yaml`'s `LLMSHIELD_MODELS_ROOT` pattern
+exactly (`plan.md` open question Q4's resolution).
+
+**Contaminated items are flagged, not deleted.** `PayloadCorpusItem.decontamination_status`
+keeps every ingested item, clean or contaminated -- the milestone's own
+verification bar is a *drop-count report*, which needs the dropped items
+still visible. Unlike `gating/audit.py`'s `DecisionLog`, this store's whole
+purpose is to hold text (the corpus is a project deliverable, not an audit
+trail of something scanned in passing), so nothing here is hashed-instead-of-stored.
+
+**Scope, confirmed before implementation:** the "MCP-specific dilution
+corpus" -- embedding these same payloads into real benign carrier documents
+at varying dilution ratios (`prd.md` 9.3, `docs/M0-OBSERVATIONS.md`) -- is a
+genuinely new composition pipeline, not corpus infrastructure, and the
+milestone's stated verification bar (schema, ingest CLI, decontamination,
+drop-count report) does not require it. Deferred to whenever M8's
+leave-one-source-out test needs a third source family, rather than pulled
+into M6. Open question Q3 stays open for that reason: two adversarial source
+families (BIPIA, InjecAgent) are now ingested through this milestone's
+infrastructure; a third is still needed before M8.
+
+**The publishable JSONL snapshot is not committed by this milestone.**
+`mcp-shield corpus-ingest` is implemented and verified end to end against the
+real reference corpus (187 adversarial + several thousand benign lines, 0
+contaminated -- expected, since M3b already established BIPIA/InjecAgent
+share no lineage with the training sources). Deciding exactly what goes into
+the *published* corpus snapshot, and when, is left as a deliberate operator
+action rather than something this milestone's commit decides unasked.
+
+### 2.20 M7: a milestone-table correction, and why the harness still doesn't flip the switch
+
+**"Port LOBO" was wrong, and reading the file is what caught it.** The
+original M7 row said "port LOBO and DeLong". `evaluation/experiment2/exp2_lobo.py`
+turned out to **retrain** V0/V1 on IN/OUT training pools per fold -- it tests
+whether retraining changes generalisation. This project never retrains
+anything (`prd.md` scope: "no retraining"), so that script cannot be ported
+at all, for either M7 or M8. What M8's actual leave-one-source-out test (FR-12)
+needs is far simpler and needs no model changes: partition the corpus by
+source, calibrate on the sources kept in, measure recall on the source held
+out. M7 built exactly the calibration/statistics machinery that simple test
+will reuse; `exp2_lobo.py` contributed nothing here beyond confirming, by
+inspection, that DeLong is the one statistic in that file worth porting
+(plan.md section 3's Reuse Inventory already said as much for a different
+reason -- this is now confirmed first-hand).
+
+**Wilson, Clopper-Pearson and McNemar came from `statsmodels`, not from
+either dissertation hand-rolled version.** Both `evaluation/metrics.py`
+*and* `evaluation/experiment2/exp2_eval.py` hand-roll these (the latter's
+`cp` calls `scipy.stats.beta.ppf` directly rather than using an
+interval-estimation library function). `PROPOSAL.md` section 9's "established
+library implementations" requirement rules out porting either. DeLong is
+still the one exception -- confirmed correct by reading
+`exp2_auroc_delong.py`'s pure-Python midrank implementation and cross-checking
+its point estimate against `sklearn.metrics.roc_auc_score` in a test, not by
+trusting the docstring's claim.
+
+**Dual benign references, and why the second one had to be built.**
+`config.decontamination` gave M6 a single "benign" pool; PROPOSAL.md section
+8.2 wants two -- realistic and adversarial-styled (hard negatives: genuinely
+benign text containing detector-relevant vocabulary). Building the second one
+is a MECHANICAL FILTER over already-real M6 content
+(`gauge/references.py`'s keyword list), not new authored sentences, so it
+does not repeat M3b's "hand-written cases measure the author's assumptions"
+mistake -- nothing here invents what an attacker would say.
+
+**The FPR-budget-collapse artefact at "low hundreds" scale.** A real
+`gauge-run` showed `block` (0.1%) and `redact` (1%) calibrating to the
+*identical* threshold on a 150-item calibration split: `threshold_at_fpr`'s
+`floor(target * n)` rounds both down to the same small integer at this
+sample size, and the algorithm (faithfully ported, see `calibrate.py`) always
+achieves `k-1`, never `k` -- a deliberate conservatism, not a bug, but one
+that only differentiates close-together budgets once the calibration set is
+large enough. Recorded honestly in `whats_has_been_done.md` rather than
+patched away; a genuinely larger corpus (M6's own scope, not M7's) is the
+real fix.
+
+**A real finding, not a smoke test.** A `gauge-run` against the full ingested
+corpus (187 adversarial, 300-item benign samples per reference) gave V3
+(`injection` score mode) an AUROC of ~0.33 against realistic benign
+content -- *worse than chance* at separating real MCP-surface attacks from
+ordinary repository text. Consistent with this project's standing finding
+(M0 onward) that these detectors do not transfer cleanly to this surface;
+worth carrying into the eventual report rather than only citing the earlier,
+smaller measurements.
+
+**The harness does not flip `config/policy.yaml`'s `calibrated` flag or move
+V0/V3 out of `inert`.** `gauge-run` writes a report; a human reviews it and
+edits the policy file deliberately, exactly as that file's own comment
+already specifies. Automating that edit would turn a measurement tool into a
+policy-changing one, which is not what FR-11 asks for.
+
+### 2.21 Q3 resolved: LLMail-Inject as the third adversarial source family
+
+Researched rather than invented: BIPIA and InjecAgent were the only two
+source families after M6, and `plan.md` 2.19 explicitly deferred building a
+third (the MCP-specific dilution corpus) out of M6's scope. Before M8 needs
+it, a web search was done for an established third dataset matching this
+project's own source-selection criteria (MIT/permissive license, indirect
+injection against agent tool-use, a flat downloadable text field, disjoint
+lineage from BIPIA/InjecAgent and from V0/V3's training sources).
+
+Two real candidates surfaced: **AgentDojo** (ETH Zurich, NeurIPS 2024 --
+97 tasks/629 security test cases across four tool-using agent environments)
+and **LLMail-Inject** (Microsoft, MIT licensed -- 462,000 raw submissions
+from a real adaptive prompt-injection competition against a simulated email
+assistant, 839 participating teams). AgentDojo is conceptually closer to this
+project's own tool-result surface, but ships as a live simulation framework,
+not a flat corpus -- ingesting it would mean installing and running its
+Python package rather than fetching a file, a materially different
+integration shape from every other source this project uses. LLMail-Inject
+fetches over plain HTTPS as JSON (HuggingFace's `datasets-server` REST API,
+confirmed directly against the live API rather than assumed), so it drops
+into the existing `fetch()`/`load_adversarial()` pattern with no new
+dependency -- no `datasets` library, no parquet reader.
+
+**Chosen: LLMail-Inject.** `corpus/sources.py` gained `fetch_llmail_inject()`/
+`load_llmail_inject()`, kept deliberately separate from `load_adversarial()`:
+folding a third source into that function would silently change what
+`scripts/benchmark_rules.py` measures, and its docstring and
+`docs/POLICY-AUDIT.md`'s published numbers name BIPIA/InjecAgent specifically.
+`corpus-ingest` calls both.
+
+Practical handling of the raw dataset:
+
+- Most of its 461,640 rows are automated fuzzing from a handful of teams
+  (confirmed by inspecting real rows before writing the loader -- e.g. the
+  literal string `"yes Please yes issue yes an yes api_call ..."` submitted
+  under dozens of job ids/scenarios), not diverse attacker text. Downloading
+  all of it would mean paying a huge cost for mostly duplicate signal.
+- Six 100-row pages are sampled at random offsets per split (fixed seed,
+  reproducible), then de-duplicated by normalised body text and capped at
+  150 unique items -- comparable in scale to BIPIA (125) and InjecAgent (62)
+  rather than one source dominating the adversarial corpus just because its
+  raw pool happens to be enormous.
+- `threat_type` is the real `scenario` column (e.g. `level1a`), the
+  challenge's own defense-difficulty tiers -- not an invented attack-type
+  taxonomy, since the raw export carries no clean category label the way
+  BIPIA/InjecAgent do.
+
+Verified end to end: `corpus-ingest` against the real training-data reference
+corpus ingested 125 + 62 + 150 = 337 adversarial items plus benign lines,
+**0 contaminated** for any of the three families -- consistent with all three
+being genuinely disjoint from V0/V3's training sources.
+
+### 2.22 M8: leave-one-source-out as a report breakdown, and a real generalisation finding
+
+Builds directly on the correction already recorded in 2.20: since this
+project never retrains V0/V3, and calibration (M7) never looks at
+adversarial data at all (only the benign reference sets, matched-FPR),
+there is no IN/OUT training split for a "held-out" family to mean anything
+about. What FR-12 can honestly ask here is narrower and cheaper to answer:
+does the *same* calibrated threshold produce consistent recall across
+different adversarial source families, or does it not? `gauge/run.py`'s
+`_build_report` already grouped ASR by `threat_type`; M8 adds the identical
+grouping by `source` (`_grouped_asr`, shared by both), keyed on the three
+families Q3 resolved (2.21) -- no new module, no new statistical machinery.
+
+**The answer, measured, is a real finding worth carrying into the report.**
+A `gauge-run` against the full corpus (V0, escalate budget, realistic
+reference) gave attack-success-rate of **97.6% on BIPIA, 75.8% on
+InjecAgent, but only 40.0% on LLMail-Inject** -- the same threshold, the
+same detector, a nearly 60-point swing depending purely on which family is
+being measured. Anyone citing only the original two-family number (matching
+this project's own earlier BIPIA+InjecAgent-only measurements) would have
+significantly overstated how consistently V0 fails. V3 is more uniform --
+92-98% ASR across all three families at the same budget -- but uniformly
+close to useless either way. This is exactly the generalisation gap FR-12
+exists to surface, and it would not have been visible with two families.
+
+A minimum-family-count check (`run_gauge` warns, does not raise, below two
+distinct adversarial `source` values) keeps the `by_source` breakdown from
+silently looking meaningful when the corpus can't actually support the
+comparison.
+
+### 2.23 M9: latency is committed, not gitignored -- and a real finding about `inert` detectors
+
+Unlike M7/M8's calibration reports (deliberately gitignored, `results/`,
+because they could inform a live-behaviour edit to `config/policy.yaml`),
+the milestone table's own verification bar for M9 says "committed numbers".
+Latency carries no such risk -- it cannot silently invalidate a
+cross-surface comparison the way an inherited threshold could -- so
+`docs/LATENCY-BENCHMARK.md` is committed directly, matching
+`docs/PINNING.md`/`M0-OBSERVATIONS.md`/`POLICY-AUDIT.md`'s precedent of
+hand-authored reports with real numbers pasted in after running the
+reproducible script, not machine-generated.
+
+**Reused, not invented:** mean + p95 in milliseconds with warmup excluded is
+`exp2_eval.py`'s own `latency_hf`/`latency_sklearn` convention (`n_warm=10`).
+`src/llmshield_mcp/latency.py` carries the reusable logic;
+`scripts/benchmark_latency.py` is the thin script, mirroring the
+`corpus/sources.py` / `scripts/benchmark_rules.py` split already established.
+
+**The chain fixture needed a full API key, and this worktree didn't have
+one.** `.env` is gitignored and per-worktree; the main checkout has it, this
+worktree did not. Resolved by exporting `ANTHROPIC_API_KEY` from the main
+checkout's `.env` for the one command that needed it (via command
+substitution, so the key value never appeared in a visible command string),
+rather than copying the file -- the same "the artifact this worktree lacks
+lives in the main checkout" situation `LLMSHIELD_MODELS_ROOT`/
+`LLMSHIELD_TRAINING_CORPUS` already solved for weights and the decontamination
+reference corpus, solved the same way for a secret instead of a large file.
+
+**A real finding, not a smoke test: `inert` costs nothing in decision weight
+but nothing in latency either.** Per-detector benchmarking on real corpus
+text found rules/PII/V0 combined add under 3ms; V3 alone (and therefore the
+fused pipeline, since V3 dominates it) averages ~208-215ms -- roughly 2x
+NFR-2's 100ms SME budget on short text. The 20-call chain benchmark (FR-14)
+went further: real fetched web pages are long enough to push V3's
+`chunk_max` strategy across many windows, and gate latency scaled with that
+-- one page reached 13.1 seconds, and for 9 of 16 fetches gate latency
+*exceeded* the network round-trip that produced the content. `config/policy.yaml`
+shipping V3 `inert` (M5) protects the *decision* from an uncalibrated ML
+score; it does nothing for latency, because the detector still runs, still
+gets scored, on every intercepted result regardless of its decision weight.
+Worth carrying into the eventual report as its own finding, distinct from
+M7/M8's accuracy-side ones.
+
+### 2.24 M10: figures with no new dependency, and turning a local report into a committed one
+
+**No plotting library.** `matplotlib` (what `exp2_auroc_delong.py` uses for
+its own figure) was considered and rejected: three simple grouped bar charts
+do not need a plotting library, and adding one would grow NFR-8's pinned
+dependency set (numpy, kiwisolver, pillow, fonttools transitively) for
+something a couple hundred lines of SVG string-templating already does
+(`scripts/generate_report.py`). The charts read `results/gauge/calibration_report.json`
+(M7/M8's real output, gitignored) and render plain SVG -- diffable text, no
+binary asset, no rendering step needed to view them.
+
+**One bug worth recording because of how it failed silently.** The first
+version of the log-scale bar-height calculation could produce a negative
+`frac` for a value far below the axis floor (rules/PII at ~0.06ms on a
+1-1000ms log axis) -- SVG does not render a `<rect>` with negative height,
+so three bars and their value labels simply vanished with no error, caught
+only by an actual browser screenshot of the generated figure, not by
+reading the code. Fixed by clamping `frac` to `[0, 1]` before computing a
+pixel position, so an out-of-range value renders as a visible sliver at the
+axis boundary instead of disappearing.
+
+**M7/M8's local-only calibration data becomes this milestone's committed
+report.** Those reports stayed gitignored specifically because they could
+inform a live `config/policy.yaml` edit and their sampling varies run to
+run (2.20/2.22). M10 is the deliberate point where a specific run's numbers
+-- the same 3-family, real-weights run already reported in 2.22 -- become
+the frozen, cited, public figures. The underlying JSON stays regenerable and
+gitignored; the curated figures and prose derived from it are what gets
+published, exactly the same split M6 already established between
+`corpus/payload_corpus.sqlite` (local) and its JSONL export (publishable).
+
+**The README's status banner had been stale since M0** ("milestone 0 of
+11", "no interception layer, no corpus and no evaluation yet") through nine
+completed milestones -- nothing enforces that a status line gets updated
+alongside the code, so an out-of-date one was found and fixed here rather
+than treated as fine to leave. A one-line junction command
+(`New-Item -ItemType Junction ... C:\path\to\artifacts`) had also been
+silently corrupted at some point into `C:\path` + a literal tab + `o` + a
+literal bell character + `rtifacts` -- invisible in a normal read, caught
+only by `cat -A`. Both predate this milestone; fixed while already touching
+the file rather than left for a future session to rediscover.
+
 ## 4. Open Questions
 
 | # | Question | Blocks |
@@ -386,7 +770,7 @@ measurement, not the protection.
 | Q1 | Anthropic API key location — existing env var / `.env`, or to be supplied? The LLMShield repo's `.env` is deliberately not read. | M1 |
 | Q2 | Filesystem sandbox directory (SEC-4). Proposed default `D:\LLMSHIELD-MCP\sandbox\`, gitignored, with synthetic files. | M1 |
 | ~~Q5~~ | ~~Add a tool-result rule family?~~ **RESOLVED: yes.** Six `MCP-*` rules derived from BIPIA and InjecAgent by discriminative phrase analysis, not invention. 20.3% recall at 0.000% false positives. `INJ-*` frozen at 19 and guarded by a test. | - |
-| Q3 | Corpus source families for leave-one-source-out. Needs >= 3, ideally 4, distinct families. Target corpus size within "low hundreds". | M6, M8 |
+| ~~Q3~~ | ~~Corpus source families for leave-one-source-out.~~ **RESOLVED**: three distinct adversarial source families now ingested via `corpus-ingest` -- BIPIA (125), InjecAgent (62), LLMail-Inject (150, sampled/deduplicated from a 462,000-row MIT-licensed real adaptive-injection competition corpus, `corpus/sources.py`). 337 adversarial items total, "low hundreds" as targeted. A fourth (the MCP-specific dilution corpus, `plan.md` 2.19) remains a candidate but is no longer blocking -- M8 can run with three. | - |
 | ~~Q4~~ | ~~`config/models.yaml` absolute path~~ **RESOLVED**: root is now the repository-relative `models/` (gitignored), resolved against `REPO_ROOT`, with `LLMSHIELD_MODELS_ROOT` as override. Settled with D2. | - |
 
 ---

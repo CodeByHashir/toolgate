@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING
 from llmshield_mcp import __version__
 from llmshield_mcp.config import DEFAULT_AGENT_MODEL, DETECTOR_CLASSES, load_models_config
 from llmshield_mcp.detectors.base import Detector, DetectorResult
-from llmshield_mcp.gating import GateConfig
 
 if TYPE_CHECKING:
     from llmshield_mcp.chain import ChainRecord
@@ -124,7 +123,7 @@ def run_agent(
     config_path: Path | None,
     model: str,
     db: Path | None,
-    max_result_chars: int,
+    max_result_chars: int | None,
 ) -> int:
     """Record one tool-call chain by driving real MCP servers with a real model."""
     import asyncio
@@ -156,7 +155,9 @@ def run_agent(
 
     with ExitStack() as stack:
         log = stack.enter_context(decision_log(db)) if db else None
-        gate_config = GateConfig(max_result_chars=max_result_chars)
+        # None means "use config/policy.yaml's gate.max_result_chars" (FR-9);
+        # the flag only overrides it when the caller actually passes one.
+        gate_config = GateConfig(max_result_chars=max_result_chars) if max_result_chars else None
         gate_factory = (lambda spec: Gate(spec.name, log, gate_config)) if log else None
         record = asyncio.run(_run(gate_factory))
         logged = log.count() if log else 0
@@ -180,6 +181,167 @@ def run_agent(
 
     record.write(out)
     print(f"wrote {out}")
+    return 0
+
+
+DEFAULT_CORPUS_DB = Path("corpus/payload_corpus.sqlite")
+DEFAULT_CORPUS_EXPORT = Path("corpus/payload_corpus.jsonl")
+
+
+def ingest_corpus(
+    db: Path,
+    export: Path | None,
+    decontamination_config: Path | None,
+    include_llmail_inject: bool = True,
+) -> int:
+    """Fetch, label, decontaminate and store the payload corpus (FR-10, M6, M8).
+
+    Adversarial items come from BIPIA/InjecAgent and, by default, LLMail-Inject
+    (`corpus.sources`) -- the third adversarial source family `plan.md` open
+    question Q3 asked for. Benign items are lines from this repository's own
+    real content. All labels are checked against the V0/V3 training-data
+    reference corpus -- the reused training set includes a benign class too
+    (dolly/alpaca), so a benign item can be contaminated exactly as an
+    adversarial one can.
+    """
+    from llmshield_mcp.corpus import (
+        CorpusLabel,
+        DecontaminationStatus,
+        PayloadCorpusItem,
+        corpus_store,
+        decontaminate,
+        fetch,
+        fetch_llmail_inject,
+        load_adversarial,
+        load_benign,
+        load_decontamination_config,
+        load_llmail_inject,
+    )
+
+    fetch()
+    adversarial = load_adversarial()
+    llmail_inject: list[tuple[str, str, str]] = []
+    if include_llmail_inject:
+        fetch_llmail_inject()
+        llmail_inject = load_llmail_inject()
+    benign = load_benign()
+    print(
+        f"fetched {len(adversarial)} adversarial payloads (BIPIA/InjecAgent), "
+        f"{len(llmail_inject)} LLMail-Inject payloads, {len(benign)} benign lines"
+    )
+
+    config = load_decontamination_config(decontamination_config)
+    print(f"decontaminating against {config.training_corpus_path} ...")
+
+    candidates: list[tuple[str, str | None, CorpusLabel, str]] = (
+        [
+            (family, threat_type, CorpusLabel.ADVERSARIAL, text)
+            for family, threat_type, text in adversarial
+        ]
+        + [
+            (family, threat_type, CorpusLabel.ADVERSARIAL, text)
+            for family, threat_type, text in llmail_inject
+        ]
+        + [("repository", None, CorpusLabel.BENIGN, text) for text in benign]
+    )
+
+    results = decontaminate((text for _, _, _, text in candidates), config)
+
+    dropped_by_source: dict[str, int] = {}
+    total_by_source: dict[str, int] = {}
+    items: list[PayloadCorpusItem] = []
+    for (source, threat_type, label, text), result in zip(candidates, results, strict=True):
+        total_by_source[source] = total_by_source.get(source, 0) + 1
+        status = (
+            DecontaminationStatus.CONTAMINATED
+            if result.contaminated
+            else DecontaminationStatus.CLEAN
+        )
+        if result.contaminated:
+            dropped_by_source[source] = dropped_by_source.get(source, 0) + 1
+        items.append(
+            PayloadCorpusItem(
+                source=source,
+                threat_type=threat_type,
+                label=label,
+                text=text,
+                decontamination_status=status,
+            )
+        )
+
+    with corpus_store(db) as store:
+        store.add_many(items)
+        clean_count = store.count(status=DecontaminationStatus.CLEAN)
+        contaminated_count = store.count(status=DecontaminationStatus.CONTAMINATED)
+
+        exported = store.export_jsonl(export) if export else None
+
+    print(f"\ndrop-count report ({db}):")
+    for source in sorted(total_by_source):
+        dropped = dropped_by_source.get(source, 0)
+        total = total_by_source[source]
+        print(f"  {source:12} {dropped:>4}/{total:<4} dropped as contaminated")
+    print(f"\n  clean:        {clean_count}")
+    print(f"  contaminated: {contaminated_count}")
+    if exported is not None:
+        print(f"\nexported {exported} rows to {export}")
+    return 0
+
+
+def gauge_run(db: Path, output_dir: Path, sample_size: int, seed: int) -> int:
+    """Calibrate V0/V3, compute matched-FPR ASR overall and per source family
+    (FR-11, FR-12; M7/M8), with confidence intervals throughout.
+
+    Needs the real reused weights (`config/models.yaml` / `LLMSHIELD_MODELS_ROOT`)
+    and a corpus already produced by `corpus-ingest`. Never edits
+    `config/policy.yaml` -- see `gauge/run.py`'s module docstring for why.
+    """
+    from llmshield_mcp.gauge.run import run_gauge
+
+    print(f"corpus     {db}")
+    print(f"output     {output_dir}")
+    report = run_gauge(db=db, output_dir=output_dir, sample_size=sample_size, seed=seed)
+
+    families = report["adversarial_source_families"]
+    print(f"adversarial source families ({len(families)}): {', '.join(families)}")
+
+    for reference_name, reference_report in report["references"].items():
+        print(f"\n--- {reference_name} ---")
+        for detector, detector_report in reference_report["detectors"].items():
+            for budget_name, budget in detector_report["budgets"].items():
+                if budget["calibration_unreachable"]:
+                    print(
+                        f"  {detector:4} {budget_name:10} UNREACHABLE (constant calibration scores)"
+                    )
+                    continue
+                asr = budget["asr_overall_wilson"]
+                asr_str = (
+                    f"{asr['point']:.1%} [{asr['low']:.1%}, {asr['high']:.1%}]" if asr else "n/a"
+                )
+                print(
+                    f"  {detector:4} {budget_name:10} thr={budget['threshold']:.4f}  "
+                    f"achieved_fpr_cal={budget['achieved_fpr_calibration']:.2%}  ASR={asr_str}"
+                )
+                # FR-12 / M8: per-source-family ASR at this same threshold --
+                # the "leave-one-source-out" table (see gauge/run.py).
+                for source, by_source in budget["by_source"].items():
+                    s = by_source["asr_wilson"]
+                    print(
+                        f"       {source:16} ASR={s['point']:.1%} "
+                        f"[{s['low']:.1%}, {s['high']:.1%}]  (n={by_source['total']})"
+                    )
+            if "auroc_delong" in detector_report:
+                d = detector_report["auroc_delong"]
+                print(
+                    f"  {detector:4} AUROC={d['auc']:.4f}  [{d['ci_low']:.3f}, {d['ci_high']:.3f}]"
+                )
+
+    print(f"\nwrote {report['scores_csv']}")
+    print(f"wrote {report['report_path']}")
+    print(
+        "\nconfig/policy.yaml unchanged -- review this report before deciding whether to "
+        "set calibrated: true and move v0/v3 out of `inert` (see gauge/run.py)."
+    )
     return 0
 
 
@@ -221,13 +383,59 @@ def main(argv: list[str] | None = None) -> int:
     agent.add_argument(
         "--max-result-chars",
         type=int,
-        default=GateConfig().max_result_chars,
+        default=None,
         help=(
-            "FR-16/SEC-2 ceiling on how much of a tool result would be handed to a "
-            "detector. Bounds detection input only; the result forwarded to the "
-            "agent is never modified. Moves into the policy file in M4."
+            "FR-16/SEC-2 ceiling on how much of a tool result is handed to a "
+            "detector. Bounds detection input only, never what is forwarded to "
+            "the agent for Allow/Escalate. Defaults to config/policy.yaml's "
+            "gate.max_result_chars (FR-9); pass this flag to override it."
         ),
     )
+
+    corpus_ingest = subparsers.add_parser(
+        "corpus-ingest",
+        help="fetch, label, decontaminate and store the payload corpus",
+    )
+    corpus_ingest.add_argument("--db", type=Path, default=DEFAULT_CORPUS_DB)
+    corpus_ingest.add_argument(
+        "--export",
+        type=Path,
+        default=DEFAULT_CORPUS_EXPORT,
+        help="write the publishable JSONL snapshot here; pass an empty path-like "
+        "value via --no-export to skip",
+    )
+    corpus_ingest.add_argument(
+        "--no-export", action="store_true", help="skip writing the JSONL snapshot"
+    )
+    corpus_ingest.add_argument(
+        "--no-llmail-inject",
+        action="store_true",
+        help="skip fetching the LLMail-Inject third source family (network-heavy: "
+        "up to 12 paginated requests to HuggingFace's datasets-server)",
+    )
+    corpus_ingest.add_argument(
+        "--decontamination-config",
+        type=Path,
+        default=None,
+        help="defaults to config/decontamination.yaml",
+    )
+
+    gauge = subparsers.add_parser(
+        "gauge-run",
+        help="calibrate V0/V3 at config/policy.yaml's FPR budgets and report matched-FPR ASR",
+    )
+    gauge.add_argument(
+        "--db", type=Path, default=None, help="defaults to corpus/payload_corpus.sqlite"
+    )
+    gauge.add_argument("--output-dir", type=Path, default=None, help="defaults to results/gauge")
+    gauge.add_argument(
+        "--sample-size",
+        type=int,
+        default=None,
+        help="max benign items per reference set scored with V3 (defaults to 300); "
+        "keeps runtime bounded against V3's ~180-220ms/window latency",
+    )
+    gauge.add_argument("--seed", type=int, default=None, help="defaults to 42")
 
     args = parser.parse_args(argv)
     if args.command == "verify-models":
@@ -242,6 +450,30 @@ def main(argv: list[str] | None = None) -> int:
             args.model,
             args.db,
             args.max_result_chars,
+        )
+    if args.command == "corpus-ingest":
+        return ingest_corpus(
+            args.db,
+            None if args.no_export else args.export,
+            args.decontamination_config,
+            not args.no_llmail_inject,
+        )
+    if args.command == "gauge-run":
+        # Aliased on import: cli.py already has module-level DEFAULT_CORPUS_DB
+        # (corpus-ingest's default). Importing the gauge module's own default
+        # under the same bare name here would make it a local shadowing the
+        # module-level one for this WHOLE function -- including the
+        # corpus-ingest argparse setup above, which runs first.
+        from llmshield_mcp.gauge.run import DEFAULT_BENIGN_SAMPLE_SIZE as _GAUGE_SAMPLE_SIZE
+        from llmshield_mcp.gauge.run import DEFAULT_CORPUS_DB as _GAUGE_DB
+        from llmshield_mcp.gauge.run import DEFAULT_OUTPUT_DIR as _GAUGE_OUTPUT_DIR
+        from llmshield_mcp.gauge.run import DEFAULT_SEED as _GAUGE_SEED
+
+        return gauge_run(
+            args.db or _GAUGE_DB,
+            args.output_dir or _GAUGE_OUTPUT_DIR,
+            args.sample_size if args.sample_size is not None else _GAUGE_SAMPLE_SIZE,
+            args.seed if args.seed is not None else _GAUGE_SEED,
         )
     parser.error(f"unhandled command {args.command}")
 

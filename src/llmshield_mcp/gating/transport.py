@@ -7,25 +7,30 @@ every transport -- stdio, SSE, streamable HTTP -- yields exactly that same pair
 transports and requires no re-implementation of the protocol, which is why
 plan.md 2.1 chose this over an out-of-process proxy.
 
-The wrappers observe frames and forward them **unchanged**. M2 ships with no
-detectors on purpose: interception transparency has to be demonstrable on its
-own, so that when detection arrives any behaviour change is attributable to the
-detectors rather than to the plumbing.
+M2 shipped with the wrappers forwarding every frame unchanged and no
+detectors, on purpose: interception transparency had to be demonstrable on its
+own, so that once detection arrived any behaviour change would be attributable
+to the detectors rather than to the plumbing. M4 is that arrival. A frame is
+still forwarded byte-identical for Allow and Escalate -- the fused decision has
+to be Decision.BLOCK or a Redact with matched spans before `observe_inbound`
+returns anything other than the object it received (`gating/policy.py`).
 
 What is deliberately *not* done here:
 
 * Nothing in a scanned frame is executed, evaluated or acted on (NFR-3, SEC-1).
-  Frames are parsed for metadata and hashed; their content is never interpreted.
+  Frames are parsed for metadata and hashed; their content is never interpreted,
+  only pattern-matched by the detectors it is handed to.
 * Requests (client -> server) are only observed, never gated. PROPOSAL.md
   section 3.1 scopes this project to tool *results*.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import time
 import uuid
 from collections import OrderedDict
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from types import TracebackType
@@ -34,11 +39,84 @@ from typing import Any, Self
 import mcp_types
 from mcp.shared.message import SessionMessage
 
+from llmshield_mcp.detectors.base import Detector, DetectorResult
+from llmshield_mcp.detectors.normalise import scan_normalised
+from llmshield_mcp.detectors.pii import PiiDetector
+from llmshield_mcp.detectors.rules import RuleDetector
 from llmshield_mcp.gating.audit import Decision, DecisionLog, DecisionRecord, Outcome
-from llmshield_mcp.gating.content import extract
+from llmshield_mcp.gating.content import apply_redaction, build_block_result, extract
+from llmshield_mcp.gating.policy import PolicyConfig, PolicyEngine, load_policy_config
 
 TOOL_CALL_METHOD = "tools/call"
 CANCELLED_NOTIFICATION = "notifications/cancelled"
+
+
+def _build_rules_mcp() -> Detector:
+    return RuleDetector(families=frozenset({"mcp"}))
+
+
+def _build_rules_inj() -> Detector:
+    return RuleDetector(families=frozenset({"inj"}))
+
+
+def _build_pii() -> Detector:
+    return PiiDetector()
+
+
+def _build_v0() -> Detector:
+    # Imported lazily: constructing this loads a joblib artifact that is not
+    # published (prd.md A1) and is not present in CI, so nothing should pay
+    # for this import unless a policy file actually names "v0" in a role.
+    from llmshield_mcp.config import load_models_config
+    from llmshield_mcp.detectors.v0_lexical import V0LexicalDetector
+
+    return V0LexicalDetector(load_models_config().v0)
+
+
+def _build_v3() -> Detector:
+    # Same reasoning as _build_v0, and doubly so here: this import pulls in
+    # torch and transformers, seconds of cost nothing should pay unless "v3"
+    # is actually named in a policy role.
+    from llmshield_mcp.config import load_models_config
+    from llmshield_mcp.detectors.v3_transformer import V3TransformerDetector
+
+    return V3TransformerDetector(load_models_config().v3)
+
+
+#: Every detector key a policy file's `detectors.*` roles may name. Adding V0
+#: and V3 here (M5) is what makes `plan.md`'s "ablation by config alone"
+#: verification literal: a key only gets constructed -- and only then pays its
+#: load cost -- if some role in the policy actually names it.
+_DETECTOR_FACTORIES: dict[str, Callable[[], Detector]] = {
+    "rules_mcp": _build_rules_mcp,
+    "rules_inj": _build_rules_inj,
+    "pii": _build_pii,
+    "v0": _build_v0,
+    "v3": _build_v3,
+}
+
+
+def build_detectors(config: PolicyConfig) -> dict[str, Detector]:
+    """Construct exactly the detectors `config` actually names.
+
+    A key appears in the result if and only if it is listed in at least one
+    of `config.injection_detectors`, `.redaction_detectors` or
+    `.inert_detectors` -- the same three sets `PolicyEngine.decide` reads. A
+    detector present in the gate but absent from all three roles would be
+    dead weight (scored, never consulted, never logged as mattering); a role
+    naming a key with no factory is a configuration error, not a silent skip.
+    """
+    keys = config.injection_detectors | config.redaction_detectors | config.inert_detectors
+    detectors: dict[str, Detector] = {}
+    for key in keys:
+        factory = _DETECTOR_FACTORIES.get(key)
+        if factory is None:
+            raise ValueError(
+                f"policy names detector {key!r}, which has no registered factory "
+                f"(known: {sorted(_DETECTOR_FACTORIES)})"
+            )
+        detectors[key] = factory()
+    return detectors
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,10 +154,25 @@ class Gate:
     Stateful only in the pending-request map, which is bounded.
     """
 
-    def __init__(self, server: str, log: DecisionLog, config: GateConfig | None = None) -> None:
+    def __init__(
+        self,
+        server: str,
+        log: DecisionLog,
+        config: GateConfig | None = None,
+        *,
+        policy: PolicyEngine | None = None,
+        detectors: Mapping[str, Detector] | None = None,
+    ) -> None:
         self.server = server
         self.log = log
-        self.config = config or GateConfig()
+        self.policy = policy or PolicyEngine(load_policy_config())
+        # `config.max_result_chars` now lives in policy.yaml (FR-9). An
+        # explicitly passed GateConfig (e.g. the --max-result-chars CLI flag)
+        # overrides it; the default Gate() picks up the policy file's value.
+        self.config = config or GateConfig(max_result_chars=self.policy.config.max_result_chars)
+        self.detectors = (
+            dict(detectors) if detectors is not None else build_detectors(self.policy.config)
+        )
         self._pending: OrderedDict[str, _Pending] = OrderedDict()
 
     @property
@@ -134,20 +227,20 @@ class Gate:
 
     # --- server -> client ------------------------------------------------
 
-    def observe_inbound(self, item: SessionMessage | Exception) -> None:
+    def observe_inbound(self, item: SessionMessage | Exception) -> SessionMessage | Exception:
         if isinstance(item, Exception):
             # A transport-level failure, not a tool result. Nothing to scan.
-            return
+            return item
 
         payload = item.message
         if not isinstance(payload, mcp_types.JSONRPCResponse | mcp_types.JSONRPCError):
-            return
+            return item
 
         pending = self._pending.pop(_request_key(payload.id), None)
         if pending is None:
             # Not a tools/call we tracked -- initialize, tools/list, a
             # server-initiated request. Out of scope for result gating.
-            return
+            return item
 
         roundtrip_ms = (time.perf_counter() - pending.started) * 1000.0
         gate_started = time.perf_counter()
@@ -170,12 +263,27 @@ class Gate:
                     note=f"jsonrpc error {payload.error.code}",
                 )
             )
-            return
+            return item
 
         content = extract(payload.result, self.config.max_result_chars)
 
-        # M2 runs no detectors, so the decision is unconditionally ALLOW and
-        # detector_scores is empty. The row shape is already final.
+        # FR-2/FR-4: run every configured detector against the (normalised +
+        # original, see scan_normalised) extracted text, then fuse.
+        results: dict[str, DetectorResult] = {
+            key: scan_normalised(detector, content.text) for key, detector in self.detectors.items()
+        }
+        fusion = self.policy.decide(results)
+
+        result_out: Any = payload.result
+        if fusion.decision is Decision.BLOCK:
+            result_out = build_block_result(is_error=True)
+        elif fusion.redacted:
+            result_out = apply_redaction(payload.result, fusion.redact_spans)
+
+        if result_out is not payload.result:
+            new_payload = payload.model_copy(update={"result": result_out})
+            item = dataclasses.replace(item, message=new_payload)
+
         self.log.append(
             DecisionRecord(
                 correlation_id=pending.correlation_id,
@@ -183,17 +291,21 @@ class Gate:
                 tool_name=pending.tool_name,
                 request_id=_request_key(payload.id),
                 raw_result_hash=content.sha256,
-                fused_decision=Decision.ALLOW,
+                fused_decision=fusion.decision,
+                detector_scores={key: result.score for key, result in results.items()},
+                redacted=fusion.redacted,
                 latency_ms=(time.perf_counter() - gate_started) * 1000.0,
                 roundtrip_ms=roundtrip_ms,
-                outcome=Outcome.RESULT,
+                outcome=fusion.outcome,
                 tool_is_error=content.is_error,
                 content_chars=content.original_chars,
                 truncated=content.truncated,
                 block_types=content.block_types,
                 malformed=content.malformed,
+                note=fusion.note,
             )
         )
+        return item
 
 
 class _ObservedReadStream:
@@ -205,8 +317,7 @@ class _ObservedReadStream:
 
     async def receive(self) -> Any:
         item = await self._inner.receive()
-        self._gate.observe_inbound(item)
-        return item
+        return self._gate.observe_inbound(item)
 
     async def aclose(self) -> None:
         await self._inner.aclose()
@@ -216,8 +327,7 @@ class _ObservedReadStream:
 
     async def __anext__(self) -> Any:
         item = await self._inner.__anext__()
-        self._gate.observe_inbound(item)
-        return item
+        return self._gate.observe_inbound(item)
 
     async def __aenter__(self) -> Self:
         await self._inner.__aenter__()
