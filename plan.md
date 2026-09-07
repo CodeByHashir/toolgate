@@ -4,7 +4,7 @@ Companion to `prd.md` (what to build) and `whats_has_been_done.md` (what is
 built). This file holds the plan, the architecture decisions and their
 rationale, remaining work, and known risks.
 
-**Current position: M9 complete. Latency benchmarked per detector, fused, and across a real 20+-call chain -- committed in `docs/LATENCY-BENCHMARK.md`. `config/policy.yaml` still ships uncalibrated by deliberate choice -- see 2.20.**
+**Current position: M10 complete. `docs/REPORT.md` + three committed SVG figures + a rewritten README state the headline findings in plain English. Only M11 (optional standalone proxy) remains. `config/policy.yaml` still ships uncalibrated by deliberate choice -- see 2.20.**
 
 ---
 
@@ -25,7 +25,7 @@ Each milestone is independently testable and lands as its own commit.
 | M7 | GAUGE harness; DeLong ported, Wilson/CP/McNemar on statsmodels; replace hand-rolled CIs | FR-11, NFR-6, NFR-7 | Known-answer tests for Wilson, Clopper-Pearson, McNemar, DeLong | **Done** |
 | M8 | Leave-one-source-out generalisation test | FR-12 | Per-held-out-family table | **Done** |
 | M9 | Latency benchmark: per-detector, fused, 20-call chain | FR-13, FR-14, NFR-1, NFR-2 | Reproducible script, committed numbers | **Done** |
-| M10 | Report generation; README headline numbers | AC-7, [18] | Tables and plots as static files | Not started |
+| M10 | Report generation; README headline numbers | AC-7, [18] | Tables and plots as static files | **Done** |
 | M11 | *(optional)* Standalone stdio proxy over the same gating core | [11.1] option A | Agent config points at proxy, nothing else changes | Not started |
 
 Ordering rule: do not skip ahead. M2 deliberately ships with **no detection**
@@ -720,6 +720,48 @@ score; it does nothing for latency, because the detector still runs, still
 gets scored, on every intercepted result regardless of its decision weight.
 Worth carrying into the eventual report as its own finding, distinct from
 M7/M8's accuracy-side ones.
+
+### 2.24 M10: figures with no new dependency, and turning a local report into a committed one
+
+**No plotting library.** `matplotlib` (what `exp2_auroc_delong.py` uses for
+its own figure) was considered and rejected: three simple grouped bar charts
+do not need a plotting library, and adding one would grow NFR-8's pinned
+dependency set (numpy, kiwisolver, pillow, fonttools transitively) for
+something a couple hundred lines of SVG string-templating already does
+(`scripts/generate_report.py`). The charts read `results/gauge/calibration_report.json`
+(M7/M8's real output, gitignored) and render plain SVG -- diffable text, no
+binary asset, no rendering step needed to view them.
+
+**One bug worth recording because of how it failed silently.** The first
+version of the log-scale bar-height calculation could produce a negative
+`frac` for a value far below the axis floor (rules/PII at ~0.06ms on a
+1-1000ms log axis) -- SVG does not render a `<rect>` with negative height,
+so three bars and their value labels simply vanished with no error, caught
+only by an actual browser screenshot of the generated figure, not by
+reading the code. Fixed by clamping `frac` to `[0, 1]` before computing a
+pixel position, so an out-of-range value renders as a visible sliver at the
+axis boundary instead of disappearing.
+
+**M7/M8's local-only calibration data becomes this milestone's committed
+report.** Those reports stayed gitignored specifically because they could
+inform a live `config/policy.yaml` edit and their sampling varies run to
+run (2.20/2.22). M10 is the deliberate point where a specific run's numbers
+-- the same 3-family, real-weights run already reported in 2.22 -- become
+the frozen, cited, public figures. The underlying JSON stays regenerable and
+gitignored; the curated figures and prose derived from it are what gets
+published, exactly the same split M6 already established between
+`corpus/payload_corpus.sqlite` (local) and its JSONL export (publishable).
+
+**The README's status banner had been stale since M0** ("milestone 0 of
+11", "no interception layer, no corpus and no evaluation yet") through nine
+completed milestones -- nothing enforces that a status line gets updated
+alongside the code, so an out-of-date one was found and fixed here rather
+than treated as fine to leave. A one-line junction command
+(`New-Item -ItemType Junction ... C:\path\to\artifacts`) had also been
+silently corrupted at some point into `C:\path` + a literal tab + `o` + a
+literal bell character + `rtifacts` -- invisible in a normal read, caught
+only by `cat -A`. Both predate this milestone; fixed while already touching
+the file rather than left for a future session to rediscover.
 
 ## 4. Open Questions
 

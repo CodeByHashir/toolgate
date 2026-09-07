@@ -2,21 +2,25 @@
 
 Factual map of what exists in this repository. Updated when structure changes.
 
-**As of M9.** 4688 lines of source, 4160 lines of tests, 303 tests (285
-weight-free + 18 marked `models`). All four detectors -- rules (both
-families), PII, V0, V3 -- run against every intercepted tool result through
-the fusion/policy engine (`gating/policy.py`); V0/V3 ship **inert** (scored,
-logged, zero decision weight). A payload corpus pipeline exists (`corpus/`):
-fetch, label, MinHash-decontaminate, store -- three distinct adversarial
-source families (BIPIA, InjecAgent, LLMail-Inject, 337 items). A GAUGE
-harness (`gauge/`) calibrates V0/V3 at matched FPR budgets and reports
+**As of M10.** 4688 lines of source, 4160 lines of tests, 303 tests (285
+weight-free + 18 marked `models`) -- unchanged from M9, since M10 is
+reporting/documentation only, no new code. All four detectors -- rules
+(both families), PII, V0, V3 -- run against every intercepted tool result
+through the fusion/policy engine (`gating/policy.py`); V0/V3 ship **inert**
+(scored, logged, zero decision weight). A payload corpus pipeline exists
+(`corpus/`): fetch, label, MinHash-decontaminate, store -- three distinct
+adversarial source families (BIPIA, InjecAgent, LLMail-Inject, 337 items). A
+GAUGE harness (`gauge/`) calibrates V0/V3 at matched FPR budgets and reports
 ASR/AUROC by threat type AND by source family (FR-12, leave-one-source-out)
 with confidence intervals throughout, but does not itself flip
-`config/policy.yaml`'s `calibrated` flag -- that remains a deliberate human
-decision after reviewing a run's report. Latency is benchmarked and
+`config/policy.yaml`'s `calibrated` flag. Latency is benchmarked and
 committed (`docs/LATENCY-BENCHMARK.md`): rules/PII/V0 trivial, V3 (and
 therefore the fused pipeline) ~2x over its NFR-2 budget on short text and up
-to 13 seconds on real fetched web content.
+to 13 seconds on real fetched web content. The full write-up is
+`docs/REPORT.md`, with three committed SVG figures (`docs/figures/`) and a
+rewritten `README.md` stating the headline findings in plain English (M10,
+AC-7): detectors do not transfer reliably, and whatever signal exists does
+not generalise across source families.
 
 ---
 
@@ -50,7 +54,8 @@ D:\LLMSHIELD-MCP\
 ├── scripts/
 │   ├── benchmark_rules.py       rule recall vs BIPIA + InjecAgent (imports
 │   │                            loaders from llmshield_mcp.corpus.sources)
-│   └── benchmark_latency.py     per-detector + fused latency (FR-13, M9)
+│   ├── benchmark_latency.py     per-detector + fused latency (FR-13, M9)
+│   └── generate_report.py       SVG figures from a GAUGE run (AC-7, M10)
 ├── corpus/
 │   ├── external/                 fetched BIPIA/InjecAgent (gitignored)
 │   ├── reference/                V0/V3 training-data reference corpus,
@@ -63,7 +68,9 @@ D:\LLMSHIELD-MCP\
 │   ├── PINNING.md               why scikit-learn and transformers are pinned
 │   ├── M0-OBSERVATIONS.md       M0 probe observations (explicitly not results)
 │   ├── POLICY-AUDIT.md          pre-M4 policy/threshold audit, measured
-│   └── LATENCY-BENCHMARK.md     M9: per-detector, fused, 20-call chain latency
+│   ├── LATENCY-BENCHMARK.md     M9: per-detector, fused, 20-call chain latency
+│   ├── REPORT.md                M10: the public write-up (AC-7)
+│   └── figures/                 committed SVG charts REPORT.md embeds
 ├── src/llmshield_mcp/
 │   ├── __init__.py              __version__ = "0.1.0"
 │   ├── __main__.py              python -m llmshield_mcp

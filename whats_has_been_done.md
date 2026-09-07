@@ -1304,3 +1304,96 @@ live content, not a synthetic probe.
   Node/NPM in this environment, noted since M1) -- extracted page length,
   and therefore V3's window count and latency, would likely differ under
   Readability.js.
+
+---
+
+## M10 — Report generation, README headline numbers
+
+AC-7, PROPOSAL.md section 18. Turns M4-M9's measurements into the public
+deliverable: a written report, three committed figures, and a README that
+actually says what was found instead of the M0-era placeholder it had
+carried through nine completed milestones.
+
+### What changed
+
+- `scripts/generate_report.py` -- reads `results/gauge/calibration_report.json`
+  (M7/M8's output; gitignored, regenerable) and writes three plain SVG bar
+  charts to `docs/figures/` (committed): ASR by source family (the
+  leave-one-source-out finding), latency by component (log scale, against
+  `docs/LATENCY-BENCHMARK.md`'s committed numbers), and DeLong AUROC by
+  benign reference. No plotting library -- see design decisions.
+- `docs/figures/asr_by_source_family.svg`, `latency_by_component.svg`,
+  `auroc_by_reference.svg` -- committed, generated from the same real
+  3-family GAUGE run already reported in M8's `whats_has_been_done.md`
+  entry.
+- `docs/REPORT.md` -- the full write-up: what the system is, the corpus,
+  rule recall, GAUGE calibration/AUROC, the leave-one-source-out gap,
+  latency, why the fusion/policy design follows from these numbers, and an
+  explicit "what this does not claim" section (mirrors `plan.md` 2.16's
+  framing, in public-facing form).
+- `README.md` -- rewritten status banner (was still "milestone 0 of 11,
+  no results" from M0), a new "Headline result" section stating the
+  transfer-failure and generalisation-gap findings in plain English, and
+  new "Build the corpus" / "Run the evaluation" sections documenting
+  `corpus-ingest`, `gauge-run`, and all three benchmark/report scripts --
+  none of which had been documented in the README since they were built.
+
+### Design decisions
+
+**No plotting library added.** Three grouped bar charts do not need one;
+`scripts/generate_report.py` writes plain SVG directly (string
+templating), keeping NFR-8's pinned dependency set unchanged and the
+figures themselves diffable text rather than binary images.
+
+**A specific run's numbers become the frozen, published figures.** M7/M8
+kept `results/gauge/` gitignored because an inherited or stale calibration
+number could invalidate a live policy decision, and its sampling varies run
+to run. M10 is the deliberate point where one particular run -- the same
+3-family, real-weights run M8 already reported -- gets promoted to a cited,
+committed figure. The raw JSON stays local and regenerable; the curated
+SVGs and prose derived from it are what ships, the same split M6 already
+drew between the corpus SQLite store and its JSONL export.
+
+### A bug worth recording
+
+The first cut of the log-scale bar-height calculation could produce a
+negative fraction for a value far below the chosen axis floor (rules/PII at
+~0.06ms plotted against V3 at ~215ms on the same 1-1000ms log axis). SVG
+does not render a `<rect>` with negative height -- it just doesn't appear,
+no error, no exception. Three bars and their value labels vanished
+silently; caught only by actually opening the generated SVG in the browser
+and screenshotting it, not by reading the generation code. Fixed by
+clamping the computed fraction to `[0, 1]` before converting to a pixel
+position, so an out-of-range value renders as a visible sliver at the axis
+boundary instead of disappearing.
+
+### Two pre-existing bugs, fixed while already in the file
+
+- README's status banner had said "milestone 0 of 11... no results are
+  claimed" since M0, through nine subsequent completed milestones -- nothing
+  enforces that a status line tracks the code, so it had simply gone stale
+  and unnoticed.
+- The Windows junction command example had been silently corrupted: what
+  should read `C:\path\to\artifacts` contained a literal tab character and a
+  literal bell character in place of two `\t`/`\a`-style backslash
+  sequences that were evidently escape-processed at some point before this
+  session. Invisible on a normal read; found with `cat -A`.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `uv run pytest -m "not models"` | **285 passed**, 18 deselected (no test changes this milestone) |
+| `uv run ruff check` / `mypy` | Clean, 30 source files |
+| `uv run python scripts/generate_report.py` against the real M8 calibration data | Three SVGs written, visually verified in-browser |
+
+### Known limitations
+
+- The figures are generated from one specific historical run
+  (`results/gauge/calibration_report.json` as it stood after M8), not
+  regenerated fresh for this milestone -- re-running `gauge-run` today would
+  resample the benign reference sets (different seed state across sessions)
+  and could shift the exact numbers slightly, though not the reported shape.
+- `docs/REPORT.md` and the README's headline numbers will need a manual
+  refresh if M7/M8 are ever re-run with different calibration budgets or a
+  fourth source family; nothing regenerates them automatically.
