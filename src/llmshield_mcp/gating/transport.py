@@ -44,6 +44,7 @@ from llmshield_mcp.detectors.normalise import scan_normalised
 from llmshield_mcp.detectors.pii import PiiDetector
 from llmshield_mcp.detectors.rules import RuleDetector
 from llmshield_mcp.gating.audit import Decision, DecisionLog, DecisionRecord, Outcome
+from llmshield_mcp.gating.session import SessionAccumulator
 from llmshield_mcp.gating.content import apply_redaction, build_block_result, extract
 from llmshield_mcp.gating.policy import PolicyConfig, PolicyEngine, load_policy_config
 
@@ -162,6 +163,7 @@ class Gate:
         *,
         policy: PolicyEngine | None = None,
         detectors: Mapping[str, Detector] | None = None,
+        accumulator: SessionAccumulator | None = None,
     ) -> None:
         self.server = server
         self.log = log
@@ -173,6 +175,10 @@ class Gate:
         self.detectors = (
             dict(detectors) if detectors is not None else build_detectors(self.policy.config)
         )
+        #: Optional M12 session accumulator.  When set, it receives every
+        #: completed DecisionRecord via observe() after the record is written.
+        #: When None (default), the Gate behaves exactly as it did before M12.
+        self.accumulator: SessionAccumulator | None = accumulator
         self._pending: OrderedDict[str, _Pending] = OrderedDict()
 
     @property
@@ -284,27 +290,41 @@ class Gate:
             new_payload = payload.model_copy(update={"result": result_out})
             item = dataclasses.replace(item, message=new_payload)
 
-        self.log.append(
-            DecisionRecord(
-                correlation_id=pending.correlation_id,
-                mcp_server_id=self.server,
-                tool_name=pending.tool_name,
-                request_id=_request_key(payload.id),
-                raw_result_hash=content.sha256,
-                fused_decision=fusion.decision,
-                detector_scores={key: result.score for key, result in results.items()},
-                redacted=fusion.redacted,
-                latency_ms=(time.perf_counter() - gate_started) * 1000.0,
-                roundtrip_ms=roundtrip_ms,
-                outcome=fusion.outcome,
-                tool_is_error=content.is_error,
-                content_chars=content.original_chars,
-                truncated=content.truncated,
-                block_types=content.block_types,
-                malformed=content.malformed,
-                note=fusion.note,
-            )
+        record = DecisionRecord(
+            correlation_id=pending.correlation_id,
+            mcp_server_id=self.server,
+            tool_name=pending.tool_name,
+            request_id=_request_key(payload.id),
+            raw_result_hash=content.sha256,
+            fused_decision=fusion.decision,
+            detector_scores={key: result.score for key, result in results.items()},
+            redacted=fusion.redacted,
+            latency_ms=(time.perf_counter() - gate_started) * 1000.0,
+            roundtrip_ms=roundtrip_ms,
+            outcome=fusion.outcome,
+            tool_is_error=content.is_error,
+            content_chars=content.original_chars,
+            truncated=content.truncated,
+            block_types=content.block_types,
+            malformed=content.malformed,
+            note=fusion.note,
         )
+        self.log.append(record)
+
+        # M12: session-level observation (observation only — never changes the
+        # decision that was already written above).  The accumulator is absent
+        # in all pre-M12 usage and in most tests, so this branch is free.
+        if self.accumulator is not None:
+            obs = self.accumulator.observe(record)
+            note_addition = obs.to_note()
+            if note_addition is not None:
+                # Append the session context to the note column of the row we
+                # just wrote.  A targeted UPDATE rather than re-writing the
+                # whole record keeps the audit trail intact.
+                existing_note = fusion.note or ""
+                combined = f"{existing_note}; {note_addition}" if existing_note else note_addition
+                self.log.update_note(record.correlation_id, combined)
+
         return item
 
 

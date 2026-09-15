@@ -40,11 +40,17 @@ class Outcome(StrEnum):
     content, so it is passed through with no content-based detection. Logging
     it under a distinct outcome keeps those rows out of any later false-positive
     denominator instead of silently counting as benign allows.
+
+    `SESSION_SUMMARY` is written exactly once per session by
+    `SessionAccumulator.finish()` (M12).  It is not a per-call decision row;
+    it is a reviewer-facing narrative of the whole session and must be excluded
+    from any per-call statistics (FPR denominators, latency averages, etc.).
     """
 
     RESULT = "result"
     PROTOCOL_ERROR = "protocol_error"
     DETECTOR_FAILURE = "detector_failure"
+    SESSION_SUMMARY = "session_summary"
 
 
 SCHEMA = """
@@ -159,6 +165,30 @@ class DecisionLog:
     def count(self) -> int:
         with closing(self._connection.execute("SELECT COUNT(*) FROM decision_log")) as cursor:
             return int(cursor.fetchone()[0])
+
+    def update_note(self, correlation_id: str, note: str) -> None:
+        """Update the ``note`` column of the most-recently written row for
+        `correlation_id`.
+
+        Used by M12's SessionAccumulator to append session-level context after
+        a row is written.  Targets by both ``correlation_id`` and ``id DESC``
+        so that interleaved calls on the same session with the same (unlikely)
+        correlation_id cannot corrupt a different row.
+        """
+        self._connection.execute(
+            """
+            UPDATE decision_log
+               SET note = ?
+             WHERE id = (
+               SELECT id FROM decision_log
+                WHERE correlation_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+             )
+            """,
+            (note, correlation_id),
+        )
+        self._connection.commit()
 
     def close(self) -> None:
         self._connection.close()

@@ -4,7 +4,7 @@ Companion to `prd.md` (what to build) and `whats_has_been_done.md` (what is
 built). This file holds the plan, the architecture decisions and their
 rationale, remaining work, and known risks.
 
-**Current position: M10 complete. `docs/REPORT.md` + three committed SVG figures + a rewritten README state the headline findings in plain English. Only M11 (optional standalone proxy) remains. `config/policy.yaml` still ships uncalibrated by deliberate choice -- see 2.20.**
+**Current position: M12 complete. `docs/REPORT.md` + three committed SVG figures + a rewritten README state the headline findings in plain English. M11 (optional standalone proxy) not started. M12 (session-level observation) done. `config/policy.yaml` still ships uncalibrated by deliberate choice -- see 2.20.**
 
 ---
 
@@ -27,6 +27,7 @@ Each milestone is independently testable and lands as its own commit.
 | M9 | Latency benchmark: per-detector, fused, 20-call chain | FR-13, FR-14, NFR-1, NFR-2 | Reproducible script, committed numbers | **Done** |
 | M10 | Report generation; README headline numbers | AC-7, [18] | Tables and plots as static files | **Done** |
 | M11 | *(optional)* Standalone stdio proxy over the same gating core | [11.1] option A | Agent config points at proxy, nothing else changes | Not started |
+| M12 | Session-level observation accumulator; hash-recurrence/dilution detection; session summary row | [M0-OBSERVATIONS.md §1] | 42 unit+integration tests; M9 chain FP regression (zero dangerous anomaly flags); observe() overhead 0.005 ms/call | **Done** |
 
 Ordering rule: do not skip ahead. M2 deliberately ships with **no detection**
 so that interception transparency can be proven independently of detection

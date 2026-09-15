@@ -21,11 +21,17 @@ from llmshield_mcp.gating.policy import (
     PolicyEngine,
     load_policy_config,
 )
+from llmshield_mcp.gating.session import (
+    CallObservation,
+    SessionAccumulator,
+    SessionSummary,
+)
 from llmshield_mcp.gating.transport import Gate, GateConfig, build_detectors, gating_transport
 
 __all__ = [
     "BLOCK_MESSAGE",
     "DEFAULT_POLICY_PATH",
+    "CallObservation",
     "Decision",
     "DecisionLog",
     "DecisionRecord",
@@ -36,6 +42,8 @@ __all__ = [
     "Outcome",
     "PolicyConfig",
     "PolicyEngine",
+    "SessionAccumulator",
+    "SessionSummary",
     "apply_redaction",
     "build_block_result",
     "decision_log",
