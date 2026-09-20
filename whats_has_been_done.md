@@ -1397,3 +1397,85 @@ boundary instead of disappearing.
 - `docs/REPORT.md` and the README's headline numbers will need a manual
   refresh if M7/M8 are ever re-run with different calibration budgets or a
   fourth source family; nothing regenerates them automatically.
+
+---
+
+## M12 Dilution Benchmark — critical research/evaluation review
+
+**Work type:** Evaluation / research correctness, not a feature build.
+
+**What changed:**
+
+- `src/llmshield_mcp/dilution.py` — New file. Primitives for the dilution
+  benchmark: `build_diluted_text()` (embeds payload in filler at a given ratio
+  and position), `score_diluted()` (returns a `DilutionResult` dataclass),
+  `build_dilution_sequence()` (interleaved benign/adversarial calls for session
+  accumulator testing), `recall_at_ratio()`, `mean_score_at_ratio()`, and the
+  critical `load_neutral_filler()` (screens candidate filler lines through all
+  active detectors before use — see "Flaw found and fixed" below).
+
+- `scripts/benchmark_dilution.py` — New file. Runs 187 adversarial payloads
+  (BIPIA 125 + InjecAgent 62) × 4 dilution ratios × 3 positions × 3 light
+  detectors (`rules_mcp`, `rules_inj`, `pii`). Also runs 4 synthetic session
+  accumulator experiments and 50-item benign FP measurement. Uses
+  `load_neutral_filler()` to construct the filler paragraph. Writes
+  `results/dilution/dilution_results.json` (gitignored).
+
+- `tests/test_dilution.py` — New file. 41 tests (up from 0), including 4 new
+  tests for `load_neutral_filler` and the contamination regression
+  (`TestLoadNeutralFiller::test_filler_does_not_inflate_recall_at_any_ratio`).
+
+- `docs/DILUTION-BENCHMARK.md` — New file. Full research report with corrected
+  numbers, documented methodology flaw and fix, separated measured results from
+  synthetic session experiments, explicit statement of what M12 can and cannot
+  claim.
+
+**Flaw found and fixed (scientific integrity):**
+
+The first run of the benchmark used `corpus.sources.load_benign()` directly for
+filler, which returned lines from `CLAUDE.md` — a system-prompt file containing
+imperative text such as *"provide evidence"* and *"your answer"*. At 75%
+dilution ratio, the tiled filler concatenated `provide [payload-word] your answer`,
+triggering MCP-002 on a payload that scored 0.0 in isolation. This inflated
+`rules_mcp` recall from 20.3% to 20.7% at ratio=0.75 only — a pure
+methodological artifact from contaminated filler, not a real dilution effect.
+
+This was caught during the review, diagnosed to the specific rule match
+(`provide Modify your answer`), fixed by introducing `load_neutral_filler()`,
+and the corrected results show perfectly flat recall at 20.3% across all four
+dilution levels. The contamination scenario is documented and regression-tested.
+
+**Results (with verified-neutral filler):**
+
+| Detector | isolated | 50% | 75% | 90% | FPR |
+|---|---|---|---|---|---|
+| `rules_mcp` | 20.3% | 20.3% | 20.3% | 20.3% | 0.0% |
+| `rules_inj` | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% |
+| `pii` | 19.3% | 19.3% | 19.3% | 19.3% | 0.0% |
+
+Score degradation at 90% dilution: 0.0000 for all three detectors.
+Position (start/middle/end): no measurable effect.
+Latency: rules < 0.20 ms mean, < 0.55 ms p95.
+
+Session accumulator (M12): correctly distinguishes hash repetition with stable
+score (recurrence, no divergence) from hash repetition with score drop
+(recurrence + divergence). The score-divergence experiment uses synthetic scores
+(not from a real detector run) and is labelled as such in the report.
+
+**Key research claim supported:**
+
+Rule-based and PII detectors are structurally immune to word-level dilution.
+This is a consequence of their pattern-matching architecture, not a measured
+security property. The M12 session accumulator adds evidence for the score-
+divergence scenario (same hash, different context window → different ML score),
+but only when the exact same content is processed twice in one session.
+
+**Verification:**
+
+| Check | Result |
+|---|---|
+| `uv run pytest -m "not models"` | **368 passed**, 18 deselected |
+| `uv run python scripts/benchmark_dilution.py` | Ran clean, results written |
+| Recall flat at 0.203 across all ratios | Confirmed with corrected filler |
+| Contamination regression test | Passes: fires with contaminated filler, does not fire with clean filler |
+
