@@ -482,3 +482,80 @@ async def test_gating_transport_wraps_both_streams(gate: Gate, log: DecisionLog)
 
     assert log.count() == 1
     assert inner_write.sent  # the frame really reached the inner transport
+
+
+# --- FR-5: what the log says about a redaction must match what was forwarded --
+
+
+def _multi_block_response(request_id: Any, *texts: str) -> SessionMessage:
+    return SessionMessage(
+        mcp_types.JSONRPCResponse(
+            jsonrpc="2.0",
+            id=request_id,
+            result={
+                "content": [{"type": "text", "text": t} for t in texts],
+                "isError": False,
+            },
+        )
+    )
+
+
+def test_pii_split_across_two_blocks_is_redacted_before_the_agent_sees_it(
+    log: DecisionLog, light_detectors: dict[str, Detector]
+) -> None:
+    """Regression: this combination used to forward the PII and log a success.
+
+    The gate joins blocks with "\n" for detection, PHONE_NUMBER matches across
+    it, the policy decided Redact -- and the old containment check masked
+    nothing while still writing `redacted=1`.
+    """
+    gate = Gate("filesystem", log, detectors=light_detectors)
+    gate.observe_outbound(call_request(1))
+    out = gate.observe_inbound(_multi_block_response(1, "Call 555", "123 4567 now."))
+
+    forwarded = out.message.result["content"]  # type: ignore[union-attr]
+    assert "555" not in forwarded[0]["text"]
+    assert "123 4567" not in forwarded[1]["text"]
+
+    row = log.rows()[0]
+    assert row["fused_decision"] == "redact"
+    assert row["redacted"] == 1
+    # Nothing was left unmasked, so no shortfall is recorded.
+    assert row["note"] is None or "redaction incomplete" not in row["note"]
+
+
+def test_an_incomplete_redaction_is_recorded_in_the_note(
+    log: DecisionLog, light_detectors: dict[str, Detector]
+) -> None:
+    """If a span cannot be masked, the row must not claim otherwise silently."""
+    from llmshield_mcp.detectors.base import DetectorResult, Span
+    from llmshield_mcp.gating.policy import PolicyEngine, load_policy_config
+
+    class _OutOfRangePii:
+        name = "pii"
+
+        def score(self, text: str) -> DetectorResult:
+            # A span past the end of the content: unplaceable by construction.
+            return DetectorResult(
+                detector="pii",
+                score=1.0,
+                detail={"EMAIL_ADDRESS": 1.0},
+                spans=(Span(start=10_000, end=10_010, label="EMAIL_ADDRESS"),),
+                latency_ms=0.1,
+                truncated=False,
+                error=None,
+            )
+
+    gate = Gate(
+        "filesystem",
+        log,
+        detectors={"pii": _OutOfRangePii()},  # type: ignore[dict-item]
+        policy=PolicyEngine(load_policy_config()),
+    )
+    gate.observe_outbound(call_request(1))
+    gate.observe_inbound(call_response(1, "short body"))
+
+    row = log.rows()[0]
+    assert row["fused_decision"] == "redact"
+    assert "redaction incomplete" in (row["note"] or "")
+    assert "EMAIL_ADDRESS" in (row["note"] or "")

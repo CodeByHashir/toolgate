@@ -179,7 +179,8 @@ def test_apply_redaction_masks_a_span_in_a_single_text_block() -> None:
     result = _text_result("call me at 555-123-4567 please")
     span = Span(start=11, end=23, label="PHONE_NUMBER")
 
-    redacted = apply_redaction(result, (span,))
+    redacted, unapplied = apply_redaction(result, (span,))
+    assert unapplied == ()
 
     assert redacted["content"][0]["text"] == "call me at [REDACTED:PHONE_NUMBER] please"
     # The original is never mutated in place.
@@ -196,7 +197,8 @@ def test_apply_redaction_targets_only_the_block_the_span_falls_in() -> None:
     start = joined.index("a@b.com")
     span = Span(start=start, end=start + len("a@b.com"), label="EMAIL_ADDRESS")
 
-    redacted = apply_redaction(result, (span,))
+    redacted, unapplied = apply_redaction(result, (span,))
+    assert unapplied == ()
 
     assert redacted["content"][0]["text"] == "first block"
     assert redacted["content"][1]["text"] == "second block with [REDACTED:EMAIL_ADDRESS]"
@@ -211,7 +213,8 @@ def test_apply_redaction_leaves_non_text_blocks_alone() -> None:
     }
     span = Span(start=0, end=len("secret@example.com"), label="EMAIL_ADDRESS")
 
-    redacted = apply_redaction(result, (span,))
+    redacted, unapplied = apply_redaction(result, (span,))
+    assert unapplied == ()
 
     assert redacted["content"][1] == {"type": "image", "data": "AAAA", "mimeType": "image/png"}
 
@@ -222,7 +225,8 @@ def test_apply_redaction_masks_an_embedded_text_resource() -> None:
     }
     span = Span(start=5, end=13, label="PHONE_NUMBER")
 
-    redacted = apply_redaction(result, (span,))
+    redacted, unapplied = apply_redaction(result, (span,))
+    assert unapplied == ()
 
     assert redacted["content"][0]["resource"]["text"] == "call [REDACTED:PHONE_NUMBER]"
 
@@ -230,7 +234,7 @@ def test_apply_redaction_masks_an_embedded_text_resource() -> None:
 def test_apply_redaction_with_no_spans_returns_the_same_object() -> None:
     result = _text_result("nothing to see here")
 
-    assert apply_redaction(result, ()) is result
+    assert apply_redaction(result, ()) == (result, ())
 
 
 # --- FR-6: Block replaces the whole result ----------------------------------
@@ -241,3 +245,67 @@ def test_build_block_result_replaces_content_with_the_block_message() -> None:
 
     assert blocked["content"] == [{"type": "text", "text": BLOCK_MESSAGE}]
     assert blocked["isError"] is True
+
+
+# --- FR-5 regression: a span straddling the block join must not leak --------
+
+
+def test_span_across_the_block_join_is_masked_in_both_blocks() -> None:
+    r"""The leak this clipping behaviour exists to close.
+
+    `extract()` joins blocks with "\n", and PHONE_NUMBER's separator class is
+    `[-.\s]`, which matches a newline. An earlier implementation masked a span
+    only when one block contained it end to end, so this case silently masked
+    nothing while the decision was still recorded as `redacted=True`.
+    """
+    result = _text_result("Call 555", "123 4567 for support.")
+    joined = extract(result, max_chars=1000).text
+    assert joined == "Call 555\n123 4567 for support."
+    span = Span(start=5, end=17, label="PHONE_NUMBER")
+
+    redacted, unapplied = apply_redaction(result, (span,))
+
+    assert unapplied == ()
+    # Every digit of the number is gone from both halves.
+    assert "555" not in redacted["content"][0]["text"]
+    assert "123 4567" not in redacted["content"][1]["text"]
+    assert "[REDACTED:PHONE_NUMBER]" in redacted["content"][0]["text"]
+    assert "[REDACTED:PHONE_NUMBER]" in redacted["content"][1]["text"]
+    # Text outside the span survives.
+    assert redacted["content"][1]["text"].endswith(" for support.")
+
+
+def test_real_pii_detector_span_across_blocks_is_actually_redacted() -> None:
+    """End to end with the real detector, not a hand-built span."""
+    from llmshield_mcp.detectors.pii import PiiDetector
+
+    result = _text_result("Call 555", "123 4567 for support.")
+    content = extract(result, max_chars=1000)
+    scored = PiiDetector().score(content.text)
+    assert scored.spans, "detector no longer produces a cross-block span; test is stale"
+
+    redacted, unapplied = apply_redaction(result, scored.spans)
+
+    assert unapplied == ()
+    assert "555" not in redacted["content"][0]["text"]
+
+
+def test_span_outside_every_contributing_block_is_reported_unapplied() -> None:
+    """A span that cannot be placed must surface, never be dropped quietly."""
+    result = _text_result("short")
+    span = Span(start=500, end=520, label="EMAIL_ADDRESS")
+
+    redacted, unapplied = apply_redaction(result, (span,))
+
+    assert unapplied == (span,)
+    assert redacted["content"][0]["text"] == "short"
+
+
+def test_non_list_content_reports_every_span_as_unapplied() -> None:
+    result: dict[str, object] = {"content": "not a list"}
+    span = Span(start=0, end=3, label="EMAIL_ADDRESS")
+
+    redacted, unapplied = apply_redaction(result, (span,))
+
+    assert redacted is result
+    assert unapplied == (span,)

@@ -4,7 +4,7 @@ Companion to `prd.md` (what to build) and `whats_has_been_done.md` (what is
 built). This file holds the plan, the architecture decisions and their
 rationale, remaining work, and known risks.
 
-**Current position: M12 complete. `docs/REPORT.md` + three committed SVG figures + a rewritten README state the headline findings in plain English. M11 (optional standalone proxy) not started. M12 (session-level observation) done. `config/policy.yaml` still ships uncalibrated by deliberate choice -- see 2.20.**
+**Current position: M0-M10 complete; M12 built, measured and removed (2.25). A post-audit hardening pass has since verified the headline finding against falsification, closed a redaction leak, pinned the evaluation corpus, split the policy into light/research profiles, decoupled gating from logging, and restated the FPR and Escalate claims to match their evidence. `docs/REPORT.md` + three committed SVG figures + a rewritten README state the headline findings in plain English. M11 (optional standalone proxy) not started. `config/policy.yaml` still ships uncalibrated by deliberate choice -- see 2.20.**
 
 ---
 
@@ -27,7 +27,7 @@ Each milestone is independently testable and lands as its own commit.
 | M9 | Latency benchmark: per-detector, fused, 20-call chain | FR-13, FR-14, NFR-1, NFR-2 | Reproducible script, committed numbers | **Done** |
 | M10 | Report generation; README headline numbers | AC-7, [18] | Tables and plots as static files | **Done** |
 | M11 | *(optional)* Standalone stdio proxy over the same gating core | [11.1] option A | Agent config points at proxy, nothing else changes | Not started |
-| M12 | Session-level observation accumulator; hash-recurrence/dilution detection; session summary row | [M0-OBSERVATIONS.md §1] | 42 unit+integration tests; M9 chain FP regression (zero dangerous anomaly flags); observe() overhead 0.005 ms/call | **Done** |
+| M12 | Session-level observation accumulator; hash-recurrence/dilution detection | [M0-OBSERVATIONS.md §1] | Built, benchmarked, and **removed**: cannot detect the dilution attack it targets (hash changes with the content), divergence unreachable with deterministic detectors, never wired into a runtime path. Finding kept in `docs/DILUTION-BENCHMARK.md` | **Reverted (2.25)** |
 
 Ordering rule: do not skip ahead. M2 deliberately ships with **no detection**
 so that interception transparency can be proven independently of detection
@@ -763,6 +763,203 @@ silently corrupted at some point into `C:\path` + a literal tab + `o` + a
 literal bell character + `rtifacts` -- invisible in a normal read, caught
 only by `cat -A`. Both predate this milestone; fixed while already touching
 the file rather than left for a future session to rediscover.
+
+### 2.25 Post-audit hardening pass: verify the finding, then stop lying to the reader
+
+A full-repository audit against an external product-transformation plan, run
+through a five-advisor adversarial review, produced one reversal and a set of
+defects that share a single shape. The plan's own stated top priority --
+"fix the default policy so experimental injection detection cannot be trusted
+as a BLOCK or ESCALATE control out of the box" -- was **already done** (2.18,
+`calibrated: false` + `PolicyEngine._ceiling`, tested). The real problems were
+elsewhere, and almost all of them were *shipped code contradicting shipped
+documentation* rather than missing features.
+
+**The reversal: verify the headline before building anything on it.** The
+review's sharpest objection was that a DeLong AUROC of 0.32 -- meaningfully
+below chance -- is the classic signature of a label-polarity or score-mode
+error, and that nothing in this project had ever tried to falsify it. That was
+correct, and the risk was concrete: the saved V3 artifact's `config.json`
+carries only `LABEL_0..LABEL_3`, so `1 = injection` lived in a comment in the
+training script, not in the weights. 2.6 had promised since M0 that every
+statistic is recomputable from `scores.csv` without the weights; nothing had
+ever read those four probability columns back, so the promise was
+architectural, not executable.
+
+`gauge/recut.py` + `mcp-shield gauge-recut` make it executable, and the check
+was run against the real artifacts. Polarity is correct (`verify-models`: a
+known injection probe scores P(injection) = 0.998). The score-mode explanation
+was tested by re-cutting the same stored inference every way.
+
+> **The conclusion recorded here was wrong and is withdrawn -- see 2.26.**
+> This check ran against 187 BIPIA+InjecAgent payloads, without LLMail-Inject
+> and without decontamination, and concluded that `not_benign` (0.286) was
+> *worse* than the published `injection` cut (0.321), so the score mode was
+> exonerated. On the full 337-payload decontaminated corpus it reverses:
+> `not_benign` reads **0.540**, above chance. The check was the right check;
+> the answer was drawn from underpowered data and the council's original
+> objection stands.
+
+**The defect that mattered most was not on the audit's list as a high.**
+`apply_redaction` masked a span only when a single content block contained it
+end to end, and silently dropped it otherwise. `extract()` joins blocks with
+`"
+"`; `PHONE_NUMBER`'s separator class is `[-.\s]` and `US_SSN`'s is
+`[-\s]`, both of which match a newline. So a result whose blocks split as
+`"Call 555"` / `"123 4567"` produced a real PHONE_NUMBER span, a Redact
+decision, an audit row saying `redacted=1` -- and forwarded the phone number
+to the model untouched. Demonstrated before fixing, not reasoned about. Spans
+are now clipped per block rather than requiring containment, and any span that
+still cannot be placed is reported to the `Gate` and recorded in the row's
+note. A decision the log claims was applied is now a decision that was applied.
+
+**M12 removed rather than repaired.** The session accumulator could not detect
+the dilution attack it was built for -- diluting a payload changes the text,
+therefore the sha256, therefore no hash recurrence -- and with deterministic
+detectors, an identical hash implies identical scores, making score divergence
+structurally unreachable through the real path. It was wired into no runtime
+path, its two docs contradicted each other, and its integration test
+`test_note_written_when_divergence_detected` asserted that *no* note was
+written. Deleting it also restored append-only on the decision log, which its
+`update_note` UPDATE was the only violation of. The measurement is preserved in
+`docs/DILUTION-BENCHMARK.md`, including what a real implementation would cost:
+content lineage across calls, which SEC-1/NFR-3 forbid.
+
+**Safe defaults that were not cheap were not really defaults.** `inert`
+detectors are still *constructed and executed*, so the shipped policy imported
+torch and ran DeBERTa on every tool result -- 208 ms mean, 13.1 s worst case on
+one real web page -- to log two scores no decision reads. Split into
+`config/policy.yaml` (rules + PII) and `config/policy.research.yaml` (adds
+v0/v3 inert). Provably decision-neutral, since `decide()` never reads a key
+that appears only under `inert`, and asserted as such in
+`test_research_profile_differs_from_the_default_only_in_inert_detectors`.
+
+**Gating was opt-in and welded to logging.** `--db` did double duty: a path
+turned interception on, omitting it turned interception off *while still
+writing every raw tool result to `--out`*. The default was "no gate, plus a
+plaintext copy of your tool output on disk". Now `DecisionLog(None)` opens an
+in-memory database, gating is on unless `--no-gate` is passed, and `--no-gate`
+prints a warning naming the file that will contain unredacted output.
+
+**Evaluation inputs were the last unpinned thing.** `servers.yaml` pins
+`@modelcontextprotocol/server-filesystem@2026.8.31` exactly, while
+`corpus/sources.py` fetched BIPIA and InjecAgent from `main` with a
+`# noqa: S310 -- pinned https` comment that pinned the *scheme*. Now pinned to
+commit SHAs and verified against recorded digests on both fetch and load. The
+LLMail-Inject gap -- a paginated live API with no immutable ref -- is stated in
+the module rather than papered over.
+
+**Claims restated to match their evidence.** "20.3% recall at 0% false
+positives" is now "0 in 4,654 benign lines, Wilson 95% CI [0%, 0.082%]": zero
+observed events bound a rate, they do not establish it. The dilution
+benchmark's `0/50` is upper-bounded at 7.14% and demoted to a smoke test.
+And the README's "Escalate-by-default", which reads as a control, now says
+what the code does: Allow and Escalate both forward the frame byte-identical,
+so an Escalate is a log row. The review's strongest argument against building
+an ESCALATE integration contract stands and was accepted -- a contract would
+implicitly promise that Allow means "checked and clean", and on this surface
+Allow is roughly four of five real attacks.
+
+**What was deliberately NOT done**, against the transformation plan's wishes:
+no multi-provider gateway, no output-path inspection, no agent tool-call
+gating, no dashboard, no secret detection. The first four are new products on
+a premise this repository's own evidence disputes. Secret detection was the
+one the review split on, and it was deferred for the project's own stated
+reason: it has no corpus here, and shipping an unmeasured detector into a
+project whose entire credibility is that it never claims unmeasured things
+would cost more than the feature is worth. Council opinion was that tool-call
+gating is the control that survives the negative result, since it is
+deterministic and needs no classifier; that is recorded here as the strongest
+candidate for the next milestone, not as something done.
+
+### 2.26 A third classifier, a corrected claim, and the evidence finally committed
+
+Three things happened in one evaluation pass, and the second one matters most.
+
+**A published classifier was added, and it does not rescue the finding.** The
+strongest objection to this project's negative result has always been that V0
+and V3 are one author's reused dissertation artifacts -- maybe they are just
+weak, and a detector built for this job by people who do it professionally
+would be fine. That objection is testable, so it was tested rather than argued
+about. `detectors/guard.py` loads
+`protectai/deberta-v3-base-prompt-injection-v2` (Apache-2.0, purpose-built,
+~840k downloads/month, pinned by commit SHA) and runs it through the identical
+GAUGE protocol on the identical decontaminated corpus:
+
+| Detector | realistic AUROC | adversarial-styled AUROC | ASR @ ~4% FPR |
+|---|---|---|---|
+| V0 | 0.723 [0.679, 0.767] | 0.536 [0.479, 0.592] | 70.6% |
+| V3 | 0.356 [0.306, 0.406] | 0.257 [0.211, 0.304] | 94.7% |
+| guard | 0.553 [0.501, 0.605] | 0.281 [0.230, 0.331] | 89.6% |
+
+The purpose-built production detector lands barely above chance on realistic
+benign content -- its CI starts at 0.501 -- below chance on the false-positive
+stress reference, and misses ~9 in 10 attacks at its own calibrated operating
+point. Its Block/Redact thresholds calibrate to 1.0000 at 100% ASR: tuned for
+zero false positives it catches nothing, because its scores saturate (ordinary
+Python source containing "ignore all previous retries" scores P(INJECTION) =
+0.99999). Meanwhile the *simplest* model tested, V0's TF-IDF + logistic
+regression, is the best of the three.
+
+This upgrades the claim from "the detectors I reused do not transfer" to "a
+widely-deployed, independently-trained, purpose-built classifier fails here
+too" -- which points at the surface rather than at any one model, and which a
+reader can verify, because unlike V0/V3 these weights are fetchable.
+
+One caveat runs in the safe direction and is stated in the report: the corpus
+is decontaminated against V0/V3's training data, not guard's, which is listed
+on its model card but not distributed. Contamination inflates apparent
+performance, so 0.553 is an upper bound. A negative result that might be
+flattered is stronger than one that might be depressed.
+
+**A published claim was wrong and has been withdrawn.** 2.25 recorded that the
+below-chance V3 AUROC had survived falsification -- that re-cutting it as
+`not_benign` made it *worse* (0.286) rather than better. That check ran on 187
+BIPIA+InjecAgent payloads without LLMail-Inject and without decontamination. On
+the full 337-payload decontaminated corpus it reverses: V3 realistic reads
+0.346 under the inherited `injection` cut and **0.540 [0.49, 0.59]** under
+`not_benign`, an interval straddling chance. So the council's original
+objection was right and 2.25's conclusion was drawn from underpowered data.
+The honest statement is that V3 does not separate at all; whether it reads as
+"below chance" or "at chance" is substantially an artefact of which scalar is
+cut from its probability vector. `docs/REPORT.md` section 4 carries the
+correction explicitly rather than quietly restating the number.
+
+The same tool shows the shipped cuts are not optimal for either model (V0
+reaches 0.825 under `jailbreak` against its shipped 0.709). **Nothing is being
+promoted on that basis** -- picking a score mode after seeing which scores best
+on the evaluation set is exactly the overfitting matched-FPR exists to prevent.
+Reported as sensitivity analysis, not tuning.
+
+**The evidence is committed this time.** 2.25 noted that the `scores.csv`
+behind the originally published AUROC no longer existed, making the headline
+unreproducible even by its author -- precisely what 2.6 promises cannot happen.
+`.gitignore` now carries a deliberate exception for `results/gauge/`
+(`results/*` rather than `results/`, because git does not descend into an
+excluded directory and a negation inside one is never consulted). The 5,400-row
+`scores.csv`, its `calibration_report.json` and the `recut.json` are tracked.
+`gauge-recut` recomputes every statistic in section 4 from that one file with
+no weights and no corpus, which is what makes 2.6 true rather than aspirational.
+
+**Three policy profiles rather than two.** `config/policy.guard.yaml` sits
+between the light default and the research profile. Its purpose is narrow and
+worth stating: it is the only ML profile a stranger can run, because V0 and V3
+need artifacts only the author has. All three remain provably decision-neutral
+-- `decide()` never reads a key that appears only under `inert` -- and a
+parametrised test now asserts that across every profile rather than just two.
+
+**Design notes on the adapter.** `GuardConfig` identifies the model by
+`repo` + `revision` rather than a path: a local path would reintroduce exactly
+the unpublishability that makes V0/V3's numbers uncheckable, and the Hub cache
+lives under `HF_HOME`, never inside this repository or anyone's thesis
+directory. `revision` is validated as a 40-character SHA at load, because a
+branch or tag would let upstream change what a published figure measured --
+the same standard `corpus/sources.py` applies. And the positive class is
+resolved from the checkpoint's own `id2label` (`{0: SAFE, 1: INJECTION}`)
+rather than assumed to be index 1. That last one is a direct response to this
+pass's own near-miss: V3's checkpoint carries only `LABEL_0..LABEL_3`, so its
+mapping lived in a training-script comment and had to be verified empirically.
+A checkpoint that names its classes gets read.
 
 ## 4. Open Questions
 

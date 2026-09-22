@@ -69,7 +69,7 @@ DEFAULT_OUTPUT_DIR = REPO_ROOT / "results" / "gauge"
 #: (docs/POLICY-AUDIT.md); calibrating threshold-at-FPR against either would
 #: just hit the "constant score" degenerate case `CalibrationResult` already
 #: handles, not produce a second real operating point.
-CALIBRATABLE_DETECTORS: tuple[str, ...] = ("v0", "v3")
+CALIBRATABLE_DETECTORS: tuple[str, ...] = ("v0", "v3", "guard")
 
 #: A benign line drawn at random from ~7,000 real repository lines is cheap
 #: to score with rules/PII but not with V3 (~180-220ms/window,
@@ -123,13 +123,23 @@ def build_detectors() -> dict[str, Detector]:
     from llmshield_mcp.detectors.v3_transformer import V3TransformerDetector
 
     models_config = load_models_config()
-    return {
+    detectors: dict[str, Detector] = {
         "rules_mcp": RuleDetector(families=frozenset({"mcp"})),
         "rules_inj": RuleDetector(families=frozenset({"inj"})),
         "pii": PiiDetector(),
         "v0": V0LexicalDetector(models_config.v0),
         "v3": V3TransformerDetector(models_config.v3),
     }
+    if models_config.guard is not None:
+        # Scored through the identical protocol, on the identical corpus and
+        # references, so its numbers are comparable to V0/V3's rather than a
+        # separate benchmark that happens to share a name. Absent when
+        # config/models.yaml defines no `guard` block, which keeps older
+        # configurations loading.
+        from llmshield_mcp.detectors.guard import GuardDetector
+
+        detectors["guard"] = GuardDetector(models_config.guard)
+    return detectors
 
 
 def config_hash(paths: Sequence[Path]) -> str:
@@ -389,6 +399,13 @@ def _build_report(
 
         reference_report: dict[str, Any] = {"detectors": {}}
         for detector in CALIBRATABLE_DETECTORS:
+            if not calibration_scores[detector]:
+                # A calibratable detector that produced no scores was not built
+                # for this run -- `guard` when config/models.yaml defines no
+                # `guard` block, for instance. Skipping keeps the report honest
+                # (an absent detector is absent, not a row of zeros) and keeps
+                # a partial configuration runnable.
+                continue
             adv_scores = adversarial_scores_by_detector.get(detector, {})
             detector_report: dict[str, Any] = {"budgets": {}}
 

@@ -177,29 +177,61 @@ def extract(result: Any, max_chars: int) -> ExtractedContent:
     )
 
 
-def apply_redaction(result: dict[str, Any], spans: tuple[Span, ...]) -> dict[str, Any]:
-    """Return a copy of `result` with `spans` masked in their originating blocks (FR-5).
+def apply_redaction(
+    result: dict[str, Any], spans: tuple[Span, ...]
+) -> tuple[dict[str, Any], tuple[Span, ...]]:
+    """Mask `spans` in `result`, returning the copy and any span it could not apply.
 
     `spans` must be offsets into the joined text `extract()` would produce for
     this same `result` -- that is the contract every detector relies on, since
-    they were scored against exactly that text. Blocks a span doesn't touch,
-    and non-text blocks, are returned unchanged. Masking only ever shortens
-    text, so it cannot push an already-accepted result past the size policy.
+    they were scored against exactly that text. Non-text blocks are returned
+    unchanged. Masking only ever shortens text, so it cannot push an
+    already-accepted result past the size policy.
+
+    **Spans are clipped per block, not required to sit inside one.** An earlier
+    version masked a span only when a single block contained it end to end
+    (`block.start <= span.start and span.end <= block.end`) and dropped it
+    otherwise -- silently, with the decision still recorded as `redacted=True`.
+    That was reachable and it leaked: `extract()` joins blocks with `"\\n"`, and
+    several detector patterns match across one. `PHONE_NUMBER`'s separator
+    class is `[-.\\s]` and `US_SSN`'s is `[-\\s]`, both of which match a
+    newline, so a result whose blocks split as `"Call 555"` / `"123 4567"`
+    produced a PHONE_NUMBER span across the join, masked nothing, and wrote an
+    audit row claiming the redaction had happened. The number reached the model
+    intact while the log said otherwise -- the worst combination available,
+    because it also destroys the evidence that anything went wrong.
+
+    Each span is now intersected with each contributing block and the overlap
+    masked, so a straddling match becomes a placeholder in every block it
+    touches. The output is slightly uglier than a single placeholder would be;
+    it does not leak.
+
+    The second return value is every span that still could not be applied
+    anywhere -- a span outside all contributing text, which a caller passing
+    offsets from some other string could produce. The `Gate` records it rather
+    than discarding it (`gating/transport.py`), because "redaction was asked
+    for and did not fully happen" must never again be invisible.
     """
     if not spans:
-        return result
+        return result, ()
     blocks = result.get("content")
     if not isinstance(blocks, list):
-        return result
+        return result, spans
 
     _, _, contributing = _walk_blocks(blocks)
     new_blocks = list(blocks)
+    applied: set[Span] = set()
     for block in contributing:
-        local_spans = tuple(
-            Span(start=span.start - block.start, end=span.end - block.start, label=span.label)
-            for span in spans
-            if block.start <= span.start and span.end <= block.end
-        )
+        local: list[Span] = []
+        for span in spans:
+            # Half-open intersection of [span.start, span.end) with this block.
+            start = max(span.start, block.start)
+            end = min(span.end, block.end)
+            if start >= end:
+                continue
+            local.append(Span(start=start - block.start, end=end - block.start, label=span.label))
+            applied.add(span)
+        local_spans = tuple(local)
         if not local_spans:
             continue
 
@@ -216,7 +248,8 @@ def apply_redaction(result: dict[str, Any], spans: tuple[Span, ...]) -> dict[str
             updated["resource"] = resource
         new_blocks[block.index] = updated
 
-    return {**result, "content": new_blocks}
+    unapplied = tuple(span for span in spans if span not in applied)
+    return {**result, "content": new_blocks}, unapplied
 
 
 def build_block_result(is_error: bool = True) -> dict[str, Any]:

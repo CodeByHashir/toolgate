@@ -90,9 +90,45 @@ class V3Config:
 
 
 @dataclass(frozen=True, slots=True)
+class GuardConfig:
+    """A published, redistributable injection classifier fetched from the Hub.
+
+    Deliberately identified by `repo` + `revision` rather than a local path,
+    which is the whole point of it. V0 and V3 are unpublishable artifacts
+    (`prd.md` A1): nobody but the author can run them, so every number this
+    project reports about them is unverifiable by a reader. A Hub-hosted,
+    permissively-licensed model is reproducible by anyone with the repository
+    and a network connection.
+
+    `revision` is a full commit SHA, never a branch or tag, for the same reason
+    `corpus/sources.py` pins its downloads: an unpinned model silently changes
+    what a published figure measured.
+
+    `positive_label` is resolved against the checkpoint's own `id2label` map
+    rather than assumed to be an index. V3's checkpoint carries only
+    `LABEL_0..LABEL_3`, so its class mapping lives in a training-script comment
+    and had to be verified empirically (`plan.md` 2.25). A checkpoint that
+    names its classes should be read, not guessed at.
+    """
+
+    repo: str
+    revision: str
+    device: str
+    max_length: int
+    positive_label: str
+    long_text_strategy: str
+    chunk_stride: int
+    max_chunks: int
+    batch_size: int
+
+
+@dataclass(frozen=True, slots=True)
 class ModelsConfig:
     v0: V0Config
     v3: V3Config
+    #: None when `config/models.yaml` defines no `guard` block, so the older
+    #: two-detector configuration keeps loading unchanged.
+    guard: GuardConfig | None = None
 
 
 def _require(mapping: dict[str, Any], key: str, where: str) -> Any:
@@ -149,7 +185,44 @@ def load_models_config(path: Path | None = None) -> ModelsConfig:
     if batch_size < 1:
         raise ValueError(f"batch_size {batch_size} must be at least 1")
 
+    guard_raw = raw.get("guard")
+    guard: GuardConfig | None = None
+    if isinstance(guard_raw, dict):
+        guard_strategy = guard_raw.get("long_text_strategy", "chunk_max")
+        if guard_strategy not in LONG_TEXT_STRATEGIES:
+            raise ValueError(
+                f"models.yaml:guard: long_text_strategy {guard_strategy!r} not one of "
+                f"{sorted(LONG_TEXT_STRATEGIES)}"
+            )
+        guard_max_length = int(guard_raw.get("max_length", 512))
+        guard_stride = int(guard_raw.get("chunk_stride", 128))
+        if not 0 < guard_stride < guard_max_length:
+            raise ValueError(
+                f"models.yaml:guard: chunk_stride {guard_stride} must be in "
+                f"(0, max_length={guard_max_length})"
+            )
+        revision = str(_require(guard_raw, "revision", "models.yaml:guard"))
+        if len(revision) != 40 or not all(c in "0123456789abcdef" for c in revision):
+            # A branch or tag would let the upstream model change underneath a
+            # published figure -- the same failure corpus/sources.py pins against.
+            raise ValueError(
+                f"models.yaml:guard: revision {revision!r} must be a full 40-character "
+                "commit SHA, not a branch or tag"
+            )
+        guard = GuardConfig(
+            repo=str(_require(guard_raw, "repo", "models.yaml:guard")),
+            revision=revision,
+            device=str(guard_raw.get("device", "cpu")),
+            max_length=guard_max_length,
+            positive_label=str(guard_raw.get("positive_label", "INJECTION")),
+            long_text_strategy=str(guard_strategy),
+            chunk_stride=guard_stride,
+            max_chunks=int(guard_raw.get("max_chunks", 64)),
+            batch_size=int(guard_raw.get("batch_size", 16)),
+        )
+
     return ModelsConfig(
+        guard=guard,
         v0=V0Config(
             path=root / _require(v0_raw, "path", "models.yaml:v0"),
             score_mode=_score_mode(v0_raw, "not_benign", "models.yaml:v0"),

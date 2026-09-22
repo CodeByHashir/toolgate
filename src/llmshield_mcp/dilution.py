@@ -47,11 +47,10 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Sequence
 
+from llmshield_mcp.config import REPO_ROOT
 from llmshield_mcp.detectors.base import Detector, DetectorResult
 from llmshield_mcp.detectors.normalise import scan_normalised
-
 
 # ---------------------------------------------------------------------------
 # Text construction
@@ -132,7 +131,7 @@ def _tile_words(word_pool: list[str], n: int) -> list[str]:
 
 
 def load_neutral_filler(
-    detectors: "dict[str, Detector]",
+    detectors: dict[str, Detector],
     min_words: int = 60,
 ) -> str:
     """Build a filler paragraph from repository prose that scores 0.0 on all detectors.
@@ -160,12 +159,6 @@ def load_neutral_filler(
     ValueError
         If fewer than `min_words` words of neutral content can be found.
     """
-    from pathlib import Path
-    try:
-        from llmshield_mcp.config import REPO_ROOT
-    except ImportError:
-        raise ImportError("load_neutral_filler requires the llmshield_mcp package")
-
     # Candidate lines: Python source docstring / comment prose.
     # Exclude lines with code characters or import/def/class keywords that are
     # not prose and would look odd in a filler paragraph.
@@ -184,10 +177,7 @@ def load_neutral_filler(
     # Screen: only keep lines that score 0.0 on all provided detectors.
     neutral_lines: list[str] = []
     for ln in candidate_lines:
-        if all(
-            (det.score(ln).score or 0.0) == 0.0
-            for det in detectors.values()
-        ):
+        if all((det.score(ln).score or 0.0) == 0.0 for det in detectors.values()):
             neutral_lines.append(ln)
         if len(" ".join(neutral_lines).split()) >= min_words * 2:
             break  # Enough to tile from; stop early for speed
@@ -199,7 +189,6 @@ def load_neutral_filler(
             f"need >= {min_words}."
         )
     return filler
-
 
 
 def actual_dilution_ratio(text: str, payload: str) -> float:
@@ -306,97 +295,11 @@ def score_diluted(
 
 
 # ---------------------------------------------------------------------------
-# Sequence-level experiment
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class SequenceCall:
-    """One call in a synthetic session sequence."""
-
-    kind: str
-    """'benign' or 'adversarial'."""
-
-    text: str
-    """The exact text presented to the detector."""
-
-    payload_id: str | None
-    """Set for adversarial calls; None for benign calls."""
-
-    ratio: float
-    """Dilution ratio (0.0 for isolated, >0 for diluted, irrelevant for benign)."""
-
-    position: str
-    """Payload position within filler (irrelevant for benign calls)."""
-
-
-def build_dilution_sequence(
-    payloads: Sequence[tuple[str, str]],  # (payload_id, payload_text)
-    filler: str,
-    ratios: Sequence[float],
-    positions: Sequence[str],
-    n_benign_calls: int,
-    benign_texts: Sequence[str],
-) -> list[SequenceCall]:
-    """Build a synthetic multi-call session for session-accumulator testing.
-
-    The returned sequence interleaves benign calls with adversarial calls at
-    the given dilution levels.  Intended for feeding into a SessionAccumulator
-    to check what session-level signals the repeated/diluted payload triggers.
-
-    Structure of the returned sequence
-    -----------------------------------
-    For each payload in `payloads`, for each (ratio, position) pair:
-      - `n_benign_calls // 2` benign calls (drawn round-robin from `benign_texts`)
-      - 1 adversarial call at (ratio, position)
-      - `n_benign_calls // 2` more benign calls
-
-    This ensures adversarial calls are surrounded by benign ones, which
-    is the realistic scenario (a poisoned tool result in a normal session).
-    """
-    calls: list[SequenceCall] = []
-    benign_pool = list(benign_texts)
-    benign_idx = 0
-
-    def next_benign() -> SequenceCall:
-        nonlocal benign_idx
-        text = benign_pool[benign_idx % len(benign_pool)]
-        benign_idx += 1
-        return SequenceCall(kind="benign", text=text, payload_id=None, ratio=0.0, position="n/a")
-
-    half = n_benign_calls // 2
-    for pid, ptext in payloads:
-        for ratio in ratios:
-            for pos in positions:
-                diluted = build_diluted_text(ptext, filler, ratio, pos)
-                # Benign calls before
-                for _ in range(half):
-                    calls.append(next_benign())
-                # Adversarial call
-                calls.append(
-                    SequenceCall(
-                        kind="adversarial",
-                        text=diluted,
-                        payload_id=pid,
-                        ratio=ratio,
-                        position=pos,
-                    )
-                )
-                # Benign calls after
-                for _ in range(n_benign_calls - half):
-                    calls.append(next_benign())
-
-    return calls
-
-
-# ---------------------------------------------------------------------------
 # Summary helpers
 # ---------------------------------------------------------------------------
 
 
-def recall_at_ratio(
-    results: list[DilutionResult], ratio: float, detector: str
-) -> tuple[int, int]:
+def recall_at_ratio(results: list[DilutionResult], ratio: float, detector: str) -> tuple[int, int]:
     """Return (detected, total) for the given dilution ratio and detector."""
     matching = [r for r in results if r.detector == detector and abs(r.ratio - ratio) < 1e-9]
     detected = sum(1 for r in matching if r.flagged)
@@ -417,10 +320,8 @@ def mean_score_at_ratio(results: list[DilutionResult], ratio: float, detector: s
 
 __all__ = [
     "DilutionResult",
-    "SequenceCall",
     "actual_dilution_ratio",
     "build_diluted_text",
-    "build_dilution_sequence",
     "load_neutral_filler",
     "mean_score_at_ratio",
     "recall_at_ratio",

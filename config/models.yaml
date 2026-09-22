@@ -54,3 +54,54 @@ v3:
 
   # Windows per forward pass. Bounds peak memory on CPU.
   batch_size: 16
+
+# ---------------------------------------------------------------------------
+# guard: a published, redistributable injection classifier (post-audit pass)
+# ---------------------------------------------------------------------------
+#
+# Why this exists. V0 and V3 are reused dissertation artifacts that are NOT
+# publishable (prd.md A1). That makes every number this project reports about
+# them unverifiable by a reader: they cannot run the detector. It also makes
+# the repository unusable as shipped -- clone it and the default research
+# profile has nothing to load.
+#
+# This block adds a third classifier that anyone can fetch, under a licence
+# that permits it, measured through the identical GAUGE protocol as V0/V3 on
+# the identical decontaminated corpus. It is not a replacement for the V0/V3
+# finding; it is a second data point that a reader can reproduce.
+#
+# Identified by repo + revision rather than a local path, so nothing has to be
+# copied out of anyone's thesis directory to run it. transformers caches it
+# under HF_HOME, never inside this repository.
+#
+# **It ships inert, like every other classifier here.** Promotion to
+# `detectors.injection` requires a calibration run and a deliberate edit --
+# see config/policy.yaml. Measuring well is not the same as being trusted.
+guard:
+  # Apache-2.0. 4-class V0/V3 classify (benign, injection, jailbreak, harmful);
+  # this one is binary (SAFE, INJECTION), which is why it needs its own adapter
+  # rather than reusing V3TransformerDetector.
+  repo: "protectai/deberta-v3-base-prompt-injection-v2"
+
+  # Full commit SHA, never a branch. Same standard corpus/sources.py applies to
+  # its downloads: an unpinned model would silently change what a published
+  # figure measured. Validated at load -- a non-SHA is rejected.
+  revision: "90c9989b1a342275dd0d1a95aad283c04e075671"
+
+  # Resolved against the checkpoint's OWN id2label ({0: SAFE, 1: INJECTION}),
+  # not assumed to be index 1. V3's checkpoint carries only LABEL_0..LABEL_3,
+  # so its mapping lived in a comment and had to be verified empirically
+  # (plan.md 2.25). A checkpoint that names its classes gets read.
+  positive_label: "INJECTION"
+
+  device: "cpu"
+
+  # Same 512-token window as V3, and therefore the same central problem on this
+  # surface: tool results routinely exceed it. Both strategies are evaluated
+  # for this detector too, so the truncate/chunk_max gap is measured rather
+  # than inherited as an assumption.
+  max_length: 512
+  long_text_strategy: "chunk_max"
+  chunk_stride: 128
+  max_chunks: 64
+  batch_size: 16

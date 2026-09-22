@@ -86,3 +86,51 @@ def test_gate_latency_and_server_roundtrip_are_separate_columns(tmp_path: Path) 
     row = log.rows()[0]
     assert row["latency_ms"] == 0.2
     assert row["roundtrip_ms"] == 512.0
+
+
+class TestInMemoryLog:
+    """`DecisionLog(None)` is what lets gating run without persisting anything.
+
+    Before it existed the CLI could not offer that: interception was switched
+    on by supplying a `--db` path, so "gate but do not write an audit file"
+    was unreachable and the default was "neither".
+    """
+
+    def test_none_path_writes_nothing_to_disk(self, tmp_path: Path) -> None:
+        before = set(tmp_path.iterdir())
+        log = DecisionLog(None)
+        log.append(_record())
+
+        assert log.count() == 1
+        assert set(tmp_path.iterdir()) == before
+
+    def test_persistent_flag_distinguishes_the_two(self, tmp_path: Path) -> None:
+        assert DecisionLog(None).persistent is False
+        assert DecisionLog(tmp_path / "d.sqlite").persistent is True
+
+    def test_in_memory_rows_are_readable_before_close(self) -> None:
+        log = DecisionLog(None)
+        log.append(_record(tool_name="read_text_file"))
+
+        assert log.rows()[0]["tool_name"] == "read_text_file"
+
+    def test_context_manager_accepts_none(self) -> None:
+        with decision_log(None) as log:
+            log.append(_record())
+            assert log.count() == 1
+
+
+def test_the_log_exposes_no_mutation_api() -> None:
+    """Append-only is a property of the class, not just a convention.
+
+    M12's session accumulator added an `update_note` UPDATE; both were removed.
+    This test fails if a future change reintroduces a way to alter a written
+    row, which would break the audit guarantee quietly.
+    """
+    mutators = [
+        name
+        for name in dir(DecisionLog)
+        if not name.startswith("_")
+        and any(verb in name for verb in ("update", "delete", "remove", "set_", "edit"))
+    ]
+    assert mutators == []

@@ -5,7 +5,9 @@ than defining its own copy, now that a second consumer (`corpus ingest`) needs
 the same loaders. Nothing about the fetch/parse behaviour changed.
 
 Sources, both MIT licensed, fetched on demand and cached under
-`corpus/external/` (gitignored):
+`corpus/external/` (gitignored). Every file is pinned to an upstream **commit
+SHA** and verified against a recorded **sha256** on both download and load --
+see `Source` below for why a branch ref was not good enough:
 
 * **BIPIA** (microsoft/BIPIA) -- 125 attacker objectives across 25 categories,
   spanning text and code scenarios.
@@ -27,36 +29,152 @@ would silently change what the already-published rule-recall numbers in
 
 from __future__ import annotations
 
+import hashlib
 import json
 import random
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 
 from llmshield_mcp.config import REPO_ROOT
 
 CACHE = REPO_ROOT / "corpus" / "external"
 
-SOURCES: dict[str, str] = {
-    "bipia_text.json": "https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/text_attack_test.json",
-    "bipia_code.json": "https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/code_attack_test.json",
-    "injecagent_dh.jsonl": "https://raw.githubusercontent.com/uiuc-kang-lab/InjecAgent/main/data/attacker_cases_dh.jsonl",
-    "injecagent_ds.jsonl": "https://raw.githubusercontent.com/uiuc-kang-lab/InjecAgent/main/data/attacker_cases_ds.jsonl",
+
+class CorpusIntegrityError(RuntimeError):
+    """A fetched or cached source file did not match its recorded digest.
+
+    Raised rather than warned about: a corpus that silently differs from the
+    one a published figure was computed against would make every downstream
+    number unfalsifiable, which is the specific failure this project exists
+    to avoid.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class Source:
+    """One pinned upstream file.
+
+    `commit` is a full commit SHA, never a branch. An earlier version of this
+    module fetched from `.../main/...`; the `# noqa: S310 -- pinned https`
+    comment on the request pinned the *scheme*, not the content, so upstream
+    could change any of these four files and every published recall figure
+    would silently start measuring a different corpus. `config/servers.yaml`
+    already pins `@modelcontextprotocol/server-filesystem@2026.8.31` and
+    `mcp-server-fetch==2026.8.18` for exactly this reason -- the evaluation
+    inputs were the one thing left floating.
+
+    `sha256` is the digest of the bytes those commits serve, recorded from the
+    cached copies the published BIPIA/InjecAgent figures in
+    `docs/POLICY-AUDIT.md` and `docs/REPORT.md` were actually computed against.
+    A commit pin alone would still trust GitHub to serve the same bytes for
+    that SHA; the digest removes that assumption too, and additionally detects
+    a locally corrupted or hand-edited cache.
+    """
+
+    repo: str
+    commit: str
+    path: str
+    sha256: str
+
+    @property
+    def url(self) -> str:
+        return f"https://raw.githubusercontent.com/{self.repo}/{self.commit}/{self.path}"
+
+
+SOURCES: dict[str, Source] = {
+    "bipia_text.json": Source(
+        repo="microsoft/BIPIA",
+        commit="5a48626aece9739ce587ffdbcb2b7badcfd9d8ba",
+        path="benchmark/text_attack_test.json",
+        sha256="75750e7b4e8b34e8f9d88d89b357aeaaf02bd07f9e493ccd37eda74a0cd7c7f8",
+    ),
+    "bipia_code.json": Source(
+        repo="microsoft/BIPIA",
+        commit="5a48626aece9739ce587ffdbcb2b7badcfd9d8ba",
+        path="benchmark/code_attack_test.json",
+        sha256="892545c5aaec0645b1ded65dc7816b3d70e9ef4eadcba2301a7a3db93676b6e0",
+    ),
+    "injecagent_dh.jsonl": Source(
+        repo="uiuc-kang-lab/InjecAgent",
+        commit="623f1bf3ad8ed35abe71f9f9d8fd9d99ad65aeea",
+        path="data/attacker_cases_dh.jsonl",
+        sha256="999d52e15af3c80a3303a09430af0f3878d1f91e4c573ca7b477a91cdfa6b991",
+    ),
+    "injecagent_ds.jsonl": Source(
+        repo="uiuc-kang-lab/InjecAgent",
+        commit="623f1bf3ad8ed35abe71f9f9d8fd9d99ad65aeea",
+        path="data/attacker_cases_ds.jsonl",
+        sha256="87952398c989d8ca841724e38ecdbb789676d3841e19dfc44aac7b710df9cb1f",
+    ),
 }
 
 
-def fetch() -> None:
-    CACHE.mkdir(parents=True, exist_ok=True)
-    for name, url in SOURCES.items():
+def digest(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
+
+
+def verify_cache() -> dict[str, str]:
+    """Check every cached file against its recorded digest.
+
+    Returns `{filename: actual_digest}` for files that are present and match.
+    Raises on a mismatch; silently omits files not fetched yet.
+    """
+    verified: dict[str, str] = {}
+    for name, source in SOURCES.items():
         target = CACHE / name
-        if target.exists():
+        if not target.exists():
             continue
-        print(f"fetching {name} ...")
-        with urllib.request.urlopen(url, timeout=60) as response:  # noqa: S310 -- pinned https
-            target.write_bytes(response.read())
+        actual = digest(target.read_bytes())
+        if actual != source.sha256:
+            raise CorpusIntegrityError(
+                f"{target} does not match its recorded digest.\n"
+                f"  expected {source.sha256}\n"
+                f"  actual   {actual}\n"
+                f"Delete the file to re-fetch from {source.url}. If the upstream "
+                f"content legitimately changed, that is a new corpus: update the "
+                f"pin AND re-run every benchmark that cites the old one."
+            )
+        verified[name] = actual
+    return verified
+
+
+def fetch() -> None:
+    """Download any missing pinned source, verifying every file's digest.
+
+    Already-cached files are verified too, not skipped: a cache poisoned or
+    corrupted between runs is exactly as damaging as a bad download, and
+    checking costs one hash of a few kilobytes.
+    """
+    CACHE.mkdir(parents=True, exist_ok=True)
+    for name, source in SOURCES.items():
+        target = CACHE / name
+        if not target.exists():
+            print(f"fetching {name} ...")
+            with urllib.request.urlopen(  # noqa: S310 -- https, pinned commit, digest-checked below
+                source.url, timeout=60
+            ) as response:
+                payload = response.read()
+            actual = digest(payload)
+            if actual != source.sha256:
+                raise CorpusIntegrityError(
+                    f"{source.url} served unexpected content.\n"
+                    f"  expected sha256 {source.sha256}\n"
+                    f"  actual   sha256 {actual}\n"
+                    f"Nothing was written to {target}."
+                )
+            target.write_bytes(payload)
+    verify_cache()
 
 
 def load_adversarial() -> list[tuple[str, str, str]]:
-    """Return `(family, threat_type, payload)` for every fetched attack case."""
+    """Return `(family, threat_type, payload)` for every fetched attack case.
+
+    Verifies the cache before parsing it. A benchmark that loaded a modified
+    corpus and reported a number against it would be worse than one that
+    failed to run.
+    """
+    verify_cache()
     cases: list[tuple[str, str, str]] = []
     for name, family in (("bipia_text.json", "bipia"), ("bipia_code.json", "bipia")):
         for category, items in json.loads((CACHE / name).read_text(encoding="utf-8")).items():
@@ -94,6 +212,16 @@ def load_adversarial() -> list[tuple[str, str, str]]:
 # the whole thing, a bounded number of 100-row pages are sampled at random
 # offsets per split (a fixed seed, so a run is reproducible), and
 # `load_llmail_inject()` de-duplicates by normalised body text.
+#
+# **Pinning gap, stated rather than papered over.** BIPIA and InjecAgent above
+# are pinned to commit SHAs and digest-verified. This source cannot be, by
+# construction: it is a paginated query against a live API, so there is no
+# immutable ref to pin and the per-page bytes are not stable enough to record a
+# digest for. The fixed seed makes the *offsets* reproducible, not the rows
+# they return. Anything computed from this family is therefore reproducible
+# only up to HuggingFace continuing to serve the same dataset revision. Treat
+# a LLMail-Inject figure as weaker evidence than a BIPIA/InjecAgent one, and
+# re-derive it rather than assuming an old run still holds.
 LLMAIL_INJECT_DATASET = "microsoft/llmail-inject-challenge"
 #: (split name, confirmed row count) -- from datasets-server's own /size
 #: endpoint, used only to pick valid random page offsets.

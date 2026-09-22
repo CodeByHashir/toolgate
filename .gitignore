@@ -21,6 +21,14 @@ models/
 *.safetensors
 *.onnx
 
+# Corpus export. The adversarial half is MIT and redistributable, but the
+# benign half is built by globbing this repository -- including chains/*.json,
+# which carries verbatim CC BY-SA excerpts (see THIRD_PARTY_NOTICES.md). Until
+# that share-alike question is settled, committing this file would spread it
+# into a second artifact. Publishing the corpus is an operator decision anyway
+# (M6), not something a commit should make unasked.
+corpus/payload_corpus.jsonl
+
 # Runtime state
 *.sqlite
 *.sqlite3
@@ -33,8 +41,23 @@ corpus/external/
 # licenses, not ours to redistribute -- see config/decontamination.yaml.
 corpus/reference/
 
-# GAUGE harness output (M7): scores.csv + calibration_report.json per
-# gauge-run. Regenerable; publishing a specific run's numbers is a
-# deliberate operator decision, not something a milestone commit makes
-# unasked (same reasoning as the corpus JSONL export, M6).
-results/
+# GAUGE harness output: scores.csv + calibration_report.json per gauge-run.
+# Ignored by default -- an arbitrary local run's numbers are not something a
+# commit should pick up unasked (same reasoning as the corpus JSONL export, M6).
+# NOTE the trailing /* rather than /: git does not descend into an excluded
+# DIRECTORY, so a later negation inside it would never be consulted. Excluding
+# the contents keeps the re-includes below reachable.
+results/*
+
+# ...with one deliberate exception. The run that backs docs/REPORT.md IS
+# committed. An earlier revision of that report cited an AUROC whose scores.csv
+# had been discarded, which made the headline claim unreproducible even by its
+# own author -- exactly what plan.md 2.6 promises cannot happen. Committing this
+# one run's per-item scores is what makes that promise real: `mcp-shield
+# gauge-recut` recomputes every statistic from this file alone, with no model
+# weights and no corpus (plan.md 2.26).
+!results/gauge/
+results/gauge/*
+!results/gauge/scores.csv
+!results/gauge/calibration_report.json
+!results/gauge/recut.json

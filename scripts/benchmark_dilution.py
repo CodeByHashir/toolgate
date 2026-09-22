@@ -12,8 +12,7 @@ This script:
     `corpus.sources.load_benign()`).
 3.  Scores each payload × dilution level × position with all light detectors
     (rules_mcp, rules_inj, pii) -- no V0/V3 weights needed.
-4.  Also measures the session accumulator on synthetic repeated-payload sequences.
-5.  Writes `results/dilution/dilution_results.json` (gitignored, same as
+4.  Writes `results/dilution/dilution_results.json` (gitignored, same as
     `results/gauge/`) and prints a human-readable summary table to stdout.
 
 Run:
@@ -36,7 +35,6 @@ Design constraints
 
 from __future__ import annotations
 
-import hashlib
 import json
 import statistics
 import sys
@@ -52,16 +50,11 @@ from llmshield_mcp.detectors.pii import PiiDetector
 from llmshield_mcp.detectors.rules import RuleDetector
 from llmshield_mcp.dilution import (
     DilutionResult,
-    build_diluted_text,
-    build_dilution_sequence,
     load_neutral_filler,
     mean_score_at_ratio,
     recall_at_ratio,
     score_diluted,
 )
-from llmshield_mcp.gating.audit import Decision, DecisionLog, DecisionRecord
-from llmshield_mcp.gating.session import SessionAccumulator
-from llmshield_mcp.latency import summarize
 
 OUTPUT_DIR = Path(__file__).parent.parent / "results" / "dilution"
 
@@ -206,13 +199,6 @@ def run_dilution_benchmark(verbose: bool = True) -> dict:
                 )
             )
 
-    # --- session accumulator on synthetic sequences --------------------------
-    if verbose:
-        print("\nMeasuring session accumulator on synthetic sequences...")
-
-    benign_session_lines = [ln for ln in load_benign() if len(ln) > 40][:20]
-    session_results = _run_session_experiments(payloads_raw[:5], filler, benign_session_lines)
-
     # --- latency summary -----------------------------------------------------
     latency_stats = {}
     for det_name, lats in latency_by_detector.items():
@@ -227,7 +213,6 @@ def run_dilution_benchmark(verbose: bool = True) -> dict:
     report = _build_report(
         all_results=all_results,
         benign_fp_results=benign_fp_results,
-        session_results=session_results,
         latency_stats=latency_stats,
         payloads_raw=payloads_raw,
         filler=filler,
@@ -246,142 +231,6 @@ def run_dilution_benchmark(verbose: bool = True) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Session accumulator experiments
-# ---------------------------------------------------------------------------
-
-
-def _run_session_experiments(
-    payloads_raw: list[tuple[str, str, str]],
-    filler: str,
-    benign_lines: list[str],
-) -> dict:
-    """Run 4 synthetic session patterns and return accumulator summaries."""
-    import tempfile
-
-    results = {}
-
-    # Experiment 1: Benign-only session (baseline — no anomaly flags expected)
-    with tempfile.TemporaryDirectory() as tmpdir:
-        log = DecisionLog(Path(tmpdir) / "benign.sqlite")
-        acc = SessionAccumulator()
-        for i, text in enumerate(benign_lines[:20]):
-            sha = hashlib.sha256(text.encode()).hexdigest()
-            rec = DecisionRecord(
-                correlation_id=f"benign-{i}",
-                mcp_server_id="filesystem",
-                tool_name="read_text_file",
-                raw_result_hash=sha,
-                fused_decision=Decision.ALLOW,
-                latency_ms=0.5,
-                detector_scores={"rules_mcp": 0.0, "rules_inj": 0.0, "pii": 0.0},
-            )
-            log.append(rec)
-            acc.observe(rec)
-        summary = acc.finish(log)
-        log.close()  # Must close before TemporaryDirectory cleanup on Windows
-        results["benign_baseline"] = {
-            "total_calls": summary.total_calls,
-            "hash_recurrence_count": summary.hash_recurrence_count,
-            "hash_divergence_count": summary.hash_divergence_count,
-            "non_allow_calls": summary.non_allow_calls,
-            "score_trend_detectors": summary.score_trend_detectors,
-        }
-
-    # Experiment 2: Repeated payload at same dilution level (same hash twice)
-    # → hash_recurrence_count > 0, hash_divergence_count == 0 (scores identical)
-    if payloads_raw:
-        _, _, payload = payloads_raw[0]
-        diluted_text = build_diluted_text(payload, filler, ratio=0.5, position="middle")
-        sha = hashlib.sha256(diluted_text.encode()).hexdigest()
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            log = DecisionLog(Path(tmpdir) / "repeat.sqlite")
-            acc = SessionAccumulator()
-            for i in range(3):  # 3 calls with same hash
-                rec = DecisionRecord(
-                    correlation_id=f"repeat-{i}",
-                    mcp_server_id="filesystem",
-                    tool_name="read_text_file",
-                    raw_result_hash=sha,
-                    fused_decision=Decision.ALLOW,
-                    latency_ms=0.5,
-                    detector_scores={"rules_mcp": 0.0, "rules_inj": 0.0, "pii": 0.0},
-                )
-                log.append(rec)
-                acc.observe(rec)
-            summary = acc.finish(log)
-            log.close()  # Must close before TemporaryDirectory cleanup on Windows
-            results["repeated_diluted_same_ratio"] = {
-                "description": "Same payload, same dilution ratio (same hash), 3 calls",
-                "total_calls": summary.total_calls,
-                "hash_recurrence_count": summary.hash_recurrence_count,
-                "hash_divergence_count": summary.hash_divergence_count,
-                "score_trend_detectors": summary.score_trend_detectors,
-            }
-
-    # Experiment 3: Payload at ratio=0 then ratio=0.9 (different hashes — no recurrence)
-    if payloads_raw:
-        _, _, payload = payloads_raw[0]
-        t0 = build_diluted_text(payload, filler, ratio=0.0, position="middle")
-        t9 = build_diluted_text(payload, filler, ratio=0.9, position="middle")
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            log = DecisionLog(Path(tmpdir) / "diff_ratio.sqlite")
-            acc = SessionAccumulator()
-            for text, label in [(t0, "ratio0"), (t9, "ratio9")]:
-                sha = hashlib.sha256(text.encode()).hexdigest()
-                rec = DecisionRecord(
-                    correlation_id=label,
-                    mcp_server_id="filesystem",
-                    tool_name="read_text_file",
-                    raw_result_hash=sha,
-                    fused_decision=Decision.ALLOW,
-                    latency_ms=0.5,
-                    detector_scores={"rules_mcp": 0.0, "rules_inj": 0.0},
-                )
-                log.append(rec)
-                acc.observe(rec)
-            summary = acc.finish(log)
-            log.close()  # Must close before TemporaryDirectory cleanup on Windows
-            results["different_dilution_levels"] = {
-                "description": "Same payload at ratio=0.0 then ratio=0.9 (different hashes)",
-                "total_calls": summary.total_calls,
-                "hash_recurrence_count": summary.hash_recurrence_count,
-                "hash_divergence_count": summary.hash_divergence_count,
-            }
-
-    # Experiment 4: Simulated score-divergence attack (manual score change)
-    # Mimics what M0 observed: same content hash, score drops from 1.0 to 0.05
-    with tempfile.TemporaryDirectory() as tmpdir:
-        log = DecisionLog(Path(tmpdir) / "score_div.sqlite")
-        acc = SessionAccumulator()
-        # Fixed hash — same payload content seen twice
-        sha = "a" * 64
-        for i, score in enumerate([1.0, 0.05]):  # score drops on second appearance
-            rec = DecisionRecord(
-                correlation_id=f"sd-{i}",
-                mcp_server_id="fetch",
-                tool_name="fetch",
-                raw_result_hash=sha,
-                fused_decision=Decision.ALLOW,
-                latency_ms=0.5,
-                detector_scores={"v0": score},
-            )
-            log.append(rec)
-            acc.observe(rec)
-        summary = acc.finish(log)
-        log.close()  # Must close before TemporaryDirectory cleanup on Windows
-        results["simulated_score_divergence"] = {
-            "description": "Same hash, score 1.0→0.05 (simulates V0 dilution collapse)",
-            "total_calls": summary.total_calls,
-            "hash_recurrence_count": summary.hash_recurrence_count,
-            "hash_divergence_count": summary.hash_divergence_count,
-        }
-
-    return results
-
-
-# ---------------------------------------------------------------------------
 # Report construction
 # ---------------------------------------------------------------------------
 
@@ -389,7 +238,6 @@ def _run_session_experiments(
 def _build_report(
     all_results: list[DilutionResult],
     benign_fp_results: list[DilutionResult],
-    session_results: dict,
     latency_stats: dict,
     payloads_raw: list[tuple[str, str, str]],
     filler: str,
@@ -477,7 +325,6 @@ def _build_report(
         "recall_by_position": position_table,
         "score_degradation": degradation,
         "benign_false_positives": fp_table,
-        "session_accumulator": session_results,
         "latency_stats": latency_stats,
     }
 
@@ -544,16 +391,6 @@ def _print_report(report: dict) -> None:
             f"{det:<16}  {data['flagged']:<6}  {data['total']:<7}  "
             f"{fpr:.1%}" if fpr is not None else "N/A"
         )
-    print()
-
-    # Session signals
-    print("-- Session Accumulator Signals " + "-" * 41)
-    for exp_name, exp_data in report["session_accumulator"].items():
-        print(f"  {exp_name}:")
-        if isinstance(exp_data, dict):
-            for k, v in exp_data.items():
-                if k != "description":
-                    print(f"    {k}: {v}")
     print()
 
     # Latency

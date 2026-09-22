@@ -61,13 +61,23 @@ which are user-prompt surface. Formal decontamination is still M6's job.
 
 ### Result
 
-| Rule family | BIPIA | InjecAgent | Overall | Benign FP |
-|---|---|---|---|---|
-| **INJ-\* (ported, 19 rules)** | 0.0% | 0.0% | **0.0%** | 23 (0.49%) |
-| **MCP-\* (new, 6 rules)** | 15.2% | 30.6% | **20.3%** | **0 (0.00%)** |
-| both | 15.2% | 30.6% | 20.3% | 23 (0.49%) |
+| Rule family | BIPIA | InjecAgent | Overall | Benign FP | FPR, Wilson 95% CI |
+|---|---|---|---|---|---|
+| **INJ-\* (ported, 19 rules)** | 0.0% | 0.0% | **0.0%** | 23/4,654 | 0.49% [0.33%, 0.74%] |
+| **MCP-\* (new, 6 rules)** | 15.2% | 30.6% | **20.3%** | **0/4,654** | 0% [0%, **0.082%**] |
+| both | 15.2% | 30.6% | 20.3% | 23/4,654 | 0.49% [0.33%, 0.74%] |
 
 Benign set: 4,654 lines of real repository content.
+
+**Read the MCP-\* row as "0 false positives in 4,654 lines", not as "a 0%
+false-positive rate".** Zero observed events in a finite sample bounds the rate;
+it does not establish that it is zero. The Wilson 95% upper bound is 0.082% --
+so a true FPR anywhere up to roughly 1 in 1,200 lines is fully consistent with
+this measurement. At MCP-scale traffic that is not a negligible difference, and
+the benign set here is repository text rather than the arbitrary web pages and
+API payloads a real tool result carries. Every other figure in this project
+carries a confidence interval (NFR-7); this one was published as a bare point
+estimate and should not have been.
 
 **The ported family contributes zero recall and every false positive.** Not one
 of its 19 signatures appears anywhere in 187 real indirect injections.

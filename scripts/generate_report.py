@@ -30,12 +30,17 @@ FIGURES_DIR = REPO_ROOT / "docs" / "figures"
 
 # docs/LATENCY-BENCHMARK.md section 1 -- committed numbers, not re-measured here.
 LATENCY_MS: dict[str, float] = {
-    "rules_mcp": 0.06,
-    "rules_inj": 0.06,
-    "pii": 0.07,
-    "v0": 2.07,
-    "v3": 208.28,
-    "fused": 215.03,
+    # Measured by scripts/benchmark_latency.py (scan_normalised column -- what
+    # the live gate actually calls). Kept here rather than read from that
+    # script's output because the run needs the unpublishable V0/V3 weights,
+    # so a figure regeneration must not depend on having them.
+    "rules_mcp": 0.02,
+    "rules_inj": 0.03,
+    "pii": 0.03,
+    "v0": 2.24,
+    "v3": 172.52,
+    "guard": 169.92,
+    "fused": 313.97,
 }
 NFR1_BUDGET_MS = 5.0
 NFR2_BUDGET_MS = 100.0
@@ -175,11 +180,23 @@ def grouped_bar_chart(
     return "\n".join(svg)
 
 
+def scored_detectors(report: dict, reference: str = "realistic") -> list[str]:
+    """Detectors the run actually calibrated, in a stable order.
+
+    Read from the report rather than hardcoded: `guard` is present only when
+    config/models.yaml defines a guard block, and a figure that silently
+    omitted a measured detector would understate what was compared.
+    """
+    present = report["references"][reference]["detectors"]
+    order = ["v0", "v3", "guard"]
+    return [d for d in order if d in present] + sorted(set(present) - set(order))
+
+
 def figure_asr_by_source_family(report: dict) -> str:
     families = report["adversarial_source_families"]
     series = {}
     errors = {}
-    for detector in ("v0", "v3"):
+    for detector in scored_detectors(report):
         budget = report["references"]["realistic"]["detectors"][detector]["budgets"]["escalate"]
         values, bars = [], []
         for family in families:
@@ -200,7 +217,7 @@ def figure_asr_by_source_family(report: dict) -> str:
 
 
 def figure_latency_by_component() -> str:
-    order = ["rules_mcp", "rules_inj", "pii", "v0", "v3", "fused"]
+    order = [k for k in ("rules_mcp", "rules_inj", "pii", "v0", "v3", "guard", "fused") if k in LATENCY_MS]
     return grouped_bar_chart(
         "Per-call latency by component (mean, log scale)",
         order,
@@ -217,7 +234,7 @@ def figure_latency_by_component() -> str:
 def figure_auroc_by_reference(report: dict) -> str:
     references = ["realistic", "adversarial_styled"]
     series = {}
-    for detector in ("v0", "v3"):
+    for detector in scored_detectors(report):
         series[detector] = [
             report["references"][ref]["detectors"][detector]["auroc_delong"]["auc"]
             for ref in references

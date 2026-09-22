@@ -1,5 +1,41 @@
 # Fusion and policy configuration (FR-4, FR-5, FR-6, FR-7, FR-9).
 #
+# THIS IS THE DEFAULT PROFILE: rules + PII only. Two companions differ from it
+# only in their `detectors.inert` list:
+#
+#   config/policy.guard.yaml     + guard          (fetchable; anyone can run it)
+#   config/policy.research.yaml  + v0, v3, guard  (needs the private weights)
+#
+# Select one with `mcp-shield run-agent --policy <path>`. A test asserts the
+# three files differ in nothing else, so the choice cannot change a decision.
+#
+# Why the split exists, and why it is not a decision change. `inert` detectors
+# are scored and logged but carry zero decision weight, so moving v0/v3 between
+# these two files cannot change any Allow/Redact/Block/Escalate outcome --
+# `PolicyEngine.decide()` never reads a key that is only in `inert`. What it
+# changes is cost, and the cost is not small:
+#
+#   * `build_detectors` constructs every key any role names, so listing v0/v3
+#     as inert still imports torch + transformers and runs DeBERTa-v3-base on
+#     every single tool result.
+#   * docs/REPORT.md section 6 measures V3 at 172.52 ms mean, and up to 13.1 s
+#     for one real web page on the M9 chain -- where for 9 of 16 fetches the
+#     gate took longer than the network round-trip that produced the content.
+#   * The light path (rules_mcp + rules_inj + pii) measures 0.02-0.03 ms each,
+#     0.08 ms in total.
+#
+# So the old default paid seconds per call, and a multi-gigabyte dependency
+# tree, to log two scores that no decision reads. Shipping that as the default
+# made the safe configuration the expensive one, which is how safe defaults
+# stop being used. The research profile keeps every one of those scores
+# reachable for anyone reproducing docs/REPORT.md -- nothing was deleted, and
+# `gauge-run` scores v0/v3 unconditionally regardless of this file
+# (`gauge/run.py:build_detectors` is a different function).
+#
+# `rules_inj` stays inert HERE, in the default, on purpose: it is a regex sweep
+# costing ~0.03 ms, and logging its score every run is what keeps its 0/187
+# transfer result visible rather than filed away in a document.
+#
 # Every setting here traces to a measurement in docs/POLICY-AUDIT.md and a
 # decision recorded in plan.md 2.15 -- nothing is a default carried over from
 # LLMShield's policies/default.json (plan.md 2.12 explains why that file is
@@ -22,7 +58,9 @@
 #     rule false positive (docs/POLICY-AUDIT.md section 2). Logging its score
 #     every run keeps that 0.0% transfer finding visible without letting it
 #     degrade a live decision.
-#   * V0 and V3 (M5) ship inert for the identical reason. Their thresholds in
+#   * V0 and V3 (M5) are inert for the identical reason, and as of the profile
+#     split above they are named only in `config/policy.research.yaml` --
+#     inert either way, so no decision differs. Their thresholds in
 #     docs/POLICY-AUDIT.md section 3 are ad-hoc percentile splits on ~800
 #     benign lines -- the document's own words are "directional, not a
 #     result". V0 alone scores README.md-style benign content at 0.986
@@ -66,8 +104,9 @@ detectors:
     - pii
   inert:
     - rules_inj
-    - v0
-    - v3
+    # v0 and v3 live in config/policy.research.yaml -- see the profile note at
+    # the top of this file. Adding them back here is a supported, decision-
+    # neutral change; it costs ~175 ms per tool result and the torch install.
 
 # Per-detector, per-action score thresholds, in [0, 1]. Rules today are
 # binary (0.0 or 1.0), so 1.0 means "the family fired at all". No entries

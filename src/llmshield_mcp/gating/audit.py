@@ -41,16 +41,15 @@ class Outcome(StrEnum):
     it under a distinct outcome keeps those rows out of any later false-positive
     denominator instead of silently counting as benign allows.
 
-    `SESSION_SUMMARY` is written exactly once per session by
-    `SessionAccumulator.finish()` (M12).  It is not a per-call decision row;
-    it is a reviewer-facing narrative of the whole session and must be excluded
-    from any per-call statistics (FPR denominators, latency averages, etc.).
+    A fourth member, `SESSION_SUMMARY`, existed briefly for M12's session
+    accumulator and was removed with it (`plan.md` 2.25). Every row in this
+    table is a per-call decision again, so no consumer has to remember to
+    filter a non-decision row out of an FPR denominator or a latency average.
     """
 
     RESULT = "result"
     PROTOCOL_ERROR = "protocol_error"
     DETECTOR_FAILURE = "detector_failure"
-    SESSION_SUMMARY = "session_summary"
 
 
 SCHEMA = """
@@ -114,14 +113,37 @@ class DecisionRecord:
 
 
 class DecisionLog:
-    """Append-only SQLite store for gating decisions."""
+    """Append-only SQLite store for gating decisions.
 
-    def __init__(self, path: Path) -> None:
+    Append-only literally: there is no update or delete on this class. An
+    earlier revision added an `update_note` for M12's session accumulator; both
+    were removed (`plan.md` 2.25), which restored the property that a written
+    row never changes.
+
+    `path=None` opens an in-memory database instead of a file. That is what
+    makes gating usable *without* persisting anything: the `Gate` requires a
+    log to write to, but "I want interception without an audit file on disk"
+    is a legitimate configuration, and before this it was unreachable -- the
+    CLI turned gating on only when a `--db` path was supplied, so declining to
+    log also declined to gate. Rows still exist for the process lifetime, so
+    `count()` reports honestly; nothing is written to disk and nothing
+    survives `close()`.
+    """
+
+    def __init__(self, path: Path | None) -> None:
         self.path = path
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self._connection = sqlite3.connect(path, check_same_thread=False)
+        if path is None:
+            self._connection = sqlite3.connect(":memory:", check_same_thread=False)
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self._connection = sqlite3.connect(path, check_same_thread=False)
         self._connection.executescript(SCHEMA)
         self._connection.commit()
+
+    @property
+    def persistent(self) -> bool:
+        """False for an in-memory log whose rows are discarded on close."""
+        return self.path is not None
 
     def append(self, record: DecisionRecord) -> None:
         stamped = record.with_timestamp()
@@ -166,36 +188,12 @@ class DecisionLog:
         with closing(self._connection.execute("SELECT COUNT(*) FROM decision_log")) as cursor:
             return int(cursor.fetchone()[0])
 
-    def update_note(self, correlation_id: str, note: str) -> None:
-        """Update the ``note`` column of the most-recently written row for
-        `correlation_id`.
-
-        Used by M12's SessionAccumulator to append session-level context after
-        a row is written.  Targets by both ``correlation_id`` and ``id DESC``
-        so that interleaved calls on the same session with the same (unlikely)
-        correlation_id cannot corrupt a different row.
-        """
-        self._connection.execute(
-            """
-            UPDATE decision_log
-               SET note = ?
-             WHERE id = (
-               SELECT id FROM decision_log
-                WHERE correlation_id = ?
-                ORDER BY id DESC
-                LIMIT 1
-             )
-            """,
-            (note, correlation_id),
-        )
-        self._connection.commit()
-
     def close(self) -> None:
         self._connection.close()
 
 
 @contextmanager
-def decision_log(path: Path) -> Iterator[DecisionLog]:
+def decision_log(path: Path | None) -> Iterator[DecisionLog]:
     log = DecisionLog(path)
     try:
         yield log

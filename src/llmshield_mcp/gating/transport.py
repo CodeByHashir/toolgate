@@ -44,7 +44,6 @@ from llmshield_mcp.detectors.normalise import scan_normalised
 from llmshield_mcp.detectors.pii import PiiDetector
 from llmshield_mcp.detectors.rules import RuleDetector
 from llmshield_mcp.gating.audit import Decision, DecisionLog, DecisionRecord, Outcome
-from llmshield_mcp.gating.session import SessionAccumulator
 from llmshield_mcp.gating.content import apply_redaction, build_block_result, extract
 from llmshield_mcp.gating.policy import PolicyConfig, PolicyEngine, load_policy_config
 
@@ -84,6 +83,22 @@ def _build_v3() -> Detector:
     return V3TransformerDetector(load_models_config().v3)
 
 
+def _build_guard() -> Detector:
+    # Same lazy-import reasoning as _build_v0/_build_v3, plus one more: the
+    # first construction downloads the checkpoint from the Hub if it is not
+    # already cached, which nothing should trigger unless a policy names it.
+    from llmshield_mcp.config import load_models_config
+    from llmshield_mcp.detectors.guard import GuardDetector
+
+    guard_config = load_models_config().guard
+    if guard_config is None:
+        raise ValueError(
+            "policy names detector 'guard', but config/models.yaml defines no "
+            "`guard` block. Add one (see the file's own comments) or drop the key."
+        )
+    return GuardDetector(guard_config)
+
+
 #: Every detector key a policy file's `detectors.*` roles may name. Adding V0
 #: and V3 here (M5) is what makes `plan.md`'s "ablation by config alone"
 #: verification literal: a key only gets constructed -- and only then pays its
@@ -94,6 +109,7 @@ _DETECTOR_FACTORIES: dict[str, Callable[[], Detector]] = {
     "pii": _build_pii,
     "v0": _build_v0,
     "v3": _build_v3,
+    "guard": _build_guard,
 }
 
 
@@ -163,7 +179,6 @@ class Gate:
         *,
         policy: PolicyEngine | None = None,
         detectors: Mapping[str, Detector] | None = None,
-        accumulator: SessionAccumulator | None = None,
     ) -> None:
         self.server = server
         self.log = log
@@ -175,10 +190,6 @@ class Gate:
         self.detectors = (
             dict(detectors) if detectors is not None else build_detectors(self.policy.config)
         )
-        #: Optional M12 session accumulator.  When set, it receives every
-        #: completed DecisionRecord via observe() after the record is written.
-        #: When None (default), the Gate behaves exactly as it did before M12.
-        self.accumulator: SessionAccumulator | None = accumulator
         self._pending: OrderedDict[str, _Pending] = OrderedDict()
 
     @property
@@ -281,10 +292,19 @@ class Gate:
         fusion = self.policy.decide(results)
 
         result_out: Any = payload.result
+        note = fusion.note
         if fusion.decision is Decision.BLOCK:
             result_out = build_block_result(is_error=True)
         elif fusion.redacted:
-            result_out = apply_redaction(payload.result, fusion.redact_spans)
+            result_out, unapplied = apply_redaction(payload.result, fusion.redact_spans)
+            if unapplied:
+                # The policy asked for a redaction that did not fully happen.
+                # Recording `redacted=True` alone would assert the opposite of
+                # what reached the agent, so the shortfall goes in the note --
+                # see `content.apply_redaction` for the bug this guards.
+                labels = ", ".join(sorted({span.label for span in unapplied}))
+                shortfall = f"redaction incomplete: {len(unapplied)} span(s) unmasked ({labels})"
+                note = f"{note}; {shortfall}" if note else shortfall
 
         if result_out is not payload.result:
             new_payload = payload.model_copy(update={"result": result_out})
@@ -307,24 +327,9 @@ class Gate:
             truncated=content.truncated,
             block_types=content.block_types,
             malformed=content.malformed,
-            note=fusion.note,
+            note=note,
         )
         self.log.append(record)
-
-        # M12: session-level observation (observation only — never changes the
-        # decision that was already written above).  The accumulator is absent
-        # in all pre-M12 usage and in most tests, so this branch is free.
-        if self.accumulator is not None:
-            obs = self.accumulator.observe(record)
-            note_addition = obs.to_note()
-            if note_addition is not None:
-                # Append the session context to the note column of the row we
-                # just wrote.  A targeted UPDATE rather than re-writing the
-                # whole record keeps the audit trail intact.
-                existing_note = fusion.note or ""
-                combined = f"{existing_note}; {note_addition}" if existing_note else note_addition
-                self.log.update_note(record.correlation_id, combined)
-
         return item
 
 

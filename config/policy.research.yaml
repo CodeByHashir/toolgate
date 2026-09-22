@@ -1,0 +1,101 @@
+# Research profile: the default policy plus V0 and V3 under `detectors.inert`.
+#
+# Use with:
+#
+#     uv run mcp-shield run-agent --policy config/policy.research.yaml --db logs/decisions.sqlite
+#
+# This file exists so that reproducing `docs/REPORT.md` -- which needs V0/V3
+# scores in the decision log for every intercepted tool result -- stays a
+# config choice rather than a code edit, while the shipped default stays cheap
+# enough to actually leave enabled. See `config/policy.yaml`'s own header for
+# the measurements behind the split.
+#
+# **This profile requires the reused V0/V3 weights** (`config/models.yaml` or
+# `LLMSHIELD_MODELS_ROOT`). Without them, `build_detectors` raises at Gate
+# construction rather than degrading silently -- a missing detector that a
+# policy explicitly names is a configuration error, not something to skip.
+#
+# Decision behaviour is IDENTICAL to the default profile. `v0` and `v3` are
+# inert here too: `PolicyEngine.decide()` never reads a key that appears only
+# in `inert`, so this file cannot produce an Allow/Redact/Block/Escalate that
+# the default would not. It changes what is logged and what it costs, nothing
+# else. Promoting either detector to `injection` additionally requires a
+# threshold entry AND `calibrated: true`, which is a separate, deliberate act
+# (see the default profile's notes and `gauge/run.py`).
+#
+# Keep the two files in sync when editing thresholds or gate settings: they are
+# deliberately near-duplicates so that the only difference a reader has to hold
+# in their head is the `inert` list.
+#
+# `calibrated: false` is load-bearing, not a placeholder. FR-11 requires
+# matched-FPR calibration on THIS surface before Block is safe to use; until
+# this flips to true, PolicyEngine.decide() (src/llmshield_mcp/gating/policy.py)
+# refuses to ever return Decision.BLOCK, downgrading it to Decision.ESCALATE
+# instead. Flip it only after an M7 calibration run has actually produced
+# thresholds for this file -- not by hand, and not to unblock a test.
+calibrated: false
+
+# SEC-6: a detector that raised has "no opinion", not a benign vote. This is
+# the decision that opinion becomes instead. Must be "escalate" or "block"
+# (never "allow" -- that would make a crashed detector indistinguishable from
+# a clean scan) and is itself subject to the `calibrated` gate above.
+on_detector_failure: escalate
+
+# Which logical detector KEYS (assigned by the gate -- see
+# gating/transport.py:build_detectors -- not the same as DetectorResult.detector)
+# participate in which role. `injection` and `redaction` feed the decision;
+# `inert` is scored and logged only. A key only gets constructed (and only
+# then pays its load cost -- real for v0/v3) if it appears in one of these
+# three lists. rules_mcp/rules_inj are the same RuleDetector class
+# constructed twice with different `families`, so this is the only place
+# their roles differ.
+detectors:
+  injection:
+    - rules_mcp
+  redaction:
+    - pii
+  inert:
+    - rules_inj
+    - v0
+    - v3
+    # Included so a single research run scores every classifier docs/REPORT.md
+    # compares. Unlike v0/v3 this one needs no local artifact.
+    - guard
+
+# Per-detector, per-action score thresholds, in [0, 1]. Rules today are
+# binary (0.0 or 1.0), so 1.0 means "the family fired at all". No entries
+# for v0/v3 here: PolicyEngine.decide() never reads a threshold for a key
+# that isn't in `injection` or `redaction`, so one would be dead
+# configuration while they stay inert. To ablate one in, add it under
+# `detectors.injection` above AND a threshold here -- e.g. (NOT calibrated,
+# see docs/POLICY-AUDIT.md section 3 for where these ad-hoc numbers came
+# from): `v0: {escalate: 0.94}` reaches roughly the 5.3%-recall-at-1%-FPR
+# operating point measured there.
+thresholds:
+  rules_mcp:
+    escalate: 1.0
+    # Additionally requires calibrated: true AND detail.normalisation_only
+    # (detectors/normalise.py) -- a detection normalisation exposed but that
+    # cannot be redacted precisely against the original text. See policy.py.
+    # Severity-aware refinement of this rule is deferred to M7 calibration
+    # (docs/POLICY-AUDIT.md recommendation 4), not assumed here.
+    block: 1.0
+  pii:
+    # Matches detectors/pii.py DEFAULT_CONFIDENCE_THRESHOLD. Any entity at or
+    # above this confidence gets its span masked, independently of whatever
+    # the injection signal decides.
+    redact: 0.7
+
+# Indicative per-action false-positive budgets from plan.md 2.15. Not
+# enforced numerically anywhere yet -- there is no calibration data until M7.
+# Recorded here so the target survives the gap between design and calibration.
+fpr_budget:
+  block: 0.001
+  redact: 0.01
+  escalate: 0.05
+
+gate:
+  # FR-16 / SEC-2. Moved here from the --max-result-chars CLI flag (M2) now
+  # that a policy file exists to hold it, per FR-9. The flag still overrides
+  # this when passed explicitly (see cli.py / gating/transport.py Gate.__init__).
+  max_result_chars: 200000

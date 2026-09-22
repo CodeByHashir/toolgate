@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from llmshield_mcp.config import REPO_ROOT
 from llmshield_mcp.detectors.base import DetectorResult, Span
 from llmshield_mcp.gating.audit import Decision, Outcome
 from llmshield_mcp.gating.policy import PolicyConfig, PolicyEngine, load_policy_config
@@ -231,8 +232,88 @@ def test_shipped_policy_file_loads_uncalibrated() -> None:
     assert config.calibrated is False
     assert config.injection_detectors == frozenset({"rules_mcp"})
     assert config.redaction_detectors == frozenset({"pii"})
-    assert config.inert_detectors == frozenset({"rules_inj", "v0", "v3"})
+    # The default profile is the light path: no v0/v3, so no torch import and
+    # no DeBERTa forward pass per tool result. They live in the research
+    # profile instead -- see config/policy.yaml's header.
+    assert config.inert_detectors == frozenset({"rules_inj"})
     assert config.on_detector_failure == Decision.ESCALATE
+
+
+PROFILES = ("policy.guard.yaml", "policy.research.yaml")
+
+
+@pytest.mark.parametrize("profile", PROFILES)
+def test_profiles_differ_from_the_default_only_in_inert_detectors(profile: str) -> None:
+    """Every profile split must be decision-neutral, not a policy change.
+
+    Anything other than the `inert` list differing between the files would mean
+    picking a profile could change an Allow/Redact/Block/Escalate, which is
+    exactly what the split promises it cannot do.
+    """
+    default = load_policy_config()
+    other = load_policy_config(REPO_ROOT / "config" / profile)
+
+    assert other.injection_detectors == default.injection_detectors
+    assert other.redaction_detectors == default.redaction_detectors
+    assert other.calibrated == default.calibrated
+    assert other.on_detector_failure == default.on_detector_failure
+    assert other.thresholds == default.thresholds
+    assert other.max_result_chars == default.max_result_chars
+
+
+def test_each_profile_names_the_detectors_it_advertises() -> None:
+    guard = load_policy_config(REPO_ROOT / "config" / "policy.guard.yaml")
+    research = load_policy_config(REPO_ROOT / "config" / "policy.research.yaml")
+
+    assert guard.inert_detectors == frozenset({"rules_inj", "guard"})
+    assert research.inert_detectors == frozenset({"rules_inj", "v0", "v3", "guard"})
+
+
+def test_guard_profile_needs_no_unpublishable_artifact() -> None:
+    """The point of this profile: a stranger can run it after a clone.
+
+    v0/v3 are configured by local path because their weights are not
+    publishable; if either appeared here that property would be gone.
+    """
+    guard = load_policy_config(REPO_ROOT / "config" / "policy.guard.yaml")
+
+    every_role = guard.injection_detectors | guard.redaction_detectors | guard.inert_detectors
+    assert "v0" not in every_role
+    assert "v3" not in every_role
+
+
+@pytest.mark.parametrize("profile", PROFILES)
+def test_no_profile_is_calibrated(profile: str) -> None:
+    """Adding a classifier must not smuggle in a Block-capable configuration."""
+    engine = PolicyEngine(load_policy_config(REPO_ROOT / "config" / profile))
+
+    fired = DetectorResult(
+        detector="rules",
+        score=1.0,
+        detail={"normalisation_only": 1.0},
+        spans=(),
+        latency_ms=0.1,
+        truncated=False,
+        error=None,
+    )
+    assert engine.decide({"rules_mcp": fired}).decision == Decision.ESCALATE
+
+
+def test_neither_profile_lets_an_inert_detector_reach_a_decision() -> None:
+    """v0/v3 firing at full confidence changes nothing in either profile."""
+    screaming = DetectorResult(
+        detector="v3",
+        score=1.0,
+        detail={},
+        spans=(),
+        latency_ms=1.0,
+        truncated=False,
+        error=None,
+    )
+    for path in [None, *(REPO_ROOT / "config" / p for p in PROFILES)]:
+        engine = PolicyEngine(load_policy_config(path))
+        outcome = engine.decide({"v0": screaming, "v3": screaming, "guard": screaming})
+        assert outcome.decision == Decision.ALLOW, path
 
 
 def test_on_detector_failure_allow_is_rejected(tmp_path: Path) -> None:

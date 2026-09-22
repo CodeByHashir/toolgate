@@ -4,7 +4,7 @@
 > specific detectors do on these specific corpora under these experimental
 > conditions. They are not security claims and must not be quoted as such.**
 
-Companion to `docs/M0-OBSERVATIONS.md` §1 and `docs/M12-SESSION-CORRELATION.md`.
+Companion to `docs/M0-OBSERVATIONS.md` §1.
 
 Run: `uv run python scripts/benchmark_dilution.py`
 
@@ -121,13 +121,19 @@ Position has no measurable effect on recall.
 
 50 items from `load_benign()`, scored directly (no dilution):
 
-| Detector | FPs | Total | FPR |
+| Detector | FPs | Total | FPR, Wilson 95% CI |
 |---|---|---|---|
-| `rules_mcp` | 0 | 50 | 0.0% |
-| `rules_inj` | 0 | 50 | 0.0% |
-| `pii` | 0 | 50 | 0.0% |
+| `rules_mcp` | 0 | 50 | 0% [0%, 7.14%] |
+| `rules_inj` | 0 | 50 | 0% [0%, 7.14%] |
+| `pii` | 0 | 50 | 0% [0%, 7.14%] |
 
-No false positives on the benign sample.
+No false positives were observed on the benign sample — but **n=50 is far too
+small to say anything useful about a false-positive rate.** The Wilson 95%
+upper bound is 7.14%: a detector firing on one benign line in fifteen would
+produce this result roughly 3 times in 100. Treat this row as a smoke test
+confirming the detectors are not wildly miscalibrated on benign text, not as an
+FPR measurement. The real FPR figure is the 4,654-line one in
+`docs/POLICY-AUDIT.md`, upper-bounded at 0.082%.
 
 ### 5. Latency
 
@@ -143,44 +149,47 @@ All within NFR-1 lexical budget (~5 ms).
 
 ---
 
-## Session Accumulator Signals (M12)
+## Session-level correlation: measured, and removed
 
-These are **synthetic experiments**: scorer values are set manually, not
-measured from a running detector. They verify that the accumulator's internal
-state machine behaves correctly for each pattern, not that any real attack
-produces those scores. This distinction is critical.
+An earlier milestone (M12) added a `SessionAccumulator` that watched for the
+same sha256 recurring within a session with *diverging* detector scores, on the
+theory that an attacker probing dilution ratios would show up as that pattern.
+**It was removed.** The benchmark below is why, and the finding is kept here
+because it is a real negative result about session-level correlation, not just
+a deleted feature.
 
-| Experiment | Description | Total calls | Hash recurrences | Hash divergences |
-|---|---|---|---|---|
-| `benign_baseline` | 20 distinct benign texts, all ALLOW | 20 | 0 | 0 |
-| `repeated_diluted_same_ratio` | Same diluted text × 3 calls (same hash, stable score=0.0) | 3 | 2 | 0 |
-| `different_dilution_levels` | Same payload at ratio=0.0 then ratio=0.9 (different hashes) | 2 | 0 | 0 |
-| `simulated_score_divergence` | **Synthetic**: same hash, scores 1.0 → 0.05 (not from a real detector) | 2 | 1 | **1** |
+Three separate reasons, each independently sufficient:
 
-**What each experiment demonstrates:**
+1. **Dilution changes the content, so it changes the hash.** The same payload at
+   ratio 0.0 and ratio 0.9 is two different texts and therefore two different
+   sha256 values. The accumulator sees no recurrence at all. This was measured,
+   not reasoned about: the `different_dilution_levels` experiment produced
+   `hash_recurrence_count = 0`. The mechanism could not detect the threat it
+   was built for.
+2. **Identical content implies identical scores.** Every detector here is a
+   deterministic function of its input, so a recurring hash necessarily carries
+   the same scores. Score divergence on a recurring hash is therefore
+   structurally unreachable through the real gating path, whatever the corpus.
+   The only experiment that ever produced a divergence fed the accumulator
+   hand-written `DecisionRecord`s; no detector was involved.
+3. **It was never wired into a runtime path.** `Gate` accepted an accumulator,
+   but nothing outside tests and benchmarks ever passed one, and `finish()` was
+   never called in production.
 
-- **Benign baseline:** The accumulator generates zero anomaly signals across 20
-  unique benign calls. No session-layer false positives.
+Removing it also restored a property worth more than the feature: the decision
+log is append-only again. The accumulator needed an `UPDATE` to append its note
+to an already-written row, which was the only mutation in an audit store whose
+whole value is that rows do not change after the fact.
 
-- **Repeated same-ratio:** The same content hash appearing 3 times produces
-  `hash_recurrence_count = 2` and `hash_divergence_count = 0` because the score
-  is stable (0.0 both times). This correctly distinguishes repetition from
-  anomalous score change.
-
-- **Different dilution levels:** The same adversarial payload at ratio=0.0 and
-  ratio=0.9 produces two *different texts* → two different sha256 hashes →
-  `hash_recurrence_count = 0`. This is correct: the accumulator tracks content
-  identity (hash), not payload identity. An attacker delivering the same payload
-  at different dilution levels produces non-recurring hashes — the accumulator
-  cannot flag this from hashes alone without semantic payload knowledge.
-
-- **Simulated score divergence:** Feeding the same hash with scores 1.0 then
-  0.05 produces `hash_divergence_count = 1`. This verifies the accumulator's
-  divergence-detection logic against the scenario that motivated M12 (the
-  M0-observed V3 score collapse). The scores are **not from a real detector
-  call** — this is purely a state-machine correctness test.
-
----
+**What would actually be needed.** Detecting a dilution probe requires
+recognising that two *different* texts carry the *same* payload — a content
+similarity or lineage question, not a hash-identity one. The corpus machinery
+for that already exists (MinHash/LSH, `corpus/decontaminate.py`), but applying
+it across live tool results means holding content, or shingles of content,
+across calls. That directly contradicts SEC-1/NFR-3, under which the gate
+stores a hash and never the text. That trade-off is a design decision with a
+real privacy cost, and it was never made — M12 implemented the cheap mechanism
+that avoided it, which is precisely why the cheap mechanism did not work.
 
 ## What These Results Mean
 
@@ -213,26 +222,6 @@ have zero transfer to the tool-result surface where BIPIA and InjecAgent payload
 are framed as indirect instructions. Dilution has no effect because no pattern
 fires. This confirms the finding in `docs/POLICY-AUDIT.md` and `plan.md §2.14`.
 
-### The session accumulator adds value for *measured* score divergence only
-
-The synthetic experiment verifies the accumulator's state machine for
-score divergence, but three limits apply in this benchmark:
-
-1. **No measured scores feed the session experiments.** The 1.0 → 0.05 scores
-   are hand-set. The accumulator itself is tested against real scores in
-   `tests/test_session.py`; this benchmark tests it against dilution-specific
-   scenarios.
-
-2. **Different dilution ratios produce different hashes.** If an attacker probes
-   the same payload at ratio=0.0 then ratio=0.9, the two texts are distinct →
-   distinct hashes → the accumulator sees no recurrence. The session layer only
-   flags the dilution signal when the *exact same content* is processed twice
-   with diverging scores — the scenario where a server returns the same cached
-   response but the surrounding context changes the model's score.
-
-3. **`hash_recurrence` alone is not a signal.** Legitimate repeated reads produce
-   zero divergence. Only `hash_divergence_count > 0` is the meaningful indicator.
-
 ### Comparison with single-call baseline
 
 The isolated (ratio=0.0) condition replicates the per-call baseline:
@@ -256,7 +245,6 @@ Consistent with M7. Adding dilution does not change recall for these detectors.
 | Cross-session accumulation | Accumulator is session-scoped by design |
 | Multi-step gradual payload injection | Distinct from ratio-dilution; different threat model |
 | Statistical confidence intervals | n=187 supports descriptive reporting; not AUROC territory |
-| Real measured score-divergence in the accumulator | Synthetic scores only in this benchmark; real scores in `test_session.py` |
 
 ---
 
@@ -270,7 +258,7 @@ uv run python scripts/benchmark_rules.py
 uv run python scripts/benchmark_dilution.py
 
 # Run all related tests
-uv run pytest tests/test_dilution.py tests/test_session.py -v
+uv run pytest tests/test_dilution.py -v
 ```
 
 Results are written to `results/dilution/dilution_results.json` (gitignored).

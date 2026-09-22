@@ -215,3 +215,60 @@ already deferred at [26].
 
 Proposal [11.1] left the choice between (A) protocol-level proxy and (B)
 client-side wrapper as an open question. Resolved — see `plan.md` section 2.1.
+
+### 9.3 Score-mode reporting — 9.2's requirement finally satisfied, and what it showed
+
+9.2 added a requirement: "the harmonised `not_benign` mode must additionally be
+reported for both detectors so the comparison is fair." **That requirement went
+unsatisfied for the whole project until `mcp-shield gauge-recut` was built**
+(`plan.md` 2.26). `scores.csv` had carried the four class probabilities since
+M7 specifically so the harmonised cut could be derived, but nothing ever read
+them back, so every published AUROC used each detector's dissertation default
+and the fair comparison 9.2 asked for was never made.
+
+It matters. On the full decontaminated corpus V3 reads 0.346 under its shipped
+`injection` cut and 0.540 under `not_benign` -- the difference between "worse
+than chance" and "at chance", from the same inference. A report that had
+satisfied 9.2 on time would not have published the stronger phrasing.
+
+**Requirement restated and now enforced in practice:** any AUROC published for
+a 4-class detector must be accompanied by its harmonised `not_benign` figure.
+`docs/REPORT.md` section 4 carries the full mode table, and `gauge-recut`
+regenerates it from the committed `scores.csv` with no weights.
+
+### 9.4 Detector scope — a third, publishable classifier added
+
+The proposal's FR-2 scopes detection to the reused rule engine, V0, V3 and PII.
+A third classifier, `guard`
+(`protectai/deberta-v3-base-prompt-injection-v2`, Apache-2.0, pinned by commit
+SHA), has been added outside that list.
+
+**Rationale, and why it is not scope creep.** Two problems the original scope
+could not solve:
+
+1. *Unfalsifiability.* A1 makes V0/V3 unpublishable, so no reader can check any
+   number this project reports about them. A published, fetchable classifier
+   measured through the identical protocol gives at least one result a third
+   party can reproduce.
+2. *The obvious objection.* "These are one author's reused artifacts; a
+   detector built properly would work." That is a claim about the world, and
+   this project's standard is to measure claims rather than argue them.
+
+**It does not alter the no-retraining constraint.** `guard` is used exactly as
+published; nothing here is trained or fine-tuned.
+
+**Result** (`docs/REPORT.md` section 4): it does not rescue the finding.
+AUROC 0.553 [0.501, 0.605] against realistic benign content, 0.281 against the
+adversarial-styled reference, and 89.6% attack success at its calibrated
+escalate threshold. The finding therefore generalises beyond the reused models.
+
+**Constraint carried forward:** `guard` ships `inert` like every other
+classifier. Adding a detector that can be measured is not grounds for trusting
+it, and promotion to a decision-carrying role still requires a calibration on
+this surface that no current data supports.
+
+**Known gap:** the corpus is decontaminated against V0/V3's training data, not
+`guard`'s -- its training sets are named on its model card but not distributed,
+so no equivalent MinHash check was possible. Contamination inflates apparent
+performance, so the reported figure is an upper bound. Stated in the report
+rather than left for a reader to notice.

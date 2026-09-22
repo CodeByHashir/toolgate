@@ -41,8 +41,13 @@ D:\LLMSHIELD-MCP\
 │   ├── decontamination.yaml      MinHash shingle/threshold + training-corpus
 │   │                             reference path (FR-10, M6)
 │   ├── models.yaml              paths + runtime settings for reused detectors
-│   ├── policy.yaml               fusion/policy config: calibrated flag, roles,
-│   │                             thresholds, gate.max_result_chars (FR-9)
+│   ├── policy.yaml               DEFAULT profile (rules + PII): calibrated
+│   │                             flag, roles, thresholds, max_result_chars
+│   ├── policy.guard.yaml       GUARD profile: adds `guard` under `inert`.
+│   │                             The only ML profile runnable after a plain
+│   │                             clone -- needs no unpublishable artifact
+│   ├── policy.research.yaml     RESEARCH profile: adds v0/v3/guard under
+│   │                             `inert`. Decision-neutral; needs the weights
 │   ├── rules.yaml               25 rules: 19 INJ-* (frozen) + 6 MCP-*
 │   └── servers.yaml             reference MCP server launch specs + sandbox
 ├── sandbox/                     synthetic benign corpus; filesystem server is
@@ -83,8 +88,9 @@ D:\LLMSHIELD-MCP\
 │   ├── settings.py              .env / environment secrets (38)
 │   ├── gating/
 │   │   ├── audit.py             SQLite decision log, Decision/Outcome (173)
-│   │   ├── content.py           extraction, apply_redaction(),
-│   │   │                        build_block_result() (FR-5/FR-6) (231)
+│   │   ├── content.py           extraction, apply_redaction() (clips spans
+│   │   │                        per block; reports unplaceable ones),
+│   │   │                        build_block_result() (FR-5/FR-6)
 │   │   ├── policy.py            fusion + policy engine (FR-4/FR-9) (240)
 │   │   └── transport.py         Gate + stream wrappers; wires detectors +
 │   │                            PolicyEngine into observe_inbound (M4) (340)
@@ -92,6 +98,9 @@ D:\LLMSHIELD-MCP\
 │   │   ├── __init__.py          exports; V3 imported lazily (31)
 │   │   ├── base.py              detector contract (118)
 │   │   ├── normalise.py         canonicalisation + dual scan (187)
+│   │   ├── guard.py            published Apache-2.0 binary injection
+│   │   │                        classifier from the HF Hub, pinned by commit
+│   │   │                        SHA; positive class read from id2label
 │   │   ├── pii.py               PII scanner + redact() (183)
 │   │   ├── rules.py             injection rule engine (135)
 │   │   ├── v0_lexical.py        V0 adapter (79)
@@ -103,6 +112,10 @@ D:\LLMSHIELD-MCP\
 │   │   ├── decontaminate.py     MinHash shingling + datasketch.MinHashLSH
 │   │   └── store.py             PayloadCorpusItem, CorpusStore, export_jsonl()
 │   └── gauge/                   GAUGE harness: stats, calibration (FR-11, M7)
+│       └── recut.py             re-derives AUROC from scores.csv under every
+│                                score mode; no weights, no corpus. The
+│                                falsification check for the below-chance
+│                                V3 figure (plan.md 2.25)
 │       ├── stats.py             wilson_ci/clopper_pearson_ci/mcnemar_test
 │       │                        (statsmodels) + auroc_delong() (ported)
 │       ├── calibrate.py         threshold_at_fpr(): matched-FPR calibration
@@ -351,7 +364,8 @@ it -- rewriting the frame itself for Redact/Block.
 | `DecisionRecord` | One log row. `latency_ms` is time inside the gate; `roundtrip_ms` is client-to-server-and-back, kept separate so NFR-1 stays measurable |
 | `DecisionLog` | Append-only SQLite store. Content is **hashed, never stored** (section 12) |
 | `extract(result, max_chars)` | Raw `tools/call` result -> scannable text, block types, truncation flag, SHA-256 of the *full* pre-truncation text |
-| `apply_redaction(result, spans)` | Rebuilds `result` with `spans` masked in their originating content block (FR-5). Shares `_walk_blocks()` with `extract()` so offsets always agree. |
+| `apply_redaction(result, spans)` | Rebuilds `result` with `spans` masked, returning `(result, unapplied_spans)` (FR-5). Shares `_walk_blocks()` with `extract()` so offsets always agree. **Spans are clipped per block, not required to sit inside one** — requiring containment silently dropped matches straddling the `"
+"` block join (reachable: `PHONE_NUMBER`/`US_SSN` separators match a newline) while the row still recorded `redacted=1`. Any span that still cannot be placed is returned so the `Gate` can note the shortfall. |
 | `build_block_result(is_error)` | The FR-6 replacement result: one text block, `BLOCK_MESSAGE`, nothing of the original carried forward |
 | `PolicyConfig` / `load_policy_config()` | Validated `config/policy.yaml`: `calibrated`, `on_detector_failure`, detector-role sets, per-detector thresholds, `max_result_chars` |
 | `PolicyEngine.decide(results)` | Pure fusion function: `dict[str, DetectorResult]` -> `FusionOutcome`. Max/OR across `injection_detectors`; PII (`redaction_detectors`) masks independently of the decision label; `calibrated: false` caps `BLOCK` to `ESCALATE` |
@@ -505,8 +519,14 @@ build_detectors(policy.config) ──► {rules_mcp, rules_inj, pii, v0, v3}
                  PII spans only)     result, FR-6)             score, incl. inert ones)
 ```
 
+A third classifier, `guard`, joins them (`plan.md` 2.26): published,
+Apache-2.0 and fetchable, so its measurements are reproducible by a reader in a
+way V0/V3's can never be. It is inert too.
+
 V0 and V3 are real detectors in this diagram (M5), but sit in
-`config/policy.yaml`'s `detectors.inert`, not `detectors.injection` --
+`detectors.inert`, not `detectors.injection` -- and as of the profile split
+(`plan.md` 2.25) they are named only in `config/policy.research.yaml`, since an
+inert detector still costs a full forward pass per tool result. --
 `PolicyEngine.decide()` reads every detector's score into the log
 unconditionally, but only consults `injection_detectors`/`redaction_detectors`
 when deciding. Promoting either to `injection` (plus a threshold) is the

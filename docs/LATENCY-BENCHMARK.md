@@ -25,23 +25,37 @@ random (seed 42) from the real ingested corpus (`corpus/payload_corpus.sqlite`
 
 | Detector | mean (ms) | p95 (ms) | vs budget |
 |---|---|---|---|
-| `rules_mcp` | 0.06 | 0.05 | NFR-1 (~5ms): met, ~80x headroom |
-| `rules_inj` | 0.06 | 0.06 | NFR-1: met |
-| `pii` | 0.07 | 0.08 | NFR-1: met |
-| `v0` | 2.07 | 2.44 | NFR-1: met, ~2x headroom |
-| `v3` | 208.28 | 197.06 | NFR-2 (100ms): **missed, ~2x** |
-| **fused** (all 5 + `PolicyEngine.decide`) | **215.03** | **183.69** | NFR-2: **missed, ~2x** |
+| `rules_mcp` | 0.02 | 0.03 | NFR-1 (~5ms): met, ~250x headroom |
+| `rules_inj` | 0.03 | 0.04 | NFR-1: met |
+| `pii` | 0.03 | 0.05 | NFR-1: met |
+| `v0` | 2.24 | 3.13 | NFR-1: met, ~2x headroom |
+| `v3` | 172.52 | 228.95 | NFR-2 (100ms): **missed, ~1.7x** |
+| `guard` | 169.92 | 218.29 | NFR-2: **missed, ~1.7x** |
+| **fused** (all 6 + `PolicyEngine.decide`) | **313.97** | **382.08** | NFR-2: **missed, ~3x** |
 
-(`scan_normalised` column; the raw-`.score()` column without the dual-scan
-pass is materially identical for rules/PII/V0 and about 1ms faster for V3 --
-see the script's own two-table output.)
+(`scan_normalised` column -- what the live gate actually calls. The raw
+`.score()` column without the dual-scan pass is materially identical for
+rules/PII and about 12ms faster for V3; see the script's own two-table output.)
 
-The fused pipeline's cost is essentially V3's cost. Rules, PII and V0
-combined add well under 3ms; PolicyEngine.decide() itself is negligible
-(pure Python dict lookups, no I/O). **Shipping V3 as `inert` (M5) does not
-save any latency** -- it still runs, and is still scored, on every
-intercepted tool result. Inert only means it does not affect the *decision*;
-the cost is paid regardless.
+**The two transformers are the entire cost.** Rules, PII and V0 combined add
+under 3 ms; `PolicyEngine.decide()` itself is negligible (pure Python dict
+lookups, no I/O). `guard` costs essentially what V3 costs -- unsurprising, as
+both are DeBERTa-v3-base with a 512-token window -- so adding it roughly
+doubles the fused figure.
+
+**Shipping a classifier as `inert` does not save any of this.** An inert
+detector still runs and is still scored on every intercepted tool result;
+inert only means it does not affect the *decision*. That is precisely why the
+policy profiles exist (`plan.md` 2.25, 2.26): the only way to stop paying for a
+classifier is to leave it out of the policy file entirely, which is what
+`config/policy.yaml` now does by default. The default profile pays 0.08 ms of
+detector time; adding `guard` takes it to ~170 ms; the research profile with
+V0+V3+guard pays ~345 ms.
+
+*(Figures above are a fresh run including `guard`. An earlier run without it
+reported V3 at 208.28 ms and fused at 215.03 ms; run-to-run variation on a busy
+CPU is substantial, which is why the shapes -- transformers dominate, rules are
+free -- matter more than the exact milliseconds.)*
 
 ## 2. Gate overhead across a real chain (FR-14)
 
@@ -49,7 +63,7 @@ Recorded with `mcp-shield run-agent --db chains/latency_run.sqlite --out
 chains/latency_chain.json --model claude-haiku-4-5`, task: fetch 16 distinct
 real URLs one at a time, then list and read the 4 sandbox files
 individually. **25 tool calls** (>= 20, FR-14), all gated live by the real
-fused pipeline (rules + PII + V0 + V3, exactly as `config/policy.yaml`
+fused pipeline (rules + PII + V0 + V3, as `config/policy.yaml` then defined; `guard` did not exist for that run and the research profile now also includes it
 ships). `chains/latency_chain.json` is the committed, host-path-normalised
 record (`chain.py`'s `{sandbox}` placeholder, as `chains/baseline.json`
 already established); the underlying SQLite decision log is not committed,

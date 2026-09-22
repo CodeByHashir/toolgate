@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import json
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -124,8 +125,19 @@ def run_agent(
     model: str,
     db: Path | None,
     max_result_chars: int | None,
+    gate_enabled: bool = True,
+    policy_path: Path | None = None,
 ) -> int:
-    """Record one tool-call chain by driving real MCP servers with a real model."""
+    """Record one tool-call chain by driving real MCP servers with a real model.
+
+    Gating and logging are independent. Until they were separated, `--db` did
+    double duty: supplying a path turned interception on, and omitting it
+    turned interception *off* while still writing every raw tool result to
+    `--out`. The default was therefore "no gate, and a plaintext copy of every
+    tool result on disk", which is the opposite of what a security tool's
+    default should be. Gating is now on unless `--no-gate` is passed, and the
+    decision log is in-memory unless `--db` names a file.
+    """
     import asyncio
     from contextlib import ExitStack
 
@@ -133,6 +145,7 @@ def run_agent(
 
     from llmshield_mcp.agent import ReferenceAgent, open_servers
     from llmshield_mcp.gating import Gate, GateConfig, decision_log
+    from llmshield_mcp.gating.policy import PolicyEngine, load_policy_config
     from llmshield_mcp.servers import load_servers_config
     from llmshield_mcp.settings import Settings
 
@@ -143,7 +156,16 @@ def run_agent(
     print(f"sandbox   {config.sandbox}")
     print(f"servers   {', '.join(server_names)}")
     print(f"model     {model}")
-    print(f"gating    {db if db else 'off'}")
+    print(f"gating    {'on' if gate_enabled else 'OFF'}")
+    print(f"policy    {policy_path or 'config/policy.yaml'}")
+    print(f"audit log {db if db else 'in-memory (not persisted)'}")
+    if not gate_enabled:
+        # Loud, because --out then records exactly what the servers returned.
+        print(
+            "WARNING: gating is off. Tool results reach the agent unscanned, and "
+            f"{out} will contain raw, unredacted tool output.",
+            file=sys.stderr,
+        )
 
     async def _run(gate_factory: object) -> ChainRecord:
         async with open_servers(specs, gate_factory=gate_factory) as servers:  # type: ignore[arg-type]
@@ -154,11 +176,22 @@ def run_agent(
             return await agent.run(task, servers, config.sandbox)
 
     with ExitStack() as stack:
-        log = stack.enter_context(decision_log(db)) if db else None
-        # None means "use config/policy.yaml's gate.max_result_chars" (FR-9);
+        # The log is opened whenever gating is on -- in memory when no --db was
+        # given -- so that declining to persist decisions never silently
+        # declines to make them.
+        log = stack.enter_context(decision_log(db)) if gate_enabled else None
+        # None means "use the policy file's gate.max_result_chars" (FR-9);
         # the flag only overrides it when the caller actually passes one.
         gate_config = GateConfig(max_result_chars=max_result_chars) if max_result_chars else None
-        gate_factory = (lambda spec: Gate(spec.name, log, gate_config)) if log else None
+        gate_factory = None
+        if log is not None:
+            # One PolicyEngine shared by every server's Gate: the policy file is
+            # read and validated once, so a typo fails before any server starts
+            # rather than on whichever server happens to be built first.
+            policy = PolicyEngine(load_policy_config(policy_path))
+            gate_factory = lambda spec: Gate(  # noqa: E731 -- a def here would read worse
+                spec.name, log, gate_config, policy=policy
+            )
         record = asyncio.run(_run(gate_factory))
         logged = log.count() if log else 0
 
@@ -176,8 +209,9 @@ def run_agent(
         f"{u.input_tokens:,} in / {u.output_tokens:,} out tokens"
     )
 
-    if db:
-        print(f"logged    {logged} gating decisions to {db}")
+    if gate_enabled:
+        where = str(db) if db else "an in-memory log (discarded; pass --db to keep it)"
+        print(f"gated     {logged} decisions, written to {where}")
 
     record.write(out)
     print(f"wrote {out}")
@@ -345,6 +379,41 @@ def gauge_run(db: Path, output_dir: Path, sample_size: int, seed: int) -> int:
     return 0
 
 
+def gauge_recut(scores_csv: Path, output: Path | None) -> int:
+    """Recompute AUROC from a saved `scores.csv` under every score mode.
+
+    Needs neither the reused weights nor a corpus -- only the CSV a previous
+    `gauge-run` wrote. This is the executable form of `plan.md` section 2.6's
+    promise that the published statistics are reproducible without the
+    unpublishable artifacts, and the falsification test for `docs/REPORT.md`
+    section 4's below-chance V3 AUROC: see `gauge/recut.py` for why a below-
+    chance figure has two explanations and how re-cutting separates them.
+    """
+    from llmshield_mcp.gauge.recut import format_table, load_rows, recut, to_report
+
+    rows = load_rows(scores_csv)
+    print(f"scores     {scores_csv}  ({len(rows)} rows)")
+
+    results = recut(rows)
+    print()
+    print(format_table(results))
+
+    stored_below = [r for r in results if r.mode == "stored" and r.below_chance]
+    if stored_below:
+        print(
+            "\nAt least one detector scores below chance as stored. Compare its "
+            "`stored` row against the other modes above: if another mode of the "
+            "SAME probability vector lands above chance, the published figure is "
+            "about the score-mode cut (config/models.yaml), not the classifier."
+        )
+
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(to_report(results), indent=2), encoding="utf-8")
+        print(f"\nwrote {output}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mcp-shield")
     parser.add_argument("--version", action="version", version=f"llmshield-mcp {__version__}")
@@ -376,8 +445,30 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=None,
         help=(
-            "enable the gating interception layer and write every decision to this "
-            "SQLite database. Omit to run the agent without interception."
+            "persist every gating decision to this SQLite database. Omit to keep "
+            "the decision log in memory -- gating still runs either way (this "
+            "flag no longer switches interception on and off; use --no-gate)."
+        ),
+    )
+    agent.add_argument(
+        "--no-gate",
+        dest="gate",
+        action="store_false",
+        default=True,
+        help=(
+            "run the agent with NO interception. Tool results reach the model "
+            "unscanned and --out records them raw and unredacted."
+        ),
+    )
+    agent.add_argument(
+        "--policy",
+        type=Path,
+        default=None,
+        help=(
+            "policy profile to gate with. Defaults to config/policy.yaml "
+            "(rules + PII, ~0.13 ms/result). Pass config/policy.research.yaml "
+            "to additionally score V0/V3 inert, which needs the reused weights "
+            "and costs ~208 ms/result; decisions are identical either way."
         ),
     )
     agent.add_argument(
@@ -437,6 +528,26 @@ def main(argv: list[str] | None = None) -> int:
     )
     gauge.add_argument("--seed", type=int, default=None, help="defaults to 42")
 
+    recut = subparsers.add_parser(
+        "gauge-recut",
+        help=(
+            "recompute AUROC from a saved scores.csv under every score mode; "
+            "needs no model weights and no corpus"
+        ),
+    )
+    recut.add_argument(
+        "--scores",
+        type=Path,
+        default=None,
+        help="defaults to results/gauge/scores.csv",
+    )
+    recut.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="optional JSON output path; prints to stdout regardless",
+    )
+
     args = parser.parse_args(argv)
     if args.command == "verify-models":
         return verify_models(args.config, args.detector)
@@ -450,6 +561,8 @@ def main(argv: list[str] | None = None) -> int:
             args.model,
             args.db,
             args.max_result_chars,
+            args.gate,
+            args.policy,
         )
     if args.command == "corpus-ingest":
         return ingest_corpus(
@@ -475,6 +588,11 @@ def main(argv: list[str] | None = None) -> int:
             args.sample_size if args.sample_size is not None else _GAUGE_SAMPLE_SIZE,
             args.seed if args.seed is not None else _GAUGE_SEED,
         )
+    if args.command == "gauge-recut":
+        # Aliased for the same shadowing reason as the gauge-run block above.
+        from llmshield_mcp.gauge.run import DEFAULT_OUTPUT_DIR as _RECUT_OUTPUT_DIR
+
+        return gauge_recut(args.scores or _RECUT_OUTPUT_DIR / "scores.csv", args.out)
     parser.error(f"unhandled command {args.command}")
 
 
