@@ -1954,3 +1954,161 @@ calibrated. Both figures now carry all three.
 | All three profiles load | injection/redaction identical, inert differs only |
 | Guard profile end-to-end through a real `Gate` | Escalate; guard scored 0.99999 and carried zero decision weight |
 | Thesis repository | No file modified |
+
+---
+
+# Licensing resolved by removal, and two defects it exposed (2026-09-22)
+
+Instruction was to take the safest licensing option and make sure the problem
+cannot recur. Removal, not attribution — and two unrelated silent-failure
+defects surfaced while doing it.
+
+## 1. `chains/latency_chain.json` deleted
+
+**What changed.** The file was removed. `THIRD_PARTY_NOTICES.md` rewritten from
+"here is the unresolved question" to "here is what was removed and why".
+`README.md`, `docs/REPORT.md`, `docs/LATENCY-BENCHMARK.md` and
+`code_summary.md` updated.
+
+**Why.** It embedded ~5 KB excerpts each of five Wikipedia articles (CC BY-SA
+4.0), an MDN page (CC BY-SA 2.5), W3C, IANA, python.org and a Project Gutenberg
+text, inside an MIT repository. CC BY-SA is share-alike and incompatible with
+MIT. Attribution is the standard minimum but only helps if share-alike
+obligations do not attach; whether they attach to a JSON benchmark fixture
+holding verbatim excerpts is a legal question this project cannot answer.
+Deleting removes the question.
+
+**Risk reduced.** No third-party content remains in any committed file. Checked
+directly: `load_benign()` now returns no fetched third-party prose (the only
+remaining marker hits are this project's own notices file describing the
+problem).
+
+**Cost.** Near zero, which is why removal beat attribution. No test and no
+script read the file; the SQLite log its published figures came from was never
+committed either. `docs/LATENCY-BENCHMARK.md` section 2's numbers stand as a
+recorded measurement with a note explaining the fixture no longer ships and how
+to record another. `chains/baseline.json` is retained — its only fetch is
+`example.com`, an IANA reserved domain whose own text says it needs no
+permission.
+
+**Remaining risk, stated not hidden.** The content is in published git history.
+`git filter-repo` plus a force push would remove it, at the cost of breaking
+every existing clone and the merged PR's refs, for a few kilobytes of
+encyclopedia excerpts in a benchmark fixture. Judged disproportionate and
+recorded in `THIRD_PARTY_NOTICES.md` as a decision, reversible if the judgement
+changes.
+
+## 2. Defect: the recording path fed the evaluation corpus
+
+**What changed.** New `tests/test_chain_licensing.py` (4 tests).
+
+**Why.** Not carelessness — structure. `mcp-shield run-agent --out` records
+every tool result verbatim (that is its job), and `corpus/sources.py:
+load_benign()` globs `chains/*.json`, so fetched web content reached both the
+committed fixture *and* the benign corpus and its JSONL export. Two licensing
+exposures from one recording, neither visible in a diff.
+
+**Risk reduced.** A committed chain may now only record `fetch` results from an
+explicit allowlist of hosts carrying no redistribution restriction; recorded
+bodies are additionally scanned for third-party markers; and the coupling to
+`load_benign()` is asserted so the tests' relevance is documented rather than
+assumed. Adding a host to the allowlist is a licensing decision that must also
+be recorded in `THIRD_PARTY_NOTICES.md`.
+
+**Remaining risk.** The allowlist covers `fetch`. A future tool returning
+third-party content by another route is caught only by the marker scan, which
+is necessarily incomplete.
+
+## 3. Defect: `corpus-ingest` silently doubled the corpus
+
+**What changed.** `ingest_corpus` refuses to run against a non-empty store,
+naming the item count and both ways forward. New `--append` flag for the
+deliberate case. New `tests/test_corpus_ingest_guard.py` (6 tests).
+
+**Why.** Found by hitting it. `CorpusStore.add` is a plain INSERT with no
+uniqueness constraint, so a second ingest appends. Re-running during this
+cleanup took the store from 11,238 to 23,139 items — and the drop-count report
+printed `clean: 23139`, which reads like a larger corpus rather than a
+duplicated one. A gauge run against that store would have produced entirely
+plausible, entirely wrong numbers over doubled data with nothing saying so.
+
+**Risk reduced.** Impossible to do accidentally now. The guard runs before
+`fetch()`, so it costs nothing and needs no network.
+
+**Remaining risk.** `--append` still allows it deliberately, which is the
+point.
+
+**Worth recording about the test.** The first version monkeypatched
+`corpus.sources.fetch`, which does nothing: `ingest_corpus` does
+`from llmshield_mcp.corpus import fetch` and so resolves the *package*
+namespace. It passed anyway — the guard fired before fetch would have run — so
+a test asserting the right thing for the wrong reason nearly shipped. Target
+corrected and the reasoning written into the test.
+
+## 4. Evidence regenerated on the sanitised repository
+
+Deleting the fixture changed `load_benign()`'s output, so the corpus and every
+statistic derived from it were rebuilt from scratch rather than left stale
+against changed inputs.
+
+| | Before | After |
+|---|---|---|
+| Corpus items | 11,238 (one ingest) | 12,020 |
+| Adversarial | 337, 0 contaminated | 337, 0 contaminated |
+| Benign lines | 10,901 | 11,683 |
+
+The benign pool grew rather than shrank: removing the fixture took ~800 lines
+out, and `SECURITY.md`, `THIRD_PARTY_NOTICES.md` and the new test modules added
+more back, since `load_benign()` globs the repository's own content.
+
+**The figures moved, and the documents were updated to match.** An intermediate
+draft of this entry claimed they were unchanged; that was written against a
+stale `results/gauge/` (see below) and is corrected here.
+
+| Detector | realistic AUROC, before | after | ASR before | after |
+|---|---|---|---|---|
+| v0 | 0.723 [0.679, 0.767] | **0.694 [0.648, 0.740]** | 70.6% | **66.2%** |
+| v3 | 0.356 [0.306, 0.406] | **0.310 [0.262, 0.357]** | 94.7% | 94.7% |
+| guard | 0.553 [0.501, 0.605] | **0.524 [0.472, 0.577]** | 89.6% | **93.8%** |
+
+The material change is `guard`: its confidence interval now **contains 0.5**,
+where before it started at 0.501. The honest claim strengthens from "barely
+distinguishable from chance" to "not statistically distinguishable from
+chance". Every document stating the old figure was updated: `README.md`,
+`docs/REPORT.md` (headline, section 4 table, the score-mode table, the guard
+subsection, the leave-one-source-out table), `config/policy.guard.yaml` and
+`plan.md` 2.26.
+
+`gauge-recut` on the new scores likewise shifts slightly: V3 realistic reads
+0.325 under `injection` and 0.540 under `not_benign` -- the correction recorded
+in 2.26 stands, and the gap between the cuts is if anything wider.
+
+### Two process failures worth recording
+
+**A killed background task's child process kept running.** The intermediate
+ingest that doubled the corpus was stopped mid-gauge, but only the shell died;
+the `uv run` child survived, finished against the doubled store, and overwrote
+`results/gauge/` with a run over 674 adversarial items (2 x 337). Those numbers
+were read and briefly reported as "unchanged" before the duplication was
+spotted in the per-source `n` values. The output was discarded and
+`results/gauge/` restored from the committed run before the clean rebuild
+finished.
+
+**Three attempts to wait on the run used file timestamps and all fired early**,
+because an older artifact already satisfied the condition. The reliable signal
+was the task's own completion notification plus a *content* check (337
+adversarial, correct per-source counts), which is what finally confirmed the
+run. Timestamps are not a completion signal when a stale file is present.
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `uv run pytest -m "not models"` | 378 passed, 24 deselected |
+| `uv run ruff check src tests` | All checks passed |
+| `uv run ruff format --check src tests` | clean |
+| `uv run mypy` | Success, 33 source files |
+| `corpus-ingest` into a populated store | Refused, exit 1 |
+| Third-party prose in `load_benign()` | None |
+| Committed chains vs host allowlist | Pass |
+| Corpus after clean rebuild | 12,020 items, single ingest, 0 contaminated |

@@ -34,24 +34,24 @@ matched-FPR protocol, against the same benign references:
 
 | Detector | AUROC, realistic benign | Attacks missed at ~4% FPR |
 |---|---|---|
-| V0 — TF-IDF + logistic regression (reused) | **0.723** [0.679, 0.767] | 70.6% |
-| V3 — DeBERTa-v3-base (reused) | 0.356 [0.306, 0.406] | 94.7% |
-| `guard` — [ProtectAI v2](https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2), purpose-built, ~840k downloads/mo | 0.553 [0.501, 0.605] | 89.6% |
+| V0 — TF-IDF + logistic regression (reused) | **0.694** [0.648, 0.740] | 66.2% |
+| V3 — DeBERTa-v3-base (reused) | 0.310 [0.262, 0.357] | 94.7% |
+| `guard` — [ProtectAI v2](https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2), purpose-built, ~840k downloads/mo | 0.524 [0.472, 0.577] | 93.8% |
 
 The **simplest** model tested is the best one. The purpose-built production
-detector is barely distinguishable from a coin flip — its confidence interval
-starts at 0.501 — and lets nine in ten real attacks through at its own
-calibrated operating point. Against benign text that merely *looks* suspicious
-(source code containing "ignore", docs about system prompts) both transformers
-fall *below* chance.
+detector is **statistically indistinguishable from a coin flip** — its 95%
+confidence interval, [0.472, 0.577], contains 0.5 — and it lets 19 in 20 real
+attacks through at its own calibrated operating point. Against benign text that
+merely *looks* suspicious (source code containing "ignore", docs about system
+prompts) both transformers fall *below* chance.
 
 A small rule set derived from real attack data catches roughly one attack in
 five, with zero false positives observed in 4,654 benign lines — which bounds
 its false-positive rate below 0.082% (Wilson 95%), and is not the same claim as
 "zero". The dissertation's own 19 rules, unmodified, catch zero of 187.
 
-None of it generalises: the same detector at the same threshold misses **43% to
-98%** of attacks depending purely on which of three independent real-world
+None of it generalises: the same detector at the same threshold misses **39% to
+100%** of attacks depending purely on which of three independent real-world
 attack collections is measured.
 
 This is shipped as a **detection and audit layer with measured, poor
@@ -169,7 +169,7 @@ tested by anyone, and `gauge-recut` re-derives the AUROC under every score mode
 from the same stored inference.
 
 It found a real problem. V3's published below-chance figure comes from the
-`injection` cut inherited from the dissertation (0.346); under `not_benign` the
+`injection` cut inherited from the dissertation (0.325); under `not_benign` the
 same probabilities give **0.540**, an interval straddling chance. So V3 is not
 reliably anti-correlated — it simply does not separate, and how badly it reads
 depends on the cut. `docs/REPORT.md` section 4 carries the full table and the
@@ -227,7 +227,7 @@ uv run mcp-shield run-agent --policy config/policy.guard.yaml --db logs/d.sqlite
 `policy.guard.yaml` exists because it is the only ML profile a stranger can
 run: V0 and V3 need artifacts only the author has. Read
 `docs/REPORT.md` section 4 before reaching for it — `guard` measured at AUROC
-0.553 on this surface, and it ships `inert` for the same reason everything else
+0.524 on this surface, and it ships `inert` for the same reason everything else
 does.
 
 Chains that feed the evaluation use the default model. For cheap smoke runs:
@@ -251,9 +251,8 @@ expectations.
 MIT for this repository's own code, tests, configuration and documentation --
 see [LICENSE](LICENSE).
 
-Some committed data files are not covered by it. `chains/latency_chain.json`
-is a recorded benchmark fixture containing verbatim excerpts of third-party web
-pages, several under share-alike licences.
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists every source, its
-licence, and an unresolved share-alike question flagged rather than assumed
-away.
+Every committed file is covered by it. A recorded benchmark fixture that
+embedded verbatim CC BY-SA web content was removed rather than attributed, and
+`tests/test_chain_licensing.py` now prevents another one being committed.
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) records that decision, the
+fetched-corpus licences, and why the reused model weights are not distributed.

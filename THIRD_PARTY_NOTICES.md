@@ -1,51 +1,55 @@
 # Third-Party Notices
 
-The repository's own source, tests, configuration and documentation are MIT
-licensed ([`LICENSE`](LICENSE)). Some committed **data files** are not, and MIT
-does not extend to them. This file records what they are and under what terms.
+Everything committed to this repository is MIT licensed ([`LICENSE`](LICENSE)).
+This file records how that is kept true: what was removed to make it so, what is
+fetched at runtime rather than vendored, and what is deliberately not
+distributed at all.
 
 ---
 
-## `chains/latency_chain.json` — contains third-party web content
+## Resolved: `chains/latency_chain.json` (removed)
 
-This file is a recorded MCP tool-call chain used by the latency benchmark
-(`scripts/benchmark_latency.py`, [`docs/LATENCY-BENCHMARK.md`](docs/LATENCY-BENCHMARK.md)).
-It was produced by an agent making real `fetch` calls, and it therefore embeds
-verbatim excerpts (roughly 1.5–5 KB each) of pages served by third parties:
+A recorded 25-call agent chain used to live at `chains/latency_chain.json`. It
+was produced by an agent making real `fetch` calls, and because a chain record
+stores every tool result verbatim, it embedded roughly 1.5–5 KB excerpts each of
+five Wikipedia articles (CC BY-SA 4.0), an MDN page (CC BY-SA 2.5), W3C, IANA
+and python.org pages, and a Project Gutenberg text.
 
-| Source | Calls | Licence of the excerpted content |
-|---|---|---|
-| `en.wikipedia.org` (HTTP, JSON, Python, Software testing, Latency) | 5 | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) |
-| `developer.mozilla.org` (Web/HTTP) | 1 | [CC BY-SA 2.5](https://creativecommons.org/licenses/by-sa/2.5/) |
-| `www.w3.org`, `www.w3.org/TR/` | 2 | [W3C Document Licence](https://www.w3.org/copyright/document-license/) |
-| `www.iana.org`, `www.iana.org/domains/reserved` | 2 | IANA / ICANN terms |
-| `www.python.org` | 1 | PSF website terms |
-| `httpbin.org` | 2 | [ISC](https://github.com/postmanlabs/httpbin/blob/master/LICENSE) |
-| `example.com` / `.org` / `.net` | 3 | IANA reserved-domain placeholder text |
-| Project Gutenberg (*Moby-Dick* excerpt, via a fetched page) | 1 | Project Gutenberg Licence; the underlying work is public domain |
+**CC BY-SA is share-alike and is not compatible with this repository's MIT
+licence.** Whether share-alike obligations actually attach to a JSON benchmark
+fixture containing verbatim excerpts is a legal question this project is not
+qualified to answer — so rather than attributing the content and hoping the
+answer was favourable, **the file was deleted** (`plan.md` 2.27).
 
-Attribution is given above. Each excerpt remains under its own licence, and
-nothing here relicenses it.
+Nothing depended on it programmatically: no test and no script read it, and the
+SQLite database its published latency figures were computed from was never
+committed either. Its numbers remain in `docs/LATENCY-BENCHMARK.md` section 2 as
+a recorded historical measurement, with the command to reproduce one.
 
-### Known issue, stated rather than assumed
+`chains/baseline.json` is retained. Its only `fetch` call is to `example.com`,
+an IANA reserved domain whose placeholder text states it is "for use in
+documentation examples without needing permission" (RFC 2606, RFC 6761).
 
-The Wikipedia and MDN excerpts are under **share-alike** licences. Share-alike
-attaches obligations to derivative works, and whether a JSON benchmark fixture
-containing verbatim excerpts counts as one — and if so, whether the obligation
-reaches the fixture, the benchmark, or neither — is a legal question this
-project is not qualified to answer. It is recorded here rather than resolved.
+### Preventing recurrence
 
-`plan.md` section 16's own instruction applies: document the finding and flag
-anything needing human or legal confirmation instead of assuming an answer.
+The failure was structural, not careless: `mcp-shield run-agent --out` records
+whatever a tool returned, and `corpus/sources.py:load_benign()` globs
+`chains/*.json`, so fetched web content reached both the fixture *and* the
+benign evaluation corpus. Nothing in review would reliably catch that in a
+diff.
 
-**If this becomes a problem, the fix is cheap.** The latency benchmark needs
-content *lengths* and token counts, not the prose. `chains/latency_chain.json`
-can be regenerated against sources whose licences permit redistribution without
-share-alike, at the cost of re-running the benchmark and restating the numbers
-in `docs/LATENCY-BENCHMARK.md`. That has not been done yet because it would
-invalidate published figures for a reason that is not yet established.
+`tests/test_chain_licensing.py` now enforces it: every committed chain may only
+record `fetch` results from an explicit allowlist of hosts whose content carries
+no redistribution restriction, and recorded bodies are additionally scanned for
+third-party content markers. Adding a host to that allowlist is a licensing
+decision that must also be recorded here.
 
----
+**Note on history.** These commits remain in the git history, which is public.
+Rewriting published history was judged disproportionate for a few kilobytes of
+encyclopedia excerpts in a benchmark fixture, and would break existing clones
+and pull-request references. If that judgement is ever revisited, the remedy is
+`git filter-repo` plus a force push, and it should be a deliberate decision
+rather than a cleanup.
 
 ## Evaluation corpora — fetched, never vendored
 

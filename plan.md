@@ -4,7 +4,7 @@ Companion to `prd.md` (what to build) and `whats_has_been_done.md` (what is
 built). This file holds the plan, the architecture decisions and their
 rationale, remaining work, and known risks.
 
-**Current position: M0-M10 complete; M12 built, measured and removed (2.25). A post-audit hardening pass has since verified the headline finding against falsification, closed a redaction leak, pinned the evaluation corpus, split the policy into light/research profiles, decoupled gating from logging, and restated the FPR and Escalate claims to match their evidence. `docs/REPORT.md` + three committed SVG figures + a rewritten README state the headline findings in plain English. M11 (optional standalone proxy) not started. `config/policy.yaml` still ships uncalibrated by deliberate choice -- see 2.20.**
+**Current position: M0-M10 complete; M12 built, measured and removed (2.25). A post-audit hardening pass has since verified the headline finding against falsification, closed a redaction leak, pinned the evaluation corpus, split the policy into light/research profiles, decoupled gating from logging, and restated the FPR and Escalate claims to match their evidence, added a third publishable classifier (2.26), and resolved the licensing exposure by removal rather than attribution (2.27). `docs/REPORT.md` + three committed SVG figures + a rewritten README state the headline findings in plain English. M11 (optional standalone proxy) not started. `config/policy.yaml` still ships uncalibrated by deliberate choice -- see 2.20.**
 
 ---
 
@@ -888,12 +888,16 @@ GAUGE protocol on the identical decontaminated corpus:
 
 | Detector | realistic AUROC | adversarial-styled AUROC | ASR @ ~4% FPR |
 |---|---|---|---|
-| V0 | 0.723 [0.679, 0.767] | 0.536 [0.479, 0.592] | 70.6% |
-| V3 | 0.356 [0.306, 0.406] | 0.257 [0.211, 0.304] | 94.7% |
-| guard | 0.553 [0.501, 0.605] | 0.281 [0.230, 0.331] | 89.6% |
+| V0 | 0.694 [0.648, 0.740] | 0.521 [0.466, 0.576] | 66.2% |
+| V3 | 0.310 [0.262, 0.357] | 0.235 [0.191, 0.279] | 94.7% |
+| guard | 0.524 [0.472, 0.577] | 0.255 [0.207, 0.303] | 93.8% |
 
-The purpose-built production detector lands barely above chance on realistic
-benign content -- its CI starts at 0.501 -- below chance on the false-positive
+(Figures from the final clean-corpus run; 2.27 records why they were
+regenerated and how far they moved.)
+
+The purpose-built production detector is statistically indistinguishable from
+chance on realistic benign content -- its CI contains 0.5 -- below chance on the
+false-positive
 stress reference, and misses ~9 in 10 attacks at its own calibrated operating
 point. Its Block/Redact thresholds calibrate to 1.0000 at 100% ASR: tuned for
 zero false positives it catches nothing, because its scores saturate (ordinary
@@ -909,7 +913,7 @@ reader can verify, because unlike V0/V3 these weights are fetchable.
 One caveat runs in the safe direction and is stated in the report: the corpus
 is decontaminated against V0/V3's training data, not guard's, which is listed
 on its model card but not distributed. Contamination inflates apparent
-performance, so 0.553 is an upper bound. A negative result that might be
+performance, so 0.524 is an upper bound. A negative result that might be
 flattered is stronger than one that might be depressed.
 
 **A published claim was wrong and has been withdrawn.** 2.25 recorded that the
@@ -960,6 +964,77 @@ rather than assumed to be index 1. That last one is a direct response to this
 pass's own near-miss: V3's checkpoint carries only `LABEL_0..LABEL_3`, so its
 mapping lived in a training-script comment and had to be verified empirically.
 A checkpoint that names its classes gets read.
+
+### 2.27 Licensing resolved by removal, and two structural defects it exposed
+
+The share-alike question 2.25 raised and flagged was resolved rather than left
+open, on the instruction to take the safest option. Two unrelated defects
+surfaced while doing it, both of the same shape: a silent failure that no
+review would catch in a diff.
+
+**The fixture was deleted, not attributed.** `chains/latency_chain.json`
+embedded ~5 KB excerpts each of five Wikipedia articles, an MDN page, W3C,
+IANA, python.org and a Project Gutenberg text -- several CC BY-SA, which is
+share-alike and incompatible with MIT. Attribution (`THIRD_PARTY_NOTICES.md`,
+2.25) is the standard minimum, but it only helps if share-alike obligations do
+not attach; whether they attach to a JSON benchmark fixture holding verbatim
+excerpts is a legal question this project cannot answer. Deleting removes the
+question entirely.
+
+The cost of deleting turned out to be near zero, which is why it was the right
+call rather than an over-reaction: no test and no script read the file, and the
+SQLite decision log its published figures were computed from was never
+committed either. `docs/LATENCY-BENCHMARK.md` section 2's numbers are unchanged
+and now carry a note saying the fixture no longer ships and how to record
+another. `chains/baseline.json` stays -- its only fetch is `example.com`, an
+IANA reserved domain whose own text says it needs no permission.
+
+**Git history was deliberately not rewritten.** The content is in published
+commits. `git filter-repo` plus a force push would remove it, at the cost of
+breaking every existing clone and the merged pull request's refs, for a few
+kilobytes of encyclopedia excerpts in a benchmark fixture. Judged
+disproportionate, recorded in `THIRD_PARTY_NOTICES.md` as a decision rather
+than an oversight, and reversible if that judgement changes.
+
+**Defect 1: the recording path fed the corpus.** This was not carelessness.
+`mcp-shield run-agent --out` records every tool result verbatim -- that is its
+job -- and `corpus/sources.py:load_benign()` globs `chains/*.json`, so fetched
+web content reached both the committed fixture *and* the benign evaluation
+corpus and its JSONL export. Two independent licensing exposures from one
+recording, neither visible in a diff.
+
+`tests/test_chain_licensing.py` closes it: a committed chain may only record
+`fetch` results from an explicit allowlist of hosts carrying no redistribution
+restriction, recorded bodies are scanned for third-party markers, and the
+coupling to `load_benign()` is asserted so the tests' relevance is documented
+rather than assumed. Adding a host to that allowlist is a licensing decision
+that must also be recorded in `THIRD_PARTY_NOTICES.md`.
+
+**Defect 2: `corpus-ingest` silently doubled the corpus.** Found by hitting it.
+`CorpusStore.add` is a plain INSERT with no uniqueness constraint, so a second
+ingest into the same file appends. Running it again during this cleanup took
+the store from 11,238 items to 23,139 -- and the drop-count report said
+`clean: 23139`, which reads like a larger corpus rather than a duplicated one.
+A gauge run against that store would have produced entirely plausible,
+entirely wrong numbers over doubled data, with nothing anywhere saying so.
+
+`corpus-ingest` now refuses to ingest into a non-empty store, naming the count
+and both ways forward (delete, or `--append`). The guard runs before `fetch()`,
+so it costs nothing and needs no network. `tests/test_corpus_ingest_guard.py`
+covers refusal, the message contents, the pre-fetch ordering, the empty-store
+and missing-store cases, and that `--append` still works.
+
+Worth recording about that test: the first version monkeypatched
+`corpus.sources.fetch`, which does nothing, because `ingest_corpus` does
+`from llmshield_mcp.corpus import fetch` and therefore resolves the *package*
+namespace. It passed anyway -- the guard fired before fetch would have run --
+so a test asserting the right thing for the wrong reason nearly shipped. Patch
+target corrected and the reasoning written into the test.
+
+**Evidence regenerated.** Deleting the fixture changed `load_benign()`'s
+output, so the corpus and every statistic derived from it were rebuilt from
+scratch rather than left stale against changed inputs. `results/gauge/` is
+re-committed from that clean run.
 
 ## 4. Open Questions
 

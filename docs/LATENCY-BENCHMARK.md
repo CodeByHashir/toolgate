@@ -61,13 +61,24 @@ free -- matter more than the exact milliseconds.)*
 
 Recorded with `mcp-shield run-agent --db chains/latency_run.sqlite --out
 chains/latency_chain.json --model claude-haiku-4-5`, task: fetch 16 distinct
-real URLs one at a time, then list and read the 4 sandbox files
-individually. **25 tool calls** (>= 20, FR-14), all gated live by the real
-fused pipeline (rules + PII + V0 + V3, as `config/policy.yaml` then defined; `guard` did not exist for that run and the research profile now also includes it
-ships). `chains/latency_chain.json` is the committed, host-path-normalised
-record (`chain.py`'s `{sandbox}` placeholder, as `chains/baseline.json`
-already established); the underlying SQLite decision log is not committed,
-matching every other `*.sqlite` in this project.
+real URLs one at a time, then list and read the 4 sandbox files individually.
+**25 tool calls** (>= 20, FR-14), all gated live by the fused pipeline as
+`config/policy.yaml` then defined it -- rules + PII + V0 + V3. (`guard` did not
+exist for this run, and the default profile no longer names V0/V3 at all; see
+section 1.)
+
+> **The fixture behind this section is no longer committed.** Recording a chain
+> stores every tool result verbatim, so fetching 16 real URLs embedded CC BY-SA
+> content from Wikipedia and MDN into a file in an MIT repository. It was
+> removed rather than attributed — see
+> [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md), and
+> `tests/test_chain_licensing.py`, which stops another one being committed.
+>
+> The numbers below stand as a recorded measurement and are unaffected: they
+> were computed from `chains/latency_run.sqlite`, which was never committed
+> either (matching every other `*.sqlite` here). To re-derive them, re-record a
+> chain with the command above against URLs you may redistribute, or against any
+> URLs at all if you do not intend to commit the result.
 
 | Call type | n | content (mean chars) | gate `latency_ms` mean / p95 | `roundtrip_ms` mean / p95 |
 |---|---|---|---|---|

@@ -10,18 +10,19 @@ per-item `scores.csv` specifically so the statistics recompute without them
 
 **Headline answer: no -- and this is not a property of any one model.** Six
 detectors were measured on the same decontaminated corpus through the same
-protocol, three of them scored classifiers. The best separation on realistic benign content comes from the
-*simplest* model tested (V0, TF-IDF + logistic regression, AUROC 0.723). The
-reused transformer (V3) does not separate at all. And a purpose-built,
-independently-trained, widely-deployed production injection classifier
-(ProtectAI's `deberta-v3-base-prompt-injection-v2`, ~840k downloads/month)
-reaches AUROC **0.553 [0.501, 0.605]** -- barely distinguishable from a coin
-flip -- while letting **89.6%** of real attacks through at its own 4%
-false-positive operating point.
+protocol, three of them scored classifiers. The best separation on realistic
+benign content comes from the *simplest* model tested (V0, TF-IDF + logistic
+regression, AUROC 0.694). The reused transformer (V3) does not separate at all.
+And a purpose-built, independently-trained, widely-deployed production
+injection classifier (ProtectAI's `deberta-v3-base-prompt-injection-v2`, ~840k
+downloads/month) reaches AUROC **0.524 [0.472, 0.577]** -- an interval
+containing 0.5, so statistically indistinguishable from a coin flip -- while
+letting **93.8%** of real attacks through at its own 4% false-positive
+operating point.
 
 Whatever partial signal exists also fails to generalise across attack sources:
-the same detector at the same threshold produces attack-success rates from 43%
-to 98% depending purely on which of three independent real-world attack
+the same detector at the same threshold produces attack-success rates from 39%
+to 100% depending purely on which of three independent real-world attack
 collections is measured.
 
 ---
@@ -107,9 +108,9 @@ without needing any threshold at all:
 
 | Detector | Realistic benign | Adversarial-styled benign |
 |---|---|---|
-| V0 (TF-IDF + logistic regression, reused) | 0.723 [0.679, 0.767] | 0.536 [0.479, 0.592] |
-| V3 (DeBERTa-v3-base, reused) | 0.356 [0.306, 0.406] | 0.257 [0.211, 0.304] |
-| `guard` (ProtectAI v2, published, Apache-2.0) | 0.553 [0.501, 0.605] | 0.281 [0.230, 0.331] |
+| V0 (TF-IDF + logistic regression, reused) | 0.694 [0.648, 0.740] | 0.521 [0.466, 0.576] |
+| V3 (DeBERTa-v3-base, reused) | 0.310 [0.262, 0.357] | 0.235 [0.191, 0.279] |
+| `guard` (ProtectAI v2, published, Apache-2.0) | 0.524 [0.472, 0.577] | 0.255 [0.207, 0.303] |
 
 Three things stand out, and none of them is comfortable.
 
@@ -124,8 +125,8 @@ here.
 
 **Every detector collapses on the false-positive stress case.** Against benign
 text that merely *looks* suspicious -- source code containing "ignore", docs
-discussing system prompts -- V0 falls to 0.536 and both transformers fall
-below chance. That reference is the one a detector most needs to survive,
+discussing system prompts -- V0 falls to 0.521 (an interval containing chance)
+and both transformers fall below it. That reference is the one a detector most needs to survive,
 because a real tool result is full of exactly that material.
 
 ### Is the below-chance figure real, or an artefact of the score mode?
@@ -151,10 +152,8 @@ projection. On the full decontaminated 337-payload corpus:
 
 | Detector | Reference | `injection` | `not_benign` | `jailbreak` | `harmful` | `benign` |
 |---|---|---|---|---|---|---|
-| V3 | realistic | **0.346** | **0.540** | 0.513 | 0.262 | 0.460 |
-| V3 | adversarial-styled | 0.235 | 0.295 | 0.533 | 0.539 | 0.705 |
-| V0 | realistic | 0.776 | **0.709** | 0.825 | 0.246 | 0.291 |
-| V0 | adversarial-styled | 0.496 | **0.514** | 0.754 | 0.376 | 0.486 |
+| V3 | realistic | **0.325** | **0.540** | 0.515 | 0.258 | 0.460 |
+| V0 | realistic | 0.765 | **0.704** | 0.838 | 0.249 | 0.296 |
 
 (Bold marks each detector's shipped cut: `injection` for V3, `not_benign` for
 V0.)
@@ -162,7 +161,7 @@ V0.)
 **The label polarity is correct** -- `mcp-shield verify-models` scores a known
 injection probe at P(injection) = 0.998 and a plain benign sentence at 0.023,
 so nothing is transposed. **But the cut matters a great deal.** Under
-`not_benign`, V3's realistic AUROC rises from 0.346 to **0.540 [0.49, 0.59]**
+`not_benign`, V3's realistic AUROC rises from 0.325 to **0.540 [0.49, 0.59]**
 -- an interval that straddles chance. The honest statement is therefore:
 
 > V3 does not separate attacks from benign content on this surface. Under the
@@ -178,8 +177,8 @@ decontamination, and it did not survive the full corpus. The claim is
 withdrawn.
 
 The same tool shows the shipped cuts are not the best available for either
-model: V0 reaches 0.825 under `jailbreak` and 0.776 under `injection` against
-its shipped 0.709. **No threshold is being promoted on that basis.** Choosing a
+model: V0 reaches 0.838 under `jailbreak` and 0.765 under `injection` against
+its shipped 0.704. **No threshold is being promoted on that basis.** Choosing a
 score mode after seeing which one scores best on the evaluation set is exactly
 the overfitting the matched-FPR protocol exists to prevent; these columns are
 reported as a sensitivity analysis, not as a tuning result.
@@ -198,14 +197,13 @@ GAUGE protocol on the **identical** decontaminated corpus and references.
 
 | | Realistic AUROC | Adversarial-styled AUROC | ASR at 4% achieved FPR |
 |---|---|---|---|
-| `guard` | 0.553 [0.501, 0.605] | 0.281 [0.230, 0.331] | **89.6% [85.9%, 92.4%]** |
+| `guard` | 0.524 [0.472, 0.577] | 0.255 [0.207, 0.303] | **93.8% [90.7%, 95.9%]** |
 
-It does not do better. On realistic benign content its confidence interval
-runs from 0.501 -- it is barely distinguishable from a coin flip, and the
-interval nearly touches chance. On the false-positive stress reference it is
-*below* chance, like V3. At the escalate operating point it lets **roughly
-nine in ten real attacks through** while still raising on 4% of benign
-content. Its Block and Redact thresholds calibrate to 1.0000 with a 100%
+It does not do better. On realistic benign content its 95% confidence interval
+**contains 0.5**, so its separation is not statistically distinguishable from a
+coin flip. On the false-positive stress reference it is *below* chance, like
+V3. At the escalate operating point it lets **19 in 20 real attacks through**
+while still raising on 4% of benign content. Its Block and Redact thresholds calibrate to 1.0000 with a 100%
 attack success rate: tuned for zero false positives it catches nothing at all,
 because its scores saturate. A single benign probe makes the saturation
 visible -- ordinary Python source containing the words "ignore all previous
@@ -214,7 +212,7 @@ retries" scores P(INJECTION) = 0.99999.
 **One caveat, and it runs in the safe direction.** This corpus is
 decontaminated against V0/V3's training data, not against `guard`'s -- its
 training set is listed on its model card but not distributed, so no equivalent
-check was possible. Contamination inflates apparent performance, so 0.553 is
+check was possible. Contamination inflates apparent performance, so 0.524 is
 best read as an *upper* bound. A negative result that might be flattered by
 contamination is stronger than one that might be depressed by it.
 
@@ -251,12 +249,12 @@ against three genuinely disjoint real-world sources:
 
 | Source | V0 ASR | V3 ASR | `guard` ASR |
 |---|---|---|---|
-| BIPIA | 98.4% [94.4%, 99.6%] | 92.8% [86.9%, 96.2%] | 97.6% [93.2%, 99.2%] |
-| InjecAgent | 82.3% [71.0%, 89.8%] | 96.8% [89.0%, 99.1%] | 98.4% [91.4%, 99.7%] |
-| LLMail-Inject | 42.7% [35.0%, 50.7%] | 95.3% [90.7%, 97.7%] | 79.3% [72.2%, 85.0%] |
-| **Overall** | **70.6% [65.5%, 75.2%]** | **94.7% [91.7%, 96.6%]** | **89.6% [85.9%, 92.4%]** |
+| BIPIA | 96.8% [92.1%, 98.7%] | 92.8% [86.9%, 96.2%] | 97.6% [93.2%, 99.2%] |
+| InjecAgent | 71.0% [58.7%, 80.8%] | 96.8% [89.0%, 99.1%] | 100.0% [94.2%, 100.0%] |
+| LLMail-Inject | 38.7% [31.2%, 46.7%] | 95.3% [90.7%, 97.7%] | 88.0% [81.8%, 92.3%] |
+| **Overall** | **66.2% [61.0%, 71.0%]** | **94.7% [91.7%, 96.6%]** | **93.8% [90.7%, 95.9%]** |
 
-V0's failure rate swings by **~56 percentage points** depending purely on
+V0's failure rate swings by **~58 percentage points** depending purely on
 which source is measured. A report built from only the first two families
 (this project's own state before Q3 was resolved, `plan.md` 2.21) would have
 significantly overstated how consistently V0 fails -- and would have missed
@@ -266,7 +264,7 @@ more uniform (93-97% ASR across all three) but uniformly close to useless
 either way -- a different failure shape, not a better one.
 
 `guard` shows the same source-dependence as V0 in direction, if not in degree:
-~98% ASR on BIPIA and InjecAgent against 79.3% on LLMail-Inject, a ~19-point
+98-100% ASR on BIPIA and InjecAgent against 88.0% on LLMail-Inject, a ~12-point
 spread. So the generalisation gap is not an artefact of one model's training
 data either. **Whichever detector you pick, the number you would quote depends
 heavily on which benchmark you happened to evaluate against** -- which is the
@@ -291,7 +289,7 @@ and `guard` costs what V3 costs because it is the same backbone with the same
 names neither, and pays 0.08 ms of detector time per tool result.
 
 That figure is on short corpus text. Across a real 25-call agent chain
-(`chains/latency_chain.json`) gating live fetches of real web pages, V3's
+gating live fetches of real web pages, V3's
 `chunk_max` strategy -- scoring every overlapping window of long content --
 pushed gate latency as high as **13.1 seconds** for one page, and for 9 of
 16 fetches gate latency exceeded the network round-trip time that produced

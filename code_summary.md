@@ -54,8 +54,8 @@ D:\LLMSHIELD-MCP\
 │                                confined to this directory (SEC-4)
 ├── chains/
 │   ├── baseline.json            recorded benign tool-call chain (M1 fixture)
-│   └── latency_chain.json       25-call chain through the live fused gate,
-│                                for FR-14 (M9)
+│                                 (latency_chain.json removed: it embedded
+│                                 CC BY-SA web content -- THIRD_PARTY_NOTICES.md)
 ├── scripts/
 │   ├── benchmark_rules.py       rule recall vs BIPIA + InjecAgent (imports
 │   │                            loaders from llmshield_mcp.corpus.sources)

@@ -15,10 +15,11 @@
 # not. It changes what is scored and logged, and what that costs.
 #
 # **Do not mistake "runnable" for "recommended".** docs/REPORT.md section 4
-# measures this detector on this surface at DeLong AUROC 0.553 [0.501, 0.605]
-# against realistic benign content -- barely distinguishable from chance -- and
-# 0.281 against the adversarial-styled reference, which is below it. At its
-# calibrated escalate threshold it misses 89.6% of real attacks. It is included
+# measures this detector on this surface at DeLong AUROC 0.524 [0.472, 0.577]
+# against realistic benign content -- an interval containing 0.5, so not
+# statistically distinguishable from chance -- and 0.255 against the
+# adversarial-styled reference, which is below it. At its calibrated escalate
+# threshold it misses 93.8% of real attacks. It is included
 # because a reader can verify those numbers themselves, which is worth more
 # than a detector nobody can run, NOT because it works. Promotion out of
 # `inert` requires a calibration this data does not support.

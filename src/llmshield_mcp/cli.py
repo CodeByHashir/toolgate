@@ -227,6 +227,7 @@ def ingest_corpus(
     export: Path | None,
     decontamination_config: Path | None,
     include_llmail_inject: bool = True,
+    append: bool = False,
 ) -> int:
     """Fetch, label, decontaminate and store the payload corpus (FR-10, M6, M8).
 
@@ -251,6 +252,28 @@ def ingest_corpus(
         load_decontamination_config,
         load_llmail_inject,
     )
+
+    # `CorpusStore.add` is a plain INSERT with no uniqueness constraint, so a
+    # second ingest into the same file APPENDS rather than replaces. That is
+    # silently destructive to evidence: the drop-count report then shows a
+    # larger "clean" total, which reads like a bigger corpus rather than a
+    # duplicated one, and every downstream statistic is computed over doubled
+    # data. Refusing is the right default; `--append` is there for anyone who
+    # genuinely wants to extend a store and knows what it means.
+    if db.exists() and not append:
+        existing = 0
+        with corpus_store(db) as probe:
+            existing = probe.count()
+        if existing:
+            print(
+                f"error: {db} already holds {existing} items. Ingesting again would "
+                f"append, not replace, silently doubling the corpus every statistic "
+                f"is computed over.\n"
+                f"  Delete it to rebuild:  rm {db}\n"
+                f"  Or pass --append if extending an existing store is what you mean.",
+                file=sys.stderr,
+            )
+            return 1
 
     fetch()
     adversarial = load_adversarial()
@@ -489,6 +512,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     corpus_ingest.add_argument("--db", type=Path, default=DEFAULT_CORPUS_DB)
     corpus_ingest.add_argument(
+        "--append",
+        action="store_true",
+        help=(
+            "add to an existing corpus store instead of refusing. Without this, "
+            "ingesting into a non-empty store is an error, because the store has "
+            "no uniqueness constraint and a second run would silently double "
+            "every figure computed from it."
+        ),
+    )
+    corpus_ingest.add_argument(
         "--export",
         type=Path,
         default=DEFAULT_CORPUS_EXPORT,
@@ -570,6 +603,7 @@ def main(argv: list[str] | None = None) -> int:
             None if args.no_export else args.export,
             args.decontamination_config,
             not args.no_llmail_inject,
+            args.append,
         )
     if args.command == "gauge-run":
         # Aliased on import: cli.py already has module-level DEFAULT_CORPUS_DB
