@@ -50,6 +50,11 @@ class Outcome(StrEnum):
     RESULT = "result"
     PROTOCOL_ERROR = "protocol_error"
     DETECTOR_FAILURE = "detector_failure"
+    #: A `tools/call` REQUEST judged by the capability layer
+    #: (`gating/tool_calls.py`) before it was sent. Distinct from RESULT so
+    #: request-side decisions never land in a denominator meant for
+    #: content-detection statistics -- they are a different experiment.
+    TOOL_CALL = "tool_call"
 
 
 SCHEMA = """

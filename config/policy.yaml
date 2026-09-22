@@ -145,3 +145,40 @@ gate:
   # that a policy file exists to hold it, per FR-9. The flag still overrides
   # this when passed explicitly (see cli.py / gating/transport.py Gate.__init__).
   max_result_chars: 200000
+
+# ---------------------------------------------------------------------------
+# tool_calls: capability gating of OUTBOUND tools/call requests
+# ---------------------------------------------------------------------------
+#
+# Absent here on purpose -- this default profile ships with capability gating
+# OFF, so adding the layer changed nothing for anyone who has not opted in.
+# `config/policy.agent.yaml` is a working example; the block looks like this:
+#
+#   tool_calls:
+#     default: allow          # `block` turns the rules into an allowlist
+#     rules:
+#       filesystem.read_text_file:
+#         paths: ["sandbox/**"]        # sandbox escape -> blocked
+#       fetch.fetch:
+#         egress: ["docs.example.com"] # exfiltration -> blocked
+#       github.delete_repo:
+#         action: block                # destructive -> never runs
+#
+# **Why this layer exists, and why it is different from everything above.**
+# Every detector in this file inspects content and asks "does this look like an
+# attack?". docs/REPORT.md measures how well that works here: ~20% recall at
+# best, and a purpose-built production classifier indistinguishable from
+# chance. This block asks "is the agent allowed to do this?" instead, which
+# needs no classifier -- you do not have to recognise the injection that talked
+# an agent into reading ~/.ssh/id_rsa to notice it is reading outside its
+# sandbox.
+#
+# Against the behaviour a rule names there is no false-negative rate, because
+# nothing is being classified. That is a real guarantee. It is NOT a guarantee
+# that the agent is safe: it bounds the blast radius of a successful injection
+# to whatever the policy still permits.
+#
+# Note that `calibrated: false` above does NOT gate these blocks. That ceiling
+# exists because detector thresholds are uncalibrated on this surface; a
+# capability rule has no threshold and no false-positive rate to calibrate.
+# See gating/tool_calls.py.

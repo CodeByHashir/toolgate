@@ -21,6 +21,15 @@ from llmshield_mcp.gating.policy import (
     PolicyEngine,
     load_policy_config,
 )
+from llmshield_mcp.gating.tool_calls import (
+    ToolCallBlocked,
+    ToolCallPolicy,
+    ToolDecision,
+    ToolRule,
+    ToolVerdict,
+    evaluate_tool_call,
+    load_tool_call_policy,
+)
 from llmshield_mcp.gating.transport import Gate, GateConfig, build_detectors, gating_transport
 
 __all__ = [
@@ -36,6 +45,13 @@ __all__ = [
     "Outcome",
     "PolicyConfig",
     "PolicyEngine",
+    "ToolCallBlocked",
+    "ToolCallPolicy",
+    "ToolDecision",
+    "ToolRule",
+    "ToolVerdict",
+    "evaluate_tool_call",
+    "load_tool_call_policy",
     "apply_redaction",
     "build_block_result",
     "decision_log",

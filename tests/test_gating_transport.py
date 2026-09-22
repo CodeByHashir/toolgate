@@ -559,3 +559,149 @@ def test_an_incomplete_redaction_is_recorded_in_the_note(
     assert row["fused_decision"] == "redact"
     assert "redaction incomplete" in (row["note"] or "")
     assert "EMAIL_ADDRESS" in (row["note"] or "")
+
+
+# --- capability gating of outbound tools/call requests ---------------------
+
+
+def _gate_with_tool_policy(log: DecisionLog, detectors: dict[str, Detector], raw: dict) -> Gate:
+    import dataclasses as _dc
+
+    from llmshield_mcp.gating.policy import PolicyEngine, load_policy_config
+    from llmshield_mcp.gating.tool_calls import load_tool_call_policy
+
+    base = load_policy_config()
+    config = _dc.replace(base, tool_calls=load_tool_call_policy(raw))
+    return Gate("filesystem", log, detectors=detectors, policy=PolicyEngine(config))
+
+
+def _call(request_id: int, tool: str, **arguments: Any) -> SessionMessage:
+    return SessionMessage(
+        mcp_types.JSONRPCRequest(
+            jsonrpc="2.0",
+            id=request_id,
+            method="tools/call",
+            params={"name": tool, "arguments": arguments},
+        )
+    )
+
+
+def test_a_blocked_tool_call_raises_and_is_never_tracked(
+    log: DecisionLog, light_detectors: dict[str, Detector]
+) -> None:
+    from llmshield_mcp.gating.tool_calls import ToolCallBlocked
+
+    gate = _gate_with_tool_policy(
+        log, light_detectors, {"rules": {"filesystem.read_text_file": {"paths": ["workspace/**"]}}}
+    )
+
+    with pytest.raises(ToolCallBlocked) as excinfo:
+        gate.observe_outbound(_call(1, "read_text_file", path="../../.ssh/id_rsa"))
+
+    assert excinfo.value.rule == "filesystem.read_text_file.paths"
+    # Never entered the pending map: no response is coming, because the request
+    # was never sent.
+    assert gate.pending_count == 0
+
+
+def test_a_blocked_call_is_logged_under_its_own_outcome(
+    log: DecisionLog, light_detectors: dict[str, Detector]
+) -> None:
+    from llmshield_mcp.gating.tool_calls import ToolCallBlocked
+
+    gate = _gate_with_tool_policy(
+        log, light_detectors, {"rules": {"github.delete_repo": {"action": "block"}}}
+    )
+    gate.server = "github"
+
+    with pytest.raises(ToolCallBlocked):
+        gate.observe_outbound(_call(1, "delete_repo", repo="prod"))
+
+    row = log.rows()[0]
+    assert row["outcome"] == "tool_call"
+    assert row["fused_decision"] == "block"
+    assert row["tool_name"] == "delete_repo"
+    # A request has no result, so no content hash exists to record.
+    assert row["raw_result_hash"] == ""
+
+
+def test_a_blocked_call_logs_the_rule_but_no_argument_value(
+    log: DecisionLog, light_detectors: dict[str, Detector]
+) -> None:
+    """SEC-3: a path argument can carry exactly what this log must not hold."""
+    from llmshield_mcp.gating.tool_calls import ToolCallBlocked
+
+    gate = _gate_with_tool_policy(
+        log, light_detectors, {"rules": {"filesystem.read_text_file": {"paths": ["workspace/**"]}}}
+    )
+    secret = "/home/user/.aws/credentials"
+
+    with pytest.raises(ToolCallBlocked):
+        gate.observe_outbound(_call(1, "read_text_file", path=secret))
+
+    note = log.rows()[0]["note"] or ""
+    assert "filesystem.read_text_file.paths" in note
+    assert secret not in note
+    assert "credentials" not in note
+
+
+def test_an_allowed_call_writes_no_extra_row_and_still_tracks(
+    log: DecisionLog, light_detectors: dict[str, Detector]
+) -> None:
+    gate = _gate_with_tool_policy(
+        log, light_detectors, {"rules": {"filesystem.read_text_file": {"paths": ["workspace/**"]}}}
+    )
+
+    gate.observe_outbound(_call(1, "read_text_file", path="workspace/notes.md"))
+
+    assert gate.pending_count == 1
+    assert log.count() == 0
+
+
+def test_an_escalated_call_is_logged_but_still_sent(
+    log: DecisionLog, light_detectors: dict[str, Detector]
+) -> None:
+    """Escalate observes; it does not intervene -- same contract as the result path."""
+    gate = _gate_with_tool_policy(
+        log, light_detectors, {"rules": {"filesystem.read_text_file": {"action": "escalate"}}}
+    )
+
+    gate.observe_outbound(_call(1, "read_text_file", path="anything"))
+
+    assert gate.pending_count == 1, "an escalated call must still be forwarded"
+    assert log.rows()[0]["fused_decision"] == "escalate"
+
+
+def test_capability_block_is_not_downgraded_by_the_calibration_ceiling(
+    log: DecisionLog, light_detectors: dict[str, Detector]
+) -> None:
+    """The ceiling is about uncalibrated detector thresholds, not capability rules.
+
+    `calibrated: false` exists because an ML score of 0.9 means nothing without
+    matched-FPR calibration. "block github.delete_repo" has no threshold and no
+    false-positive rate, so routing it through that ceiling would be a category
+    error -- and would silently disable the one control that does not depend on
+    the detection this project measured as not working.
+    """
+    from llmshield_mcp.gating.policy import load_policy_config
+    from llmshield_mcp.gating.tool_calls import ToolCallBlocked
+
+    assert load_policy_config().calibrated is False
+
+    gate = _gate_with_tool_policy(
+        log, light_detectors, {"rules": {"github.delete_repo": {"action": "block"}}}
+    )
+    gate.server = "github"
+
+    with pytest.raises(ToolCallBlocked):
+        gate.observe_outbound(_call(1, "delete_repo"))
+
+    assert log.rows()[0]["fused_decision"] == "block"
+
+
+def test_gating_is_inert_when_no_tool_policy_is_configured(gate: Gate, log: DecisionLog) -> None:
+    """The shipped default must be unchanged by this layer existing."""
+    gate.observe_outbound(_call(1, "read_text_file", path="/etc/passwd"))
+
+    assert gate.pending_count == 1
+    assert log.count() == 0

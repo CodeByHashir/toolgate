@@ -20,8 +20,17 @@ What is deliberately *not* done here:
 * Nothing in a scanned frame is executed, evaluated or acted on (NFR-3, SEC-1).
   Frames are parsed for metadata and hashed; their content is never interpreted,
   only pattern-matched by the detectors it is handed to.
-* Requests (client -> server) are only observed, never gated. PROPOSAL.md
-  section 3.1 scopes this project to tool *results*.
+* Tool *results* are never blocked on a detector's say-so beyond what
+  `gating/policy.py` allows; `calibrated: false` keeps Block unreachable there.
+
+Requests (client -> server) were observe-only through M12, matching PROPOSAL.md
+section 3.1's scope of tool *results*. They are now also **gated on capability**
+(`gating/tool_calls.py`): `observe_outbound` raises `ToolCallBlocked` when the
+policy refuses a call, and `_ObservedWriteStream.send` calls it before
+forwarding, so the request never reaches the server. That is a deliberate
+scope extension, argued in `plan.md` 2.28 -- content detection on this surface
+was measured not to work, so the control moved to capability, which needs no
+classifier.
 """
 
 from __future__ import annotations
@@ -46,6 +55,11 @@ from llmshield_mcp.detectors.rules import RuleDetector
 from llmshield_mcp.gating.audit import Decision, DecisionLog, DecisionRecord, Outcome
 from llmshield_mcp.gating.content import apply_redaction, build_block_result, extract
 from llmshield_mcp.gating.policy import PolicyConfig, PolicyEngine, load_policy_config
+from llmshield_mcp.gating.tool_calls import (
+    ToolCallBlocked,
+    ToolDecision,
+    evaluate_tool_call,
+)
 
 TOOL_CALL_METHOD = "tools/call"
 CANCELLED_NOTIFICATION = "notifications/cancelled"
@@ -199,18 +213,38 @@ class Gate:
     # --- client -> server ------------------------------------------------
 
     def observe_outbound(self, message: SessionMessage) -> None:
+        """Observe a client -> server frame, and gate `tools/call` requests.
+
+        Raises `ToolCallBlocked` when the capability policy refuses the call.
+        `_ObservedWriteStream.send` calls this *before* forwarding, so raising
+        here is what stops the request reaching the server -- see
+        `gating/tool_calls.py` for why an exception beats injecting a synthetic
+        error response.
+        """
         payload = message.message
 
         if isinstance(payload, mcp_types.JSONRPCRequest) and payload.method == TOOL_CALL_METHOD:
             params = payload.params or {}
             name = params.get("name") if isinstance(params, dict) else None
+            tool_name = str(name) if name is not None else "unknown"
+            correlation_id = uuid.uuid4().hex
+            request_key = _request_key(payload.id)
+
+            verdict = self._judge_tool_call(tool_name, params, correlation_id, request_key)
+            if verdict is not None and verdict.blocked:
+                raise ToolCallBlocked(
+                    tool=f"{self.server}.{tool_name}",
+                    rule=verdict.rule,
+                    reason=verdict.reason,
+                )
+
             self._remember(
-                _request_key(payload.id),
+                request_key,
                 _Pending(
-                    tool_name=str(name) if name is not None else "unknown",
+                    tool_name=tool_name,
                     # A fresh correlation ID per call is what keeps interleaved
                     # calls attributable (PROPOSAL.md section 19).
-                    correlation_id=uuid.uuid4().hex,
+                    correlation_id=correlation_id,
                     started=time.perf_counter(),
                 ),
             )
@@ -223,6 +257,59 @@ class Gate:
             params = payload.params or {}
             if isinstance(params, dict) and "requestId" in params:
                 self._pending.pop(_request_key(params["requestId"]), None)
+
+    def _judge_tool_call(
+        self, tool_name: str, params: Any, correlation_id: str, request_key: str
+    ) -> Any:
+        """Apply the capability policy to one outbound `tools/call`.
+
+        Returns the verdict, or None when the policy names nothing (the shipped
+        default), so an un-opted-in configuration pays nothing and writes no
+        extra rows.
+
+        **The `calibrated: false` ceiling deliberately does NOT apply here.**
+        That ceiling exists because detector *thresholds* are uncalibrated on
+        this surface (FR-11): an ML score of 0.9 means nothing until matched-FPR
+        calibration says what 0.9 buys. A capability rule has no threshold and
+        no false-positive rate to calibrate -- "block `github.delete_repo`" is a
+        string comparison that is either configured or not. Routing it through
+        a ceiling built for uncertain scores would be a category error, and
+        would silently downgrade the one control in this project that does not
+        depend on the detection its own report shows does not work.
+
+        Only non-ALLOW verdicts are logged. Writing a row per allowed call would
+        double the log for no information and put request rows in denominators
+        that mean results.
+        """
+        policy = self.policy.config.tool_calls
+        if not policy.enabled:
+            return None
+
+        started = time.perf_counter()
+        arguments = params.get("arguments") if isinstance(params, dict) else None
+        verdict = evaluate_tool_call(policy, self.server, tool_name, arguments)
+        if verdict.decision is ToolDecision.ALLOW:
+            return verdict
+
+        self.log.append(
+            DecisionRecord(
+                correlation_id=correlation_id,
+                mcp_server_id=self.server,
+                tool_name=tool_name,
+                request_id=request_key,
+                # No content exists yet -- this is a request, not a result.
+                raw_result_hash="",
+                fused_decision=(
+                    Decision.BLOCK if verdict.decision is ToolDecision.BLOCK else Decision.ESCALATE
+                ),
+                latency_ms=(time.perf_counter() - started) * 1000.0,
+                outcome=Outcome.TOOL_CALL,
+                # The rule id and reason, never an argument value: a path or URL
+                # argument can carry exactly the data SEC-3 keeps out of this log.
+                note=f"tool-call policy: {verdict.rule}: {verdict.reason}",
+            )
+        )
+        return verdict
 
     def _remember(self, key: str, pending: _Pending) -> None:
         self._pending[key] = pending

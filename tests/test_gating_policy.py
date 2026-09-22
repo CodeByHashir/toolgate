@@ -239,7 +239,13 @@ def test_shipped_policy_file_loads_uncalibrated() -> None:
     assert config.on_detector_failure == Decision.ESCALATE
 
 
+#: Profiles that differ from the default ONLY in which detectors are scored.
+#: `policy.agent.yaml` is excluded on purpose -- it adds a request-side
+#: capability control, which is a deliberate behaviour change and is covered by
+#: its own assertions below.
 PROFILES = ("policy.guard.yaml", "policy.research.yaml")
+
+ALL_PROFILES = (*PROFILES, "policy.agent.yaml")
 
 
 @pytest.mark.parametrize("profile", PROFILES)
@@ -259,6 +265,30 @@ def test_profiles_differ_from_the_default_only_in_inert_detectors(profile: str) 
     assert other.on_detector_failure == default.on_detector_failure
     assert other.thresholds == default.thresholds
     assert other.max_result_chars == default.max_result_chars
+
+
+def test_the_agent_profile_changes_capability_but_not_detector_roles() -> None:
+    """The one profile that is meant to change behaviour, and only in one way."""
+    default = load_policy_config()
+    agent = load_policy_config(REPO_ROOT / "config" / "policy.agent.yaml")
+
+    # It gates tool calls where the default does not...
+    assert not default.tool_calls.enabled
+    assert agent.tool_calls.enabled
+    assert agent.tool_calls.rules
+
+    # ...and changes nothing about result-side detection.
+    assert agent.injection_detectors == default.injection_detectors
+    assert agent.redaction_detectors == default.redaction_detectors
+    assert agent.inert_detectors == default.inert_detectors
+    assert agent.thresholds == default.thresholds
+    assert agent.calibrated == default.calibrated
+
+
+@pytest.mark.parametrize("profile", ALL_PROFILES)
+def test_no_shipped_profile_is_calibrated(profile: str) -> None:
+    """Block must stay unreachable on the detector path in every profile."""
+    assert load_policy_config(REPO_ROOT / "config" / profile).calibrated is False
 
 
 def test_each_profile_names_the_detectors_it_advertises() -> None:

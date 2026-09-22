@@ -2112,3 +2112,110 @@ run. Timestamps are not a completion signal when a stale file is present.
 | Third-party prose in `load_benign()` | None |
 | Committed chains vs host allowlist | Pass |
 | Corpus after clean rebuild | 12,020 items, single ingest, 0 contaminated |
+
+---
+
+# Capability gating of outbound tool calls (2026-09-22)
+
+The engineering response to this project's own finding. Requested as the first
+step of shaping the repository into a portfolio piece; chosen over the
+"multi-provider gateway" direction because that would have been a thin
+abstraction over commodity SDKs, while this is the one control the measured
+result actually argues for.
+
+## What changed
+
+| File | Change |
+|---|---|
+| `src/llmshield_mcp/gating/tool_calls.py` | New. `ToolCallPolicy`, `ToolRule`, `evaluate_tool_call`, `ToolCallBlocked`, `load_tool_call_policy` |
+| `src/llmshield_mcp/gating/transport.py` | `observe_outbound` now gates as well as observes; new `_judge_tool_call` |
+| `src/llmshield_mcp/gating/audit.py` | New `Outcome.TOOL_CALL` |
+| `src/llmshield_mcp/gating/policy.py` | `PolicyConfig.tool_calls`, parsed from a `tool_calls` block |
+| `config/policy.yaml` | Documented example, deliberately not enabled |
+| `config/policy.agent.yaml` | New working profile scoped to the reference servers |
+| `tests/test_tool_calls.py` | New, 42 tests |
+| `tests/test_gating_transport.py` | 7 new gate-level tests |
+| `tests/test_gating_policy.py` | Agent-profile assertions |
+
+## Why
+
+Every detector here asks "does this text look like an attack?". `docs/REPORT.md`
+measures that at ~20% recall at best on this surface, with a purpose-built
+production classifier indistinguishable from chance. This layer asks "is the
+agent allowed to do this?" instead, which needs no classifier.
+
+**Risk reduced.** Against the behaviour a rule names there is no false-negative
+rate — sandbox escape, exfiltration to a non-allowlisted host, and named
+destructive operations are refused whatever prose talked the model into
+attempting them.
+
+**Remaining risk, stated plainly.** It bounds the blast radius of a successful
+injection to whatever the policy still permits. An attacker who only needs a
+tool the policy allows is unaffected. This narrows what a compromised agent can
+reach; it does not stop the compromise.
+
+## Design decisions worth keeping
+
+**Enforcement is an exception, not an injected frame.** Reading the SDK settled
+it: `mcp/shared/jsonrpc_dispatcher.py` registers its pending waiter before the
+write and pops it in a `finally` on every path, so raising from `send()` cleans
+up correctly and surfaces to `session.call_tool()`. Injecting a synthetic
+JSON-RPC error would have needed a pump task and a shared queue, which
+`plan.md` 2.8 rejected for reasons that still hold.
+
+**The `calibrated: false` ceiling does not apply.** That ceiling exists because
+detector thresholds are uncalibrated here; a capability rule has no threshold
+and no FPR to calibrate. Applying it would silently disable the one control
+that does not depend on the detection this project measured as not working.
+Asserted in `test_capability_block_is_not_downgraded_by_the_calibration_ceiling`.
+
+**Three checks, taken from the corpus.** `action`, `paths`, `egress` — each maps
+to an attacker objective in the BIPIA/InjecAgent payloads. Regex on argument
+*values* was deliberately excluded: it would reintroduce content inspection with
+all of its false positives.
+
+**Off by default.** The default profile defines no rules, so the full existing
+suite passed untouched. `default: block` turns the config into a strict
+allowlist and is one word away.
+
+**No argument values reach the log.** Rule id and tool name only — a path or URL
+argument can carry exactly what SEC-3 keeps out of the store. Two tests assert
+a planted secret never appears in the verdict or the audit row.
+
+## A bypass caught before it shipped
+
+The first `_path_allowed` matched both the normalised path and the raw string.
+`fnmatch`'s `*` matches `/`, so `workspace/../../.ssh/id_rsa` matched
+`workspace/**` verbatim — the sandbox escape was allowed through, in the
+function whose only purpose is to stop it. A five-line smoke test over seven
+paths caught it before any wiring existed.
+
+Fixed by matching only the normalised path, and `_normalise_path` now also
+reports when a `..` climbed above its own root (`../../etc/passwd` would
+otherwise normalise to `etc/passwd` and could match a permissive glob). Both
+pinned as regressions.
+
+The general lesson, recorded because it will recur: this layer's claim is "no
+false negatives against the named behaviour", and that claim is worth exactly
+as much as its matcher. The adversarial test cases belong in the matcher, not
+in the policy vocabulary.
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `uv run pytest -m "not models"` | **431 passed**, 24 deselected (was 378) |
+| `uv run ruff check src tests` | All checks passed |
+| `uv run ruff format --check src tests` | 69 files already formatted |
+| `uv run mypy` | Success, 34 source files |
+| Existing suite before any config opt-in | Passed untouched — the layer is inert by default |
+| End-to-end through real `Gate`s | Sandbox escape, exfiltration and destructive call all BLOCKED; legitimate read and fetch ALLOWED; 3 audit rows, none carrying an argument value |
+
+## Not done
+
+No measurement of this layer against the corpus. Recall against a capability
+rule is 100% by construction, so the interesting number is the **false-positive**
+one: how often a legitimate agent workflow trips a reasonable policy. That needs
+realistic multi-step agent traces; this project has one (`chains/baseline.json`)
+and one is not a benchmark. Until that exists the README claims the guarantee in
+terms of what the mechanism does, and claims no FPR.

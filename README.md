@@ -70,6 +70,57 @@ out of five real attacks. See [`docs/REPORT.md`](docs/REPORT.md) section 5. See
 [`docs/REPORT.md`](docs/REPORT.md) for the full evidence, figures and what
 this does *not* claim.
 
+## What to do about it: gate the capability, not the content
+
+Every detector above asks *"does this text look like an attack?"* — and this
+project measured that question as unanswerable on this surface. So the control
+moved to a different question: **"is the agent allowed to do this?"**
+
+```yaml
+# config/policy.agent.yaml
+tool_calls:
+  rules:
+    filesystem.read_text_file:
+      paths: ["sandbox/**"]        # sandbox escape
+    fetch.fetch:
+      egress: ["example.com"]      # exfiltration
+    github.delete_repo:
+      action: block                # destructive
+```
+
+```
+scenario          tool                        verdict   rule
+------------------------------------------------------------------------------
+legit read        filesystem.read_text_file   ALLOW
+sandbox escape    filesystem.read_text_file   BLOCKED   ...read_text_file.paths
+legit fetch       fetch.fetch                 ALLOW
+exfiltration      fetch.fetch                 BLOCKED   fetch.fetch.egress
+destructive       github.delete_repo          BLOCKED   github.delete_repo.action
+```
+
+The three checks are not invented — each maps to an attacker objective that
+appears throughout the BIPIA and InjecAgent payloads this project ingests:
+sandbox escape, exfiltration to an attacker-controlled host, and destructive
+operations.
+
+**Why this works when detection does not.** You do not have to recognise the
+injection that talked an agent into reading `~/.ssh/id_rsa` in order to notice
+that the agent is reading outside its sandbox. Recognising the persuasion is
+unsolved semantics — that is the finding above. Recognising the capability is a
+string comparison. Against the behaviour a rule names there is **no
+false-negative rate**, through any injection technique, in any language, at any
+dilution, because nothing is being classified.
+
+**What it does not do.** It bounds the blast radius of a successful injection
+to whatever the policy still permits. An attacker who only needs a tool the
+policy allows is unaffected. This narrows what a compromised agent can reach;
+it does not stop the compromise. Blocking is enforced by raising at the
+transport boundary, so the request never reaches the server.
+
+Capability gating ships **off** in the default profile — adding it changed
+nothing for anyone who has not opted in. `config/policy.agent.yaml` is a
+working example scoped to the reference servers.
+
 ## Why this might be interesting
 
 The reused V3 transformer has a **512-token window**. User prompts fit inside
@@ -208,14 +259,19 @@ decision log to SQLite; without it the log is in-memory and discarded, but the
 gate still runs. `--no-gate` disables interception entirely and prints a warning
 saying so, because `--out` then records raw, unredacted tool output to disk.
 
-Three policy profiles ship. **The choice cannot change any decision** —
-`PolicyEngine.decide()` never reads a detector that appears only under `inert`,
-so a profile changes what is scored, logged and paid for, never the
+Four policy profiles ship. The three *detector* profiles **cannot change any
+decision** — `PolicyEngine.decide()` never reads a detector that appears only
+under `inert`, so they change what is scored, logged and paid for, never the
 Allow/Redact/Block/Escalate outcome. A test asserts this.
+
+`policy.agent.yaml` is the exception, and deliberately so: it adds a
+*request-side* capability control, which is the one thing here that is meant to
+change what happens. Its detector roles are still identical to the default.
 
 | Profile | Adds | Cost / result | Runnable after a plain clone? |
 |---|---|---|---|
 | `config/policy.yaml` (default) | — rules + PII | 0.08 ms | Yes |
+| `config/policy.agent.yaml` | capability gating of tool calls | 0.08 ms | **Yes** |
 | `config/policy.guard.yaml` | `guard` | 170 ms | **Yes** (downloads ~700 MB once) |
 | `config/policy.research.yaml` | `v0`, `v3`, `guard` | 345 ms | No — needs the unpublishable weights |
 

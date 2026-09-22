@@ -4,7 +4,7 @@ Companion to `prd.md` (what to build) and `whats_has_been_done.md` (what is
 built). This file holds the plan, the architecture decisions and their
 rationale, remaining work, and known risks.
 
-**Current position: M0-M10 complete; M12 built, measured and removed (2.25). A post-audit hardening pass has since verified the headline finding against falsification, closed a redaction leak, pinned the evaluation corpus, split the policy into light/research profiles, decoupled gating from logging, and restated the FPR and Escalate claims to match their evidence, added a third publishable classifier (2.26), and resolved the licensing exposure by removal rather than attribution (2.27). `docs/REPORT.md` + three committed SVG figures + a rewritten README state the headline findings in plain English. M11 (optional standalone proxy) not started. `config/policy.yaml` still ships uncalibrated by deliberate choice -- see 2.20.**
+**Current position: M0-M10 complete; M12 built, measured and removed (2.25). A post-audit hardening pass has since verified the headline finding against falsification, closed a redaction leak, pinned the evaluation corpus, split the policy into light/research profiles, decoupled gating from logging, and restated the FPR and Escalate claims to match their evidence, added a third publishable classifier (2.26), resolved the licensing exposure by removal rather than attribution (2.27), and added capability gating of outbound tool calls -- the control that survives the negative result (2.28). `docs/REPORT.md` + three committed SVG figures + a rewritten README state the headline findings in plain English. M11 (optional standalone proxy) not started. `config/policy.yaml` still ships uncalibrated by deliberate choice -- see 2.20.**
 
 ---
 
@@ -1035,6 +1035,100 @@ target corrected and the reasoning written into the test.
 output, so the corpus and every statistic derived from it were rebuilt from
 scratch rather than left stale against changed inputs. `results/gauge/` is
 re-committed from that clean run.
+
+### 2.28 Capability gating: the control that survives the negative result
+
+Every detector this project ships asks the same question -- *does this text look
+like an attack?* -- and `docs/REPORT.md` measures the answer on the MCP
+tool-result surface as: not usefully. ~20% recall at best, the reused
+transformer not separating at all, and a purpose-built production classifier
+statistically indistinguishable from chance. Four attacks in five get through.
+
+A detection layer with that measurement has an uncomfortable property: its own
+evidence argues against relying on it. `gating/tool_calls.py` is the engineering
+response, and it asks a different question -- **is the agent allowed to do
+this?**
+
+**Why that question is answerable when the other is not.** You do not have to
+recognise the injection that talked an agent into reading `~/.ssh/id_rsa` in
+order to notice that the agent is reading outside its sandbox. Recognising the
+persuasion is unsolved semantics; recognising the capability is a string
+comparison. Against the behaviour a rule names there is no false-negative rate,
+through any injection technique, in any language, at any dilution -- not because
+the classifier is good but because there is no classifier.
+
+Stated as precisely as the rest of this project states things: it bounds the
+blast radius of a successful injection to whatever the policy still permits. An
+attacker who only needs a tool the policy allows is unaffected. This narrows
+what a compromised agent can reach; it does not stop the compromise.
+
+**Three checks, taken from the corpus rather than invented.** Each maps to an
+attacker objective that actually appears in the BIPIA and InjecAgent payloads
+already ingested: `action` (destructive operations), `paths` (sandbox escape),
+`egress` (exfiltration to an attacker-controlled host). Deliberately excluded:
+regex on argument *values*, which would reintroduce content inspection through
+the back door with all of its false positives, and would forfeit the one
+property that makes this layer worth having.
+
+**Enforcement is an exception, not an injected frame.** `observe_outbound`
+raises `ToolCallBlocked`, and `_ObservedWriteStream.send` calls it before
+forwarding, so the request never reaches the server. The alternative --
+fabricating a JSON-RPC error and pushing it back through the read stream --
+would have needed a pump task and a shared queue, which 2.8 rejected for
+reasons that still hold. Reading the SDK settled it: the dispatcher registers
+its pending waiter before the write and pops it in a `finally` on *every* path
+(`mcp/shared/jsonrpc_dispatcher.py`), so an exception from `send()` cleans up
+correctly and surfaces to whoever called `session.call_tool()`. It also reads
+more honestly -- the call did not fail, it was refused.
+
+**The `calibrated: false` ceiling deliberately does not apply here.** That
+ceiling exists because detector *thresholds* are uncalibrated on this surface
+(FR-11): an ML score of 0.9 means nothing until matched-FPR calibration says
+what 0.9 buys. A capability rule has no threshold and no false-positive rate to
+calibrate. Routing "block `github.delete_repo`" through a ceiling built for
+uncertain scores would be a category error, and would silently downgrade the one
+control in this project that does not depend on the detection its own report
+shows does not work. Asserted in
+`test_capability_block_is_not_downgraded_by_the_calibration_ceiling`.
+
+**Defaults.** `default: allow` ships and the default profile defines no rules at
+all, so adding this layer changed nothing for anyone who has not opted in -- the
+full existing suite passed untouched. `default: block` turns the same config
+into a strict allowlist and is one word away. That follows 2.25's lesson rather
+than contradicting it: a safe default that is disruptive is a default people
+switch off. `config/policy.agent.yaml` is a working example scoped to the
+reference servers and the synthetic sandbox, so the demonstration runs as
+shipped.
+
+**A bypass caught before it shipped.** The first `_path_allowed` matched both
+the normalised path *and* the raw string. `fnmatch`'s `*` matches `/`, so
+`workspace/../../.ssh/id_rsa` matched `workspace/**` verbatim and the sandbox
+escape was allowed through -- in the function whose entire purpose is to stop
+it. A five-line smoke test over seven paths caught it before any of this was
+wired up. Only the normalised path is matched now, and `_normalise_path`
+additionally reports when a `..` climbed above its own root, because
+`../../etc/passwd` would otherwise normalise to `etc/passwd` and could then
+match a permissive glob. Both cases are pinned in `tests/test_tool_calls.py`.
+
+Worth recording as a pattern rather than an anecdote: this layer's claim is
+"no false negatives against the named behaviour", and that claim is only worth
+as much as its matcher. The matcher is where the bugs live, so that is where the
+adversarial test cases belong -- not in the policy vocabulary.
+
+**What the audit log gets.** The rule id and the tool name, never an argument
+value. A path or URL argument can carry exactly the sensitive data SEC-3 keeps
+out of this store, so a blocked call records *that* it was blocked and *which
+rule* fired. A new `Outcome.TOOL_CALL` keeps request-side rows out of
+denominators that mean results -- they are a different experiment. Only
+non-ALLOW verdicts are written, so an allowed call costs no row.
+
+**Not done, and deliberately.** No measurement of this layer against the corpus
+yet. Recall against a capability rule is 100% by construction, which makes the
+interesting number the *false-positive* one: how often a legitimate agent
+workflow trips a reasonable policy. That needs realistic multi-step agent
+traces, which this project has one of (`chains/baseline.json`), and one is not a
+benchmark. Until that exists, the README claims the guarantee in terms of what
+the mechanism does and does not claim an FPR.
 
 ## 4. Open Questions
 

@@ -42,6 +42,7 @@ import yaml
 from llmshield_mcp.config import REPO_ROOT
 from llmshield_mcp.detectors.base import DetectorResult, Span
 from llmshield_mcp.gating.audit import Decision, Outcome
+from llmshield_mcp.gating.tool_calls import ToolCallPolicy, load_tool_call_policy
 
 DEFAULT_POLICY_PATH = REPO_ROOT / "config" / "policy.yaml"
 
@@ -61,6 +62,9 @@ class PolicyConfig:
     #: detector key -> action name -> threshold in [0, 1].
     thresholds: dict[str, dict[str, float]]
     max_result_chars: int
+    #: Capability rules for outbound `tools/call` requests. Empty and inert
+    #: unless a policy file defines a `tool_calls` block.
+    tool_calls: ToolCallPolicy = ToolCallPolicy()
 
     def threshold(self, detector_key: str, action: str, default: float = 1.0) -> float:
         return self.thresholds.get(detector_key, {}).get(action, default)
@@ -146,6 +150,7 @@ def load_policy_config(path: Path | None = None) -> PolicyConfig:
         inert_detectors=frozenset(detectors_raw.get("inert") or ()),
         thresholds=thresholds,
         max_result_chars=max_result_chars,
+        tool_calls=load_tool_call_policy(raw.get("tool_calls")),
     )
 
 
