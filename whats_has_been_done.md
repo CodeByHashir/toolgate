@@ -3111,3 +3111,32 @@ column is quoted). Status line updated to 625 tests.
 - The baseline column is quoted from the paper, not reproduced.
 - The paper's T6 shadows host built-ins, which toolgate cannot see; the
   `shadowed` verdict answers only the narrower MCP-versus-MCP question.
+
+---
+
+## Pre-publication audit
+
+Run before pushing the declaration-integrity work, because the repository is
+about to be made public and making it public exposes the **entire history**, not
+just the latest commit.
+
+| Check | Scope | Result |
+|---|---|---|
+| Secret patterns (Anthropic, OpenAI, AWS, GitHub, Slack, Hugging Face, Google keys; PEM private keys) | every added line in all 27 commits | none |
+| Key-like assignments with a literal value | every added line in all 27 commits | one hit, `tests/test_tool_calls.py`: a deliberately fake token on an `evil.test` URL, which the test uses to prove secrets stay out of the audit log |
+| Sensitive files ever added (`.env`, keys, model weights, `.sqlite`, corpus exports, fetched corpora) | every commit | none |
+| Churn snapshot content | `results/declarations/` | digests, tool names and metrics only |
+| Largest tracked blob | HEAD | 596 KB (`results/gauge/scores.csv`) |
+
+Two items that are **not** secrets but will become public with the history, and
+are the owner's call rather than something to change in passing:
+
+- Commit metadata carries the author's personal email on 26 of 27 commits.
+  Changing it means rewriting history and force-pushing, which is best done
+  before the repository is public or not at all.
+- Four historical lines in `plan.md` and this file name a local Windows path
+  including the machine username. Low sensitivity; removing them from HEAD would
+  not remove them from history.
+
+Also corrected: `code_summary.md` labelled `CLAUDE.md` and `architecture_1.png`
+as untracked. Both are tracked.

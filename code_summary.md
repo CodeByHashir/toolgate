@@ -29,12 +29,12 @@ not generalise across source families.
 ```
 D:\LLMSHIELD-MCP\
 ├── PROPOSAL.md                  MVP technical proposal (requirements source)
-├── CLAUDE.md                    engineering rules for AI agents (untracked)
+├── CLAUDE.md                    engineering rules for AI agents
 ├── prd.md                       requirements + amendments
 ├── plan.md                      milestones, architecture decisions, risks
 ├── whats_has_been_done.md       running implementation history
 ├── code_summary.md              this file
-├── architecture_1.png           component/data-flow figure (untracked)
+├── architecture_1.png           component/data-flow figure
 ├── pyproject.toml               package metadata, exact pins, tool config
 ├── uv.lock                      full transitive lock (111 packages)
 ├── config/
