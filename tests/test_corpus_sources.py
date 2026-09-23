@@ -1,7 +1,7 @@
 """Tests for the corpus source loaders that don't need the network (M6).
 
 `fetch()`/`load_adversarial()` need BIPIA/InjecAgent cached under
-`corpus/external/` (fetched by `scripts/benchmark_rules.py` or `mcp-shield
+`corpus/external/` (fetched by `scripts/benchmark_rules.py` or `toolgate
 corpus-ingest`), so they are exercised by actually running those, not by a
 network-dependent unit test here -- matching how this project has never unit
 tested `agent.run_agent`'s real network path either.

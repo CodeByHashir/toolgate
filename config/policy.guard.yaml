@@ -1,6 +1,6 @@
 # Guard profile: the default policy plus `guard` under `detectors.inert`.
 #
-#     uv run mcp-shield run-agent --policy config/policy.guard.yaml --db logs/d.sqlite
+#     uv run toolgate run-agent --policy config/policy.guard.yaml --db logs/d.sqlite
 #
 # **This is the ML profile anyone can actually run.** V0 and V3 are reused
 # dissertation artifacts whose weights are not publishable (prd.md A1), so

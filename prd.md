@@ -220,7 +220,7 @@ client-side wrapper as an open question. Resolved — see `plan.md` section 2.1.
 
 9.2 added a requirement: "the harmonised `not_benign` mode must additionally be
 reported for both detectors so the comparison is fair." **That requirement went
-unsatisfied for the whole project until `mcp-shield gauge-recut` was built**
+unsatisfied for the whole project until `toolgate gauge-recut` was built**
 (`plan.md` 2.26). `scores.csv` had carried the four class probabilities since
 M7 specifically so the harmonised cut could be derived, but nothing ever read
 them back, so every published AUROC used each detector's dissertation default

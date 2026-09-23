@@ -1,6 +1,6 @@
 """Generate the M10 report figures from a completed GAUGE run (AC-7, [18]).
 
-Reads `results/gauge/calibration_report.json` (produced by `mcp-shield
+Reads `results/gauge/calibration_report.json` (produced by `toolgate
 gauge-run`, gitignored -- the raw calibration data is regenerable and its
 sampling varies run to run, per plan.md 2.20/2.22) and writes plain SVG bar
 charts to `docs/figures/` (committed: these are the curated, reported
@@ -254,7 +254,7 @@ def figure_auroc_by_reference(report: dict) -> str:
 def main() -> int:
     if not CALIBRATION_REPORT.exists():
         raise SystemExit(
-            f"{CALIBRATION_REPORT} not found -- run `mcp-shield gauge-run` first "
+            f"{CALIBRATION_REPORT} not found -- run `toolgate gauge-run` first "
             "(needs the real weights and an ingested corpus)."
         )
     report = json.loads(CALIBRATION_REPORT.read_text(encoding="utf-8"))

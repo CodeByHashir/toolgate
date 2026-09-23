@@ -30,7 +30,7 @@ NON_TEXT_BLOCK_TYPES = frozenset({"image", "audio", "resource_link"})
 #: whole point is that nothing from the original result survives.
 BLOCK_MESSAGE = (
     "[BLOCKED: potential prompt injection detected in this tool result -- "
-    "content withheld by LLMShield-MCP]"
+    "content withheld by toolgate]"
 )
 
 

@@ -16,7 +16,7 @@ history. Append new entries at the end.
   version pins for every dependency (NFR-8). `scikit-learn==1.9.0` and
   `transformers==5.12.1` pinned specifically to match the serialisation
   versions of the reused V0/V3 artifacts (see `docs/PINNING.md`). CLI entry
-  point `mcp-shield = "llmshield_mcp.cli:main"`. `pytest` marker `models`
+  point `toolgate = "llmshield_mcp.cli:main"`. `pytest` marker `models`
   registered for tests that need the (unpublishable) reused weights.
 - `src/llmshield_mcp/config.py` — `load_models_config()`, `V0Config`/
   `V3Config`/`ModelsConfig` frozen dataclasses, `DETECTOR_CLASSES =
@@ -35,7 +35,7 @@ history. Append new entries at the end.
   loads `DebertaV2ForSequenceClassification` on CPU. `_score()` uses the
   tokenizer's native `return_overflowing_tokens` sliding window (`truncate`
   vs `chunk_max` strategy, `chunk_stride`, `max_chunks` cap, `batch_size`).
-- `src/llmshield_mcp/cli.py` — `mcp-shield verify-models`: loads V0/V3,
+- `src/llmshield_mcp/cli.py` — `toolgate verify-models`: loads V0/V3,
   scores four probe texts plus one long-content probe, prints per-class
   scores and latency.
 - `tests/test_config.py`, `tests/test_detector_base.py`,
@@ -46,7 +46,7 @@ history. Append new entries at the end.
   score-mode asymmetry, latency), explicitly labelled as not results.
 - `README.md`, `LICENSE`, `.github/workflows/ci.yml`.
 
-**Verification performed:** `uv run mcp-shield verify-models` — both
+**Verification performed:** `uv run toolgate verify-models` — both
 detectors load on CPU and score all probes; `uv run pytest` — full suite
 green. Re-verified in this session on 2026-09-04: `29 passed` (all tests
 including the `models`-marked ones, since the local weights path resolved).
@@ -161,7 +161,7 @@ conversion.
 | `uv run ruff format --check src tests` | Clean |
 | `uv run mypy` | Success, 12 source files |
 | `uv run pytest` | **56 passed** |
-| `uv run mcp-shield run-agent --servers filesystem,fetch` | Exit 0 |
+| `uv run toolgate run-agent --servers filesystem,fetch` | Exit 0 |
 
 The end-to-end run connected both servers (filesystem: 14 tools; fetch: 1),
 made **7 tool calls** — `list_allowed_directories`, `fetch` of
@@ -248,7 +248,7 @@ is now a drive-letter regex with a lookbehind excluding URL schemes.
 `models/` is gitignored; locally it is a directory junction to the LLMShield
 artifacts.
 
-**Verified:** `mcp-shield verify-models --detector v0` loads from
+**Verified:** `toolgate verify-models --detector v0` loads from
 `D:\LLMSHIELD-MCP\models0_tfidf_lr.joblib` and produces scores identical to
 before the change (0.8793 / 0.9400 / 0.9922 / 0.5718), confirming the same
 artifact through the new path.
@@ -299,8 +299,8 @@ non-determinism and is why the fixture is committed rather than regenerated.
 | `uv run ruff format --check src tests` | 19 files already formatted |
 | `uv run mypy` | Success, 12 source files |
 | `uv run pytest` | **69 passed** |
-| `uv run mcp-shield verify-models --detector v0` | OK, scores unchanged |
-| `uv run mcp-shield run-agent` | Exit 0, 9 calls, usage reported |
+| `uv run toolgate verify-models --detector v0` | OK, scores unchanged |
+| `uv run toolgate run-agent` | Exit 0, 9 calls, usage reported |
 | GitHub Actions | run 33896832340 **success** |
 
 ### Known limitations
@@ -925,7 +925,7 @@ drop-count report needs dropped items still queryable.
 | `uv run ruff check src tests scripts` | All checks passed |
 | `uv run ruff format --check src tests scripts` | Clean |
 | `uv run mypy` | Success, 24 source files |
-| `mcp-shield corpus-ingest` against the real `train.jsonl` | 187 adversarial + 6,617 benign lines ingested, **0 contaminated** (expected -- M3b already established BIPIA/InjecAgent share no lineage with V0/V3's training sources) |
+| `toolgate corpus-ingest` against the real `train.jsonl` | 187 adversarial + 6,617 benign lines ingested, **0 contaminated** (expected -- M3b already established BIPIA/InjecAgent share no lineage with V0/V3's training sources) |
 
 ### Known limitations
 
@@ -1057,7 +1057,7 @@ large enough. A real fix is a larger corpus (M6's scope), not a change to M7.
 | `uv run ruff check src tests scripts` | All checks passed |
 | `uv run ruff format --check src tests scripts` | Clean |
 | `uv run mypy` | Success, 29 source files |
-| `mcp-shield corpus-ingest` + `mcp-shield gauge-run` against real weights | Full run completed, real numbers above, `config/policy.yaml` untouched |
+| `toolgate corpus-ingest` + `toolgate gauge-run` against real weights | Full run completed, real numbers above, `config/policy.yaml` untouched |
 
 ### Known limitations
 
@@ -1119,7 +1119,7 @@ already use, with no new dependency.
 | `uv run pytest -m "not models"` | **276 passed**, 16 deselected (6 new) |
 | `uv run ruff check` / `mypy` | Clean, 29 source files |
 | Live fetch against the real `datasets-server` API | 150 unique items after de-duplication, spanning scenarios `level1a`-`level3f` |
-| `mcp-shield corpus-ingest` against the real training-data reference corpus | 125 + 62 + 150 = 337 adversarial items ingested, **0 contaminated** across all three families |
+| `toolgate corpus-ingest` against the real training-data reference corpus | 125 + 62 + 150 = 337 adversarial items ingested, **0 contaminated** across all three families |
 
 ### Known limitations
 
@@ -1180,7 +1180,7 @@ would have significantly overstated how consistently V0 fails to detect
 real attacks. V3 is more uniform at the same budget (92.8%/96.8%/94.7%
 across the three) but uniformly close to useless either way -- a different
 failure shape, not a better one. Full numbers: `results/gauge/` (gitignored;
-regenerate with `mcp-shield gauge-run`).
+regenerate with `toolgate gauge-run`).
 
 ### Verification
 
@@ -1189,7 +1189,7 @@ regenerate with `mcp-shield gauge-run`).
 | `uv run pytest -m "not models"` | **278 passed**, 17 deselected (2 new) |
 | `LLMSHIELD_MODELS_ROOT=... uv run pytest -m models` | **17 passed** (1 new) |
 | `uv run ruff check` / `mypy` | Clean, 29 source files |
-| `mcp-shield gauge-run` against the real 337-item, 3-family corpus | Full run completed, table above, `config/policy.yaml` untouched |
+| `toolgate gauge-run` against the real 337-item, 3-family corpus | Full run completed, table above, `config/policy.yaml` untouched |
 
 ### Known limitations
 
@@ -1224,7 +1224,7 @@ calibration reports gitignored.
 - `chains/latency_chain.json` -- a new, committed, host-path-normalised chain
   fixture: 25 real tool calls (>= 20, FR-14) through the live fused gate
   (rules + PII + V0 + V3, real weights), recorded with
-  `mcp-shield run-agent --db chains/latency_run.sqlite`. The SQLite decision
+  `toolgate run-agent --db chains/latency_run.sqlite`. The SQLite decision
   log is not committed, matching every other `*.sqlite` in this project.
 - `docs/LATENCY-BENCHMARK.md` -- the committed report: per-detector table,
   fused-pipeline number, and the chain's gate-overhead breakdown
@@ -1290,7 +1290,7 @@ live content, not a synthetic probe.
 | `LLMSHIELD_MODELS_ROOT=... uv run pytest -m models` | **18 passed** (1 new) |
 | `uv run ruff check` / `mypy` | Clean, 30 source files |
 | `scripts/benchmark_latency.py` against the real corpus and weights | Numbers in `docs/LATENCY-BENCHMARK.md` |
-| `mcp-shield run-agent` recording a real 25-call chain through the live gate | `chains/latency_chain.json` committed; gate-overhead numbers in the same report |
+| `toolgate run-agent` recording a real 25-call chain through the live gate | `chains/latency_chain.json` committed; gate-overhead numbers in the same report |
 
 ### Known limitations
 
@@ -1495,7 +1495,7 @@ gating, secret detection, dashboard, and any rename.
 ## 1. Verified the headline finding against falsification
 
 **What changed.** Added `src/llmshield_mcp/gauge/recut.py` (`load_rows`,
-`recut`, `to_report`, `format_table`) and the `mcp-shield gauge-recut`
+`recut`, `to_report`, `format_table`) and the `toolgate gauge-recut`
 subcommand in `src/llmshield_mcp/cli.py` (`gauge_recut()`). It recomputes DeLong
 AUROC from a saved `results/gauge/scores.csv` under every score mode, using the
 four class probabilities already stored there. Needs no model weights and no
@@ -1521,9 +1521,9 @@ verification below is a re-measurement, not a re-analysis of that exact run.
 machinery and a constructed case where a score mode moves a detector across
 chance. Run against the **real reused weights**:
 
-- `mcp-shield verify-models`: known-injection probe scores P(injection) =
+- `toolgate verify-models`: known-injection probe scores P(injection) =
   **0.998**, plain benign sentence **0.023**. Polarity is correct.
-- `mcp-shield gauge-recut` on a real 487-row `scores.csv` (187 BIPIA+InjecAgent
+- `toolgate gauge-recut` on a real 487-row `scores.csv` (187 BIPIA+InjecAgent
   payloads, 150 benign per reference):
 
   | Reference | `injection` | `not_benign` | `jailbreak` | `harmful` | `benign` |
@@ -1614,7 +1614,7 @@ is reintroduced.
 
 **What changed.** `config/policy.yaml` now lists only `rules_inj` under
 `detectors.inert`; new `config/policy.research.yaml` adds `v0` and `v3`. New
-`--policy` flag on `mcp-shield run-agent`.
+`--policy` flag on `toolgate run-agent`.
 
 **Why.** `build_detectors` constructs every key any role names, including
 `inert`, so the shipped default imported torch and ran DeBERTa-v3-base on every
@@ -1755,8 +1755,8 @@ reports no issues in 32 source files.
 | `uv run ruff check src tests` | All checks passed |
 | `uv run ruff format --check src tests` | 62 files already formatted |
 | `uv run mypy` | Success, no issues in 32 source files |
-| `mcp-shield verify-models` (real weights) | OK; V3 polarity confirmed |
-| `mcp-shield gauge-recut` (real 487-row scores.csv) | Ran; score-mode confound rejected |
+| `toolgate verify-models` (real weights) | OK; V3 polarity confirmed |
+| `toolgate gauge-recut` (real 487-row scores.csv) | Ran; score-mode confound rejected |
 | `verify_cache()` against real corpus cache | 4/4 files match recorded digests |
 | `load_adversarial()` | 187 cases, matching the published count |
 | Cross-block PII leak | Reproduced before the fix, gone after |
@@ -1791,7 +1791,7 @@ The Hugging Face cache for the new model lives under `HF_HOME`
 
 ## 1. Corpus rebuilt and decontaminated
 
-`mcp-shield corpus-ingest` against the real 19k-row training corpus:
+`toolgate corpus-ingest` against the real 19k-row training corpus:
 
 | Source | Items | Contaminated |
 |---|---|---|
@@ -1916,7 +1916,7 @@ Tracked: `scores.csv` (5,400 rows, 606 KB), `calibration_report.json` (609 KB),
 
 This closes the gap the previous pass flagged: the `scores.csv` behind the
 originally published AUROC had been discarded, making the headline
-unreproducible by its own author. `mcp-shield gauge-recut` now recomputes every
+unreproducible by its own author. `toolgate gauge-recut` now recomputes every
 statistic in report section 4 from that one committed file, with no weights and
 no corpus.
 
@@ -2002,7 +2002,7 @@ changes.
 
 **What changed.** New `tests/test_chain_licensing.py` (4 tests).
 
-**Why.** Not carelessness — structure. `mcp-shield run-agent --out` records
+**Why.** Not carelessness — structure. `toolgate run-agent --out` records
 every tool result verbatim (that is its job), and `corpus/sources.py:
 load_benign()` globs `chains/*.json`, so fetched web content reached both the
 committed fixture *and* the benign corpus and its JSONL export. Two licensing
@@ -2219,3 +2219,88 @@ one: how often a legitimate agent workflow trips a reasonable policy. That needs
 realistic multi-step agent traces; this project has one (`chains/baseline.json`)
 and one is not a benchmark. Until that exists the README claims the guarantee in
 terms of what the mechanism does, and claims no FPR.
+
+---
+
+# Renamed to `toolgate`, and the README reframed (2026-09-23)
+
+Positioning change, requested for a portfolio context. No behaviour changed.
+
+## Why the old name had to go
+
+"LLMShield-MCP" promises a shield. This project's own evidence says its best
+detector catches roughly one attack in five, and that a purpose-built
+production classifier is statistically indistinguishable from chance on this
+surface. A name that promises armour is in direct tension with the repository's
+headline result, and the honesty of that result is the most valuable thing here.
+
+`toolgate` describes what the project actually does now that capability gating
+exists: it gates tool calls. A gate is a control, not armour.
+
+## Scope: visible names only
+
+| Renamed | Left alone |
+|---|---|
+| GitHub repository → `CodeByHashir/toolgate` | Python import package `llmshield_mcp` |
+| Distribution name in `pyproject.toml` → `toolgate` | |
+| CLI command `mcp-shield` → `toolgate` (67 occurrences, 23 files) | |
+| README title, `docs/REPORT.md` title, `SECURITY.md`, block message | |
+
+Renaming the import package would touch every import for no user-visible gain;
+the distribution and CLI names are what anyone actually types. `__init__.py`
+records that split so it does not read as an oversight.
+
+## README reframed
+
+Rewritten from "a guardrail and evaluation layer" to what the repository is:
+**measurement first, and the control that follows from it.** The header now
+states both halves — that detection was measured not to work, and that
+capability gating is the response — rather than leading with the guardrail
+framing.
+
+**Dissertation references were neutralised, not deleted.** Five in the README.
+The distinction that mattered: the *framing* ("the dissertation this work
+extends", "with the same rigour as the dissertation") is positioning and went;
+the *provenance* is a material fact about reproducibility and stayed, rephrased
+neutrally:
+
+- "reused from prior work by the same author and are **not retrained**" — this
+  is why a reader cannot reproduce the V0/V3 numbers, and deleting it would
+  make the repository less honest, not more professional.
+- "the 19 rules carried over unmodified from the user-prompt surface" — explains
+  why they score 0/187.
+- "the `injection` cut V3 was originally scored with" — provenance of a quirk
+  that `gauge-recut` later corrected.
+
+Other documents (`plan.md`, `prd.md`, `PROPOSAL.md`, module docstrings) keep
+their references: they are internal engineering records, not the shop window,
+and rewriting a historical record to match current positioning is the habit
+this project spent the whole audit avoiding.
+
+## Stale status line corrected
+
+The README claimed "milestones 0-10 of 11 done", which had been wrong since M12
+was built and reverted, and said nothing about capability gating (which is not
+in the milestone table at all). Replaced with a plain statement of what exists,
+the test count, and the two things that are not done.
+
+## A question answered while here
+
+Whether milestones M13-M18 existed anywhere. They do not: no commit on any
+branch, no row in the milestone table, no mention in any document. The plan
+tops out at M12, M11 (an optional stdio proxy) is the only "Not started", and
+the thesis repository uses Phase/ADR numbering rather than M-numbers. Recorded
+because the question will recur.
+
+## Verification
+
+| Check | Result |
+|---|---|
+| `uv run pytest -m "not models"` | 431 passed, 24 deselected |
+| `uv run ruff check src tests` | All checks passed |
+| `uv run ruff format --check src tests` | 69 files already formatted |
+| `uv run mypy` | Success, 34 source files |
+| `uv run toolgate --version` | `toolgate 0.1.0` |
+| `uv run toolgate --help` | All five subcommands present |
+| Leftover `mcp-shield` strings | None |
+| Leftover "dissertation"/"thesis" in README | None |

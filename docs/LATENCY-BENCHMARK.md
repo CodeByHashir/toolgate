@@ -59,7 +59,7 @@ free -- matter more than the exact milliseconds.)*
 
 ## 2. Gate overhead across a real chain (FR-14)
 
-Recorded with `mcp-shield run-agent --db chains/latency_run.sqlite --out
+Recorded with `toolgate run-agent --db chains/latency_run.sqlite --out
 chains/latency_chain.json --model claude-haiku-4-5`, task: fetch 16 distinct
 real URLs one at a time, then list and read the 4 sandbox files individually.
 **25 tool calls** (>= 20, FR-14), all gated live by the fused pipeline as
@@ -107,13 +107,13 @@ on live content, not a synthetic probe.
 ```
 uv run python scripts/benchmark_latency.py
 
-mcp-shield run-agent --task "..." --model claude-haiku-4-5 \
+toolgate run-agent --task "..." --model claude-haiku-4-5 \
   --db chains/latency_run.sqlite --out chains/latency_chain.json
 ```
 
 Both need the real reused weights (`config/models.yaml` /
 `LLMSHIELD_MODELS_ROOT`) and, for the first, a corpus already produced by
-`mcp-shield corpus-ingest`. Exact figures will vary run to run (model
+`toolgate corpus-ingest`. Exact figures will vary run to run (model
 non-determinism in which URLs/files get how many tool calls, CPU load,
 network conditions for the live fetches); the shape -- rules/PII/V0 trivial,
 V3 dominant and length-dependent, chunked scoring pushing gate latency past

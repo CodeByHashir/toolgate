@@ -61,7 +61,7 @@ class TestScoring:
     def test_direct_injection_scores_above_plain_benign(self, guard: GuardDetector) -> None:
         """A minimal sanity check, not an evaluation.
 
-        The real numbers come from `mcp-shield gauge-run`, which scores this
+        The real numbers come from `toolgate gauge-run`, which scores this
         detector on the decontaminated corpus through the same matched-FPR
         protocol as V0/V3. Draw no conclusions from two strings.
         """

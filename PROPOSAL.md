@@ -322,7 +322,7 @@ Every gating decision logged in structured form (Section 12) without retaining r
 
 # 24. Deployment Requirements
 
-- Pip-installable Python package with CLI entry points (e.g., `mcp-shield run`, `mcp-shield evaluate`, `mcp-shield report`).
+- Pip-installable Python package with CLI entry points (e.g., `toolgate run`, `toolgate evaluate`, `toolgate report`).
 - Full evaluation pipeline runnable end to end via a single documented command or Makefile target.
 - No hosted service, Docker packaging, or public demo required for MVP.
 

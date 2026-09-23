@@ -5,7 +5,7 @@ Mean + p95 in milliseconds, warmup excluded -- `exp2_eval.py`'s own
 `llmshield_mcp.latency` rather than invented for this project.
 
 Needs the real reused weights (`config/models.yaml` / `LLMSHIELD_MODELS_ROOT`)
-and a corpus already produced by `mcp-shield corpus-ingest`. Samples items
+and a corpus already produced by `toolgate corpus-ingest`. Samples items
 from that corpus (both labels, so the mix is realistically benign-heavy,
 matching what a live gate actually scans) rather than a handful of hand-picked
 probes.
@@ -13,7 +13,7 @@ probes.
     uv run python scripts/benchmark_latency.py
 
 FR-14 (the 20-call chain's gate overhead) is measured separately -- record a
-chain with `mcp-shield run-agent --db ...` and read the resulting decision
+chain with `toolgate run-agent --db ...` and read the resulting decision
 log; see docs/LATENCY-BENCHMARK.md for the committed numbers and exactly how
 that chain was produced.
 """
@@ -45,7 +45,7 @@ def _sample_corpus_texts(sample_size: int, seed: int) -> list[str]:
     ]
     if not clean_texts:
         raise ValueError(
-            f"no clean items found in {DEFAULT_CORPUS_DB}; run `mcp-shield corpus-ingest` first"
+            f"no clean items found in {DEFAULT_CORPUS_DB}; run `toolgate corpus-ingest` first"
         )
     rng = random.Random(seed)
     return clean_texts if len(clean_texts) <= sample_size else rng.sample(clean_texts, sample_size)

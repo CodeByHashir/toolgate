@@ -1,6 +1,6 @@
 # Agent profile: the default policy plus capability gating of tool calls.
 #
-#     uv run mcp-shield run-agent --policy config/policy.agent.yaml --db logs/d.sqlite
+#     uv run toolgate run-agent --policy config/policy.agent.yaml --db logs/d.sqlite
 #
 # This is the profile that demonstrates the project's own conclusion. Content
 # detection on the MCP tool-result surface was measured not to work

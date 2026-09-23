@@ -13,7 +13,7 @@ Nothing caught it: the fixture was committed by a milestone, the licence
 implication was not obvious from a diff, and no check existed. The file has
 since been removed (`plan.md` 2.27). This test is the part that stops it
 coming back, because the same thing will happen again the next time someone
-runs `mcp-shield run-agent --out chains/something.json` against real URLs and
+runs `toolgate run-agent --out chains/something.json` against real URLs and
 commits the result.
 
 The rule enforced: a committed chain may only record `fetch` results from

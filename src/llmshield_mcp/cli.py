@@ -438,12 +438,12 @@ def gauge_recut(scores_csv: Path, output: Path | None) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="mcp-shield")
-    parser.add_argument("--version", action="version", version=f"llmshield-mcp {__version__}")
+    parser = argparse.ArgumentParser(prog="toolgate")
+    parser.add_argument("--version", action="version", version=f"toolgate {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     verify = subparsers.add_parser(
-        "verify-models", help="load the reused LLMShield detectors and score probe texts"
+        "verify-models", help="load the reused V0/V3 detectors and score probe texts"
     )
     verify.add_argument("--config", type=Path, default=None)
     verify.add_argument("--detector", choices=("v0", "v3", "all"), default="all")

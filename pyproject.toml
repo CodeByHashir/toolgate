@@ -1,7 +1,7 @@
 [project]
-name = "llmshield-mcp"
+name = "toolgate"
 version = "0.1.0"
-description = "Guardrail and evaluation layer for indirect prompt injection via the Model Context Protocol"
+description = "Capability gating for MCP agents, and the measurements that argue for it"
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
 license = { text = "MIT" }
@@ -30,7 +30,7 @@ dependencies = [
 ]
 
 [project.scripts]
-mcp-shield = "llmshield_mcp.cli:main"
+toolgate = "llmshield_mcp.cli:main"
 
 [project.optional-dependencies]
 dev = [

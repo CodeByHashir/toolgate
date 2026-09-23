@@ -32,7 +32,7 @@ documentation examples without needing permission" (RFC 2606, RFC 6761).
 
 ### Preventing recurrence
 
-The failure was structural, not careless: `mcp-shield run-agent --out` records
+The failure was structural, not careless: `toolgate run-agent --out` records
 whatever a tool returned, and `corpus/sources.py:load_benign()` globs
 `chains/*.json`, so fetched web content reached both the fixture *and* the
 benign evaluation corpus. Nothing in review would reliably catch that in a

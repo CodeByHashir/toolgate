@@ -2,7 +2,7 @@
 #
 # Use with:
 #
-#     uv run mcp-shield run-agent --policy config/policy.research.yaml --db logs/decisions.sqlite
+#     uv run toolgate run-agent --policy config/policy.research.yaml --db logs/decisions.sqlite
 #
 # This file exists so that reproducing `docs/REPORT.md` -- which needs V0/V3
 # scores in the decision log for every intercepted tool result -- stays a

@@ -1,7 +1,7 @@
 """Ingesting into a non-empty corpus store must fail, not silently double it.
 
 `CorpusStore.add` is a plain INSERT with no uniqueness constraint, so running
-`mcp-shield corpus-ingest` twice against the same file appends rather than
+`toolgate corpus-ingest` twice against the same file appends rather than
 replaces. This is quietly destructive to evidence rather than loudly broken:
 the drop-count report simply prints a larger "clean" total, which reads like a
 bigger corpus instead of a duplicated one, and every downstream statistic --

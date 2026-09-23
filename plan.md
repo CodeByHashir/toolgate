@@ -14,7 +14,7 @@ Each milestone is independently testable and lands as its own commit.
 
 | # | Milestone | Requirements | Verification | Status |
 |---|---|---|---|---|
-| M0 | Scaffold, pinned CPU stack, reuse audit for V0/V3 | NFR-8, A1, A3 | `mcp-shield verify-models`; contract tests | **Done** |
+| M0 | Scaffold, pinned CPU stack, reuse audit for V0/V3 | NFR-8, A1, A3 | `toolgate verify-models`; contract tests | **Done** |
 | M1 | Both reference MCP servers running + minimal Claude agent + committed tool-call chain fixture | SEC-4, [3.1] | Agent reads a file and fetches a URL; fixture committed | **Done** |
 | M2 | Interception layer, **logging only, zero detectors** | FR-1, FR-8, FR-15, FR-16, NFR-5 | 10-call run produced exactly 10 log rows; gate overhead 0.03-0.06 ms | **Done** |
 | M3 | Port rule engine and PII scanner as detector adapters | FR-2 (part), NFR-4, SEC-3, SEC-6 | 55 unit tests incl. fail-closed for both adapters; zero false positives on the benign sandbox | **Done** |
@@ -527,7 +527,7 @@ families (BIPIA, InjecAgent) are now ingested through this milestone's
 infrastructure; a third is still needed before M8.
 
 **The publishable JSONL snapshot is not committed by this milestone.**
-`mcp-shield corpus-ingest` is implemented and verified end to end against the
+`toolgate corpus-ingest` is implemented and verified end to end against the
 real reference corpus (187 adversarial + several thousand benign lines, 0
 contaminated -- expected, since M3b already established BIPIA/InjecAgent
 share no lineage with the training sources). Deciding exactly what goes into
@@ -786,7 +786,7 @@ statistic is recomputable from `scores.csv` without the weights; nothing had
 ever read those four probability columns back, so the promise was
 architectural, not executable.
 
-`gauge/recut.py` + `mcp-shield gauge-recut` make it executable, and the check
+`gauge/recut.py` + `toolgate gauge-recut` make it executable, and the check
 was run against the real artifacts. Polarity is correct (`verify-models`: a
 known injection probe scores P(injection) = 0.998). The score-mode explanation
 was tested by re-cutting the same stored inference every way.
@@ -997,7 +997,7 @@ disproportionate, recorded in `THIRD_PARTY_NOTICES.md` as a decision rather
 than an oversight, and reversible if that judgement changes.
 
 **Defect 1: the recording path fed the corpus.** This was not carelessness.
-`mcp-shield run-agent --out` records every tool result verbatim -- that is its
+`toolgate run-agent --out` records every tool result verbatim -- that is its
 job -- and `corpus/sources.py:load_benign()` globs `chains/*.json`, so fetched
 web content reached both the committed fixture *and* the benign evaluation
 corpus and its JSONL export. Two independent licensing exposures from one

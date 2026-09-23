@@ -1,29 +1,33 @@
-# LLMShield-MCP
+# toolgate
 
-A guardrail and evaluation layer for **indirect prompt injection delivered
-through the Model Context Protocol (MCP)**.
+**Capability gating for MCP agents — and the measurements that argue for it.**
 
-Guardrail research, including the dissertation this work extends, has focused
-on the *user prompt* surface. When an MCP-connected agent calls a tool, the
-result is inserted straight into the model's context — a second injection
-surface with different properties: results are longer, more heterogeneous, and
-legitimately contain trigger words like "ignore" and "system" in benign
-technical contexts such as source code.
+When an MCP-connected agent calls a tool, the result is inserted straight into
+the model's context. That is a prompt-injection surface, and it is not the one
+most defences were built for: tool results are long, heterogeneous, and full of
+words like "ignore" and "system" in perfectly benign source code.
 
-This project asks whether detectors trained on user-prompt injection transfer
-to that surface, and measures the answer with the same statistical rigour as
-the dissertation (the GAUGE protocol).
+This repository does two things:
 
-> **Status: milestones 0-10 of 11 done.** Interception, six detector
-> adapters, a fusion/policy engine, a decontaminated 337-item corpus across
-> three independent attack sources, matched-FPR calibration,
-> leave-one-source-out, a latency benchmark, and this report are all built
-> and run against the real weights. The full write-up is
-> [`docs/REPORT.md`](docs/REPORT.md); the short version is directly below.
-> Only M11 (an optional standalone stdio proxy over the same gating core)
-> remains. A twelfth milestone — session-level hash correlation — was built,
-> measured, found unable to detect the threat it was built for, and removed;
-> the finding is kept in
+1. **Measures** whether prompt-injection detectors actually work on that
+   surface. Three classifiers, 337 decontaminated payloads, three independent
+   attack corpora, full matched-FPR protocol. **They do not** — including a
+   production classifier with ~840k monthly downloads.
+2. **Ships the control that survives that finding.** If you cannot reliably
+   detect the attack, stop trying to, and constrain what a compromised agent is
+   allowed to *do* instead. Sandbox confinement, egress allowlists, and named
+   destructive operations — deterministic, no classifier.
+
+> **Status.** Interception, six detector adapters, a fusion/policy engine, a
+> decontaminated 337-item corpus across three independent attack sources,
+> matched-FPR calibration, leave-one-source-out, latency and dilution
+> benchmarks, and capability gating of outbound tool calls are built and run
+> against real weights. 431 tests, CI green. The full evidence is
+> [`docs/REPORT.md`](docs/REPORT.md); the short version is below.
+>
+> An optional standalone stdio proxy is the one planned piece not started. A
+> session-level correlation layer was built, measured, found unable to detect
+> the threat it targeted, and removed — the finding is kept in
 > [`docs/DILUTION-BENCHMARK.md`](docs/DILUTION-BENCHMARK.md).
 
 ## Headline result
@@ -48,7 +52,8 @@ prompts) both transformers fall *below* chance.
 A small rule set derived from real attack data catches roughly one attack in
 five, with zero false positives observed in 4,654 benign lines — which bounds
 its false-positive rate below 0.082% (Wilson 95%), and is not the same claim as
-"zero". The dissertation's own 19 rules, unmodified, catch zero of 187.
+"zero". The 19 rules carried over unmodified from the user-prompt surface catch
+zero of 187.
 
 None of it generalises: the same detector at the same threshold misses **39% to
 100%** of attacks depending purely on which of three independent real-world
@@ -146,8 +151,10 @@ uv sync --extra dev
 | **V3** | DeBERTa-v3-base sequence classifier | 4 | 512 | No — reused, unpublishable |
 | **`guard`** | [ProtectAI `deberta-v3-base-prompt-injection-v2`](https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2) | 2 | 512 | **Yes** — Apache-2.0, fetched from the Hub |
 
-V0 and V3 are reused from the LLMShield dissertation and are **not retrained**;
-both classify over `(benign, injection, jailbreak, harmful)`. `guard` is a
+V0 and V3 are reused from prior work by the same author and are **not
+retrained**; both classify over `(benign, injection, jailbreak, harmful)`. They
+were trained for the *user-prompt* surface, which is exactly what this project
+set out to test. `guard` is a
 published binary `(SAFE, INJECTION)` classifier pinned by commit SHA in
 `config/models.yaml`, added so that at least one measured classifier is one a
 reader can rerun. See `docs/REPORT.md` section 4 for how it scored — it is
@@ -176,7 +183,7 @@ independently reproducible without the weights.
 ## Verify the reuse audit
 
 ```bash
-uv run mcp-shield verify-models
+uv run toolgate verify-models
 ```
 
 Loads V0 and V3 on CPU, scores a small set of probe texts, and prints per-class
@@ -189,7 +196,7 @@ Probe texts are a smoke test, not an evaluation. Draw no conclusions from them.
 ## Build the corpus
 
 ```bash
-uv run mcp-shield corpus-ingest
+uv run toolgate corpus-ingest
 ```
 
 Fetches three independent adversarial source families (BIPIA, InjecAgent,
@@ -203,11 +210,11 @@ flagged as near-duplicates of training data, per source.
 ## Run the evaluation
 
 ```bash
-uv run mcp-shield gauge-run                # calibrate V0/V3, matched-FPR ASR + AUROC
+uv run toolgate gauge-run                # calibrate V0/V3, matched-FPR ASR + AUROC
 uv run python scripts/benchmark_rules.py   # rule recall vs BIPIA + InjecAgent
 uv run python scripts/benchmark_latency.py # per-detector + fused latency
 uv run python scripts/generate_report.py   # regenerate docs/figures/*.svg
-uv run mcp-shield gauge-recut              # re-derive AUROC from scores.csv, no weights needed
+uv run toolgate gauge-recut              # re-derive AUROC from scores.csv, no weights needed
 ```
 
 `gauge-recut` is the falsification check for the headline, and **it needs no
@@ -220,7 +227,7 @@ tested by anyone, and `gauge-recut` re-derives the AUROC under every score mode
 from the same stored inference.
 
 It found a real problem. V3's published below-chance figure comes from the
-`injection` cut inherited from the dissertation (0.325); under `not_benign` the
+`injection` cut V3 was originally scored with (0.325); under `not_benign` the
 same probabilities give **0.540**, an interval straddling chance. So V3 is not
 reliably anti-correlated — it simply does not separate, and how badly it reads
 depends on the cut. `docs/REPORT.md` section 4 carries the full table and the
@@ -246,7 +253,7 @@ uv run pytest -m models    # reuse audit, requires the local artifacts
 ## Record a tool-call chain
 
 ```bash
-uv run mcp-shield run-agent --servers filesystem,fetch --out chains/baseline.json
+uv run toolgate run-agent --servers filesystem,fetch --out chains/baseline.json
 ```
 
 Launches both reference MCP servers, drives them with a Claude tool-use loop,
@@ -276,8 +283,8 @@ change what happens. Its detector roles are still identical to the default.
 | `config/policy.research.yaml` | `v0`, `v3`, `guard` | 345 ms | No — needs the unpublishable weights |
 
 ```bash
-uv run mcp-shield run-agent --db logs/decisions.sqlite                       # default
-uv run mcp-shield run-agent --policy config/policy.guard.yaml --db logs/d.sqlite
+uv run toolgate run-agent --db logs/decisions.sqlite                       # default
+uv run toolgate run-agent --policy config/policy.guard.yaml --db logs/d.sqlite
 ```
 
 `policy.guard.yaml` exists because it is the only ML profile a stranger can
@@ -289,7 +296,7 @@ does.
 Chains that feed the evaluation use the default model. For cheap smoke runs:
 
 ```bash
-uv run mcp-shield run-agent --model claude-haiku-4-5 --servers filesystem
+uv run toolgate run-agent --model claude-haiku-4-5 --servers filesystem
 ```
 
 Each run reports and records its token usage, so the cost behind a fixture is a

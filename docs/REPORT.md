@@ -1,8 +1,8 @@
-# LLMShield-MCP: does prompt-injection detection transfer to the MCP tool-result surface?
+# toolgate: does prompt-injection detection transfer to the MCP tool-result surface?
 
 This is the headline report AC-7 asks for: what was measured, what it says,
 and what it does not say. Every number below traces to a script under
-`scripts/` or `mcp-shield`'s own subcommands and is reproducible from the
+`scripts/` or `toolgate`'s own subcommands and is reproducible from the
 committed corpus and code -- the reused model weights are the only
 unreproducible input (`prd.md` A1), and every evaluation run emits a
 per-item `scores.csv` specifically so the statistics recompute without them
@@ -58,7 +58,7 @@ this report is the evidence for it.
 
 337 real adversarial items across three independent, disjoint source
 families, ingested and decontaminated against V0/V3's own training data
-(`mcp-shield corpus-ingest`, M6):
+(`toolgate corpus-ingest`, M6):
 
 | Source | Items | What it is |
 |---|---|---|
@@ -146,7 +146,7 @@ Worse, the saved V3 checkpoint's `config.json` carries only generic
 `LABEL_0..LABEL_3`, so the mapping `1 = injection` lived in a comment in a
 training script rather than in the artifact.
 
-`mcp-shield gauge-recut` re-derives AUROC from the *same stored inference*
+`toolgate gauge-recut` re-derives AUROC from the *same stored inference*
 under every score mode, so any difference is attributable purely to the
 projection. On the full decontaminated 337-payload corpus:
 
@@ -158,7 +158,7 @@ projection. On the full decontaminated 337-payload corpus:
 (Bold marks each detector's shipped cut: `injection` for V3, `not_benign` for
 V0.)
 
-**The label polarity is correct** -- `mcp-shield verify-models` scores a known
+**The label polarity is correct** -- `toolgate verify-models` scores a known
 injection probe at P(injection) = 0.998 and a plain benign sentence at 0.023,
 so nothing is transposed. **But the cut matters a great deal.** Under
 `not_benign`, V3's realistic AUROC rises from 0.325 to **0.540 [0.49, 0.59]**
@@ -341,7 +341,7 @@ directly from the numbers above, not from caution for its own sake:
 **Without any model weights**, from the committed run alone:
 
 ```bash
-uv run mcp-shield gauge-recut               # every AUROC in section 4, from results/gauge/scores.csv
+uv run toolgate gauge-recut               # every AUROC in section 4, from results/gauge/scores.csv
 uv run python scripts/benchmark_rules.py    # rule recall vs BIPIA + InjecAgent
 ```
 
@@ -353,15 +353,15 @@ payload text.
 **With the fetchable `guard` weights** (Apache-2.0, downloaded automatically):
 
 ```bash
-uv run mcp-shield corpus-ingest
-uv run mcp-shield gauge-run                 # scores guard alongside anything else configured
+uv run toolgate corpus-ingest
+uv run toolgate gauge-run                 # scores guard alongside anything else configured
 ```
 
 **With the reused V0/V3 artifacts**, which are not publishable (`prd.md` A1) and
 so reproducible only by the author:
 
 ```bash
-LLMSHIELD_MODELS_ROOT=/path/to/artifacts uv run mcp-shield gauge-run
+LLMSHIELD_MODELS_ROOT=/path/to/artifacts uv run toolgate gauge-run
 uv run python scripts/benchmark_latency.py
 uv run python scripts/generate_report.py    # regenerates the SVGs in docs/figures/
 ```

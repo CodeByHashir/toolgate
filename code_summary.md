@@ -615,7 +615,7 @@ Dev: `pytest` 8.4.2, `pytest-asyncio` 1.3.0, `ruff` 0.14.4, `mypy` 1.18.2.
 
 ## 8. Conventions
 
-- `src/` layout, package `llmshield_mcp`, CLI entry point `mcp-shield`.
+- `src/` layout, package `llmshield_mcp`, CLI entry point `toolgate`.
 - `from __future__ import annotations` in every module.
 - Frozen, slotted dataclasses for value types.
 - mypy `strict` for our own code; untyped third-party packages silenced by

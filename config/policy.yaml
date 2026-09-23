@@ -6,7 +6,7 @@
 #   config/policy.guard.yaml     + guard          (fetchable; anyone can run it)
 #   config/policy.research.yaml  + v0, v3, guard  (needs the private weights)
 #
-# Select one with `mcp-shield run-agent --policy <path>`. A test asserts the
+# Select one with `toolgate run-agent --policy <path>`. A test asserts the
 # three files differ in nothing else, so the choice cannot change a decision.
 #
 # Why the split exists, and why it is not a decision change. `inert` detectors

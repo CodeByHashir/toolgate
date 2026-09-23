@@ -2,8 +2,8 @@
 
 ## What this project is, and what it therefore cannot promise
 
-LLMShield-MCP is a **research harness and detection/audit layer**, not a
-production security control. Its own published evaluation
+toolgate is a **research harness, an audit layer, and a capability gate** --
+not a production security product. Its own published evaluation
 ([`docs/REPORT.md`](docs/REPORT.md)) measures its best detector at roughly 20%
 recall on real indirect-injection payloads, and one of its two reused
 classifiers at below-chance separation on this surface.
@@ -38,7 +38,7 @@ There is no long-term-support branch and no backporting. Fixes land on `main`.
 ## Reporting a vulnerability
 
 Report privately via [GitHub's private vulnerability
-reporting](https://github.com/CodeByHashir/llmshield-mcp/security/advisories/new)
+reporting](https://github.com/CodeByHashir/toolgate/security/advisories/new)
 on this repository. Please do not open a public issue for anything that could
 be exploited against a user of this code.
 
@@ -49,7 +49,7 @@ on exploitability.
 ## What to expect, honestly
 
 **This project is maintained by one person and has a bus factor of one.** It
-began as dissertation work and continues as a personal research project. There
+began as earlier research and continues as a personal research project. There
 is no security team, no on-call rotation, and no paid support.
 
 Concretely:

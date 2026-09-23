@@ -103,7 +103,7 @@ def load_payloads(max_per_family: int) -> list[tuple[str, str, str]]:
             "WARNING: cached corpus not found.  Run:\n"
             "  uv run python scripts/benchmark_rules.py\n"
             "or:\n"
-            "  uv run mcp-shield corpus-ingest\n"
+            "  uv run toolgate corpus-ingest\n"
             "to fetch the adversarial benchmark data first.",
             file=sys.stderr,
         )

@@ -53,7 +53,7 @@ results/*
 # committed. An earlier revision of that report cited an AUROC whose scores.csv
 # had been discarded, which made the headline claim unreproducible even by its
 # own author -- exactly what plan.md 2.6 promises cannot happen. Committing this
-# one run's per-item scores is what makes that promise real: `mcp-shield
+# one run's per-item scores is what makes that promise real: `toolgate
 # gauge-recut` recomputes every statistic from this file alone, with no model
 # weights and no corpus (plan.md 2.26).
 !results/gauge/
