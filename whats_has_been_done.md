@@ -3242,17 +3242,18 @@ Nine commits landed on `main` between that base and this integration: the
 post-audit hardening pass (redaction spans clipped per block, which closed a
 redaction leak; the policy split into profiles; M12 removed), the removal of
 `chains/latency_chain.json`, capability gating, the rename to toolgate, and
-declaration integrity. **None of the M14-M17 model-side runs were repeated on
-the current gate.** Every figure below is what was measured on that base. The
+declaration integrity. **None of the M14-M17 model-side runs was repeated**:
+they were verified against the current gate without model calls instead -- see
+"Paid results verified against the current gate" further down. Every figure
+below is what was measured on that base. The
 one known, concrete drift: M13's benign controls were 34 recorded results (25
 after de-duplication); only `chains/baseline.json`'s 9 remain.
 
 Integration changes, all outside the research content: two tests updated to
 current code (a stale test double for `apply_redaction`'s current return
 contract, and the benign-control count), and the duplicate `AGENTS.md` (identical
-to `CLAUDE.md` apart from its title) left out. The results under
-`results/{action,e2e,live,mechanism,representation}/` stay gitignored, as their
-author left them; they exist in the originating worktree and a local backup.
+to `CLAUDE.md` apart from its title) left out. The M14-M17 results were
+committed afterwards; M13's stay gitignored because they regenerate offline.
 
 ---
 
@@ -3737,19 +3738,56 @@ integration tests.
 
 ---
 
-## Visibility reverted to private
+## Visibility briefly reverted, then republished
 
-On 2026-09-23 the repository was made private again, about 5 h 40 min after the
-publication recorded above.
+On 2026-09-23 the repository was made private for several hours after the
+publication recorded above, then made public again the same day. During the
+first public window GitHub recorded 0 forks, 0 stars and 0 watchers.
 
-During the public window GitHub recorded 0 forks, 0 stars and 0 watchers. Its
-traffic counters (views, clones, referrers) were still empty when checked, but
-they update with a delay and had not yet registered even this session's own
-verification visit, so they are not evidence of zero views.
+Branch protection and private vulnerability reporting are unavailable on a
+private repository at this plan level, so both lapsed while it was private and
+were re-applied on republication.
 
-Settings while private: branch protection is unavailable on a private
-repository at this plan level (the API returns 403), so the force-push and
-deletion rule recorded above is **not in force**. Private vulnerability
-reporting: not available on a private repository either (the API returns
-404). Both should be re-checked when the repository is published
-again.
+---
+
+## Paid results verified against the current gate, and committed
+
+M14-M17 made real model calls; repeating them costs money. Rather than re-run
+them on current `main`, the one input that could have changed a model's
+behaviour -- the bytes it was shown -- was rebuilt with the current gate and
+compared, with no model calls. New `scripts/verify_eval_frames.py` does this
+using the evaluations' own frame-building functions and exits non-zero on any
+mismatch.
+
+| Run | Check | Result |
+|---|---|---|
+| M14 | reported trials | all 64 are arm A, which has no gate: gate-independent |
+| M15 | sample | identical to the frozen sample (`a3f207c8...`) |
+| M15 | gated arms B/C/D vs the original code, 80 items each | B and D byte-identical; C identical once the product name in the withheld-content placeholder is mapped back (`toolgate` -> `LLMShield-MCP`, the rename); all 80 gate decisions identical (53 redact, 27 escalate) |
+| M16 | model-visible frame hashes frozen before the run | 9/9 reproduced |
+| M17 | model-visible frame hashes frozen before the run | 17/17 reproduced |
+| M13 | full offline re-run (free) | gate decision identical on all 2,864 adversarial calls; 0 contract violations then and now; every adversarial summary figure unchanged |
+
+How M15's arm C difference was diagnosed rather than assumed: the frames were
+dumped item by item from both versions. 27 of 80 differed, all of them items the
+gate withheld, and in every one the sole change was the placeholder line naming
+the product. No payload byte and no decision differed.
+
+M13's inputs differ at 50/75/90% dilution (0 of 674 identical at each) and match
+exactly at 0% (842/842), because the dilution filler is drawn from this
+repository's text, which has changed. Of 1,874 summary fields, the 62 that
+changed are all benign-control fields: 75 benign controls per policy then, 59
+now, after `chains/latency_chain.json` was removed; none was flagged either time.
+
+The same frame checks cover the M18-0 email-regex replacement, which was also
+made after the runs.
+
+**Results committed.** The 29 M14-M17 result files (2.2 MB) are now tracked,
+under a `.gitignore` exception mirroring the GAUGE run's, so each document's
+figures can be recomputed from the repository. Audited first: no credentials,
+no local paths; addresses are the LLMail-Inject placeholder `contact.com`,
+reserved `.example` domains, and two fixtures from the public benchmark corpora.
+M13's 5.8 MB dump stays ignored and regenerates in under a minute.
+
+Each results document's provenance note now states what was checked instead of
+"not re-run on the current gate".

@@ -4,7 +4,7 @@ Companion to `prd.md` (what to build) and `whats_has_been_done.md` (what is
 built). This file holds the plan, the architecture decisions and their
 rationale, remaining work, and known risks.
 
-**Current position: M0-M10 complete; M12 built, measured and removed (2.25). A post-audit hardening pass has since verified the headline finding against falsification, closed a redaction leak, pinned the evaluation corpus, split the policy into light/research profiles, decoupled gating from logging, and restated the FPR and Escalate claims to match their evidence, added a third publishable classifier (2.26), resolved the licensing exposure by removal rather than attribution (2.27), and added capability gating of outbound tool calls -- the control that survives the negative result (2.28). Tool *declarations*, the third attacker-controlled channel, are now being closed: `docs/PLAN-DECLARATION-INTEGRITY.md` is **complete, all six steps** (concealment decoding in the normaliser, the declaration canonicaliser, the trust-on-first-use pin store, verification at the point of model input, a `tool_declarations` policy block with its own audit outcome, and a measured churn base rate in `docs/DECLARATION-CHURN.md`). It ships OFF: no block in `config/policy.yaml` means no gate, nothing pinned, nothing logged -- see 2.29. `docs/REPORT.md` + three committed SVG figures + a rewritten README state the headline findings in plain English. M11 (optional standalone proxy) not started. `config/policy.yaml` still ships uncalibrated by deliberate choice -- see 2.20. M13-M18 -- an offline end-to-end gate evaluation, pre-registered model-side evaluations, a PII representation study, and a fix to a quadratic-time email regex -- were built on an earlier base and integrated afterwards; their figures describe that base, not the current gate -- see 2.30.**
+**Current position: M0-M10 complete; M12 built, measured and removed (2.25). A post-audit hardening pass has since verified the headline finding against falsification, closed a redaction leak, pinned the evaluation corpus, split the policy into light/research profiles, decoupled gating from logging, and restated the FPR and Escalate claims to match their evidence, added a third publishable classifier (2.26), resolved the licensing exposure by removal rather than attribution (2.27), and added capability gating of outbound tool calls -- the control that survives the negative result (2.28). Tool *declarations*, the third attacker-controlled channel, are now being closed: `docs/PLAN-DECLARATION-INTEGRITY.md` is **complete, all six steps** (concealment decoding in the normaliser, the declaration canonicaliser, the trust-on-first-use pin store, verification at the point of model input, a `tool_declarations` policy block with its own audit outcome, and a measured churn base rate in `docs/DECLARATION-CHURN.md`). It ships OFF: no block in `config/policy.yaml` means no gate, nothing pinned, nothing logged -- see 2.29. `docs/REPORT.md` + three committed SVG figures + a rewritten README state the headline findings in plain English. M11 (optional standalone proxy) not started. `config/policy.yaml` still ships uncalibrated by deliberate choice -- see 2.20. M13-M18 -- an offline end-to-end gate evaluation, pre-registered model-side evaluations, a PII representation study, and a fix to a quadratic-time email regex -- were built on an earlier base and integrated afterwards; their paid results were verified against the current gate without new model calls -- see 2.30.**
 
 ---
 
@@ -1390,14 +1390,28 @@ hash-locked -- their SHA-256 is recorded in every results file -- so they are
 byte-identical to what was run. The results documents gained only a provenance
 note at the top.
 
-**Their figures describe an earlier gate.** They were measured at `4f99241`,
-before nine later commits: the post-audit hardening pass (redaction spans clipped
-per block, closing a redaction leak; the policy split into profiles; M12
-removed), the removal of `chains/latency_chain.json`, capability gating, the
-rename, and declaration integrity. None of the M14-M17 model-side runs was
-repeated. The one measured drift is M13's benign-control set, 34 recorded
-results then and 9 now. M13 is offline and free to re-run; M14-M17 make model
-calls and cost money to repeat, which is the author's decision.
+**Their results were verified against the current gate rather than re-run.**
+They were run at `4f99241`, before nine later commits: the post-audit hardening
+pass (redaction spans clipped per block, closing a redaction leak; the policy
+split into profiles; M12 removed), the removal of `chains/latency_chain.json`,
+capability gating, the rename, and declaration integrity. M14-M17 made model
+calls and repeating them costs money, so the one thing that could have changed a
+model's behaviour -- the bytes it was shown -- was checked instead, with no model
+calls, by `scripts/verify_eval_frames.py`:
+
+| Run | Check | Result |
+|---|---|---|
+| M14 | reported trials | all arm A, no gate: gate-independent |
+| M15 | gated arms vs the original code, all 80 items | B and D byte-identical; C identical once the renamed product in the withheld-content placeholder is mapped back; no decision changed |
+| M16 | frame hashes frozen before the run | 9/9 reproduced |
+| M17 | frame hashes frozen before the run | 17/17 reproduced |
+| M13 | full offline re-run | decision identical on all 2,864 adversarial calls; every adversarial summary figure unchanged |
+
+M13's diluted inputs differ byte-wise, because its benign filler is drawn from
+this repository's text, and its benign controls fell from 75 to 59 per policy
+when `latency_chain.json` was removed; none was flagged either time. The M18-0
+email-regex replacement, also made after the runs, is covered by the same frame
+checks.
 
 **Integration changes were limited to making the code run on current `main`:**
 two tests updated -- a test double for `apply_redaction` written against its old
@@ -1405,11 +1419,13 @@ return shape, and the benign-control count -- and the duplicate `AGENTS.md` left
 out. The M18-0 change to the shipped PII detector (a quadratic-time email regex
 replaced; 70 equivalence and performance tests) applied cleanly and is live.
 
-**Results stay gitignored**, as their author chose. That sits uneasily with 2.26,
-which committed the GAUGE run precisely so a published figure could be
-recomputed from the repository. The small `frozen.json`/`analysis.json` files
-behind each document are the candidates if that is revisited; the trial dumps
-(up to 5.8 MB) are not.
+**The M14-M17 results are committed**, as the evidence behind those documents,
+for the reason 2.26 committed the GAUGE run: a published figure should be
+recomputable from the repository, and these cannot be regenerated for free. They
+were checked before committing: no credentials, no local paths, and the only
+personal-looking addresses are fixtures from the public benchmark corpora. M13's
+5.8 MB result dump stays gitignored, since it regenerates offline in under a
+minute.
 
 ---
 

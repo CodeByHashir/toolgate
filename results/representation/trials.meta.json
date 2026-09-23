@@ -1,0 +1,28 @@
+{
+ "prereg_sha256": "2151c5dc1ac55471df7eed604337d8730b22dfb09138d319fbf3c1d2726972d9",
+ "model": "claude-haiku-4-5-20251001",
+ "setup": "C3",
+ "n_expected": 700,
+ "n_valid": 700,
+ "resumed": true,
+ "fatal": null,
+ "budget_this_invocation": [
+  2032907,
+  244711
+ ],
+ "saved_at": "2026-09-21T22:34:37",
+ "history": [
+  {
+   "prereg_sha256": "2151c5dc1ac55471df7eed604337d8730b22dfb09138d319fbf3c1d2726972d9",
+   "model": "claude-haiku-4-5-20251001",
+   "setup": "C3",
+   "n_expected": 700,
+   "n_valid": 61,
+   "budget": [
+    186137,
+    22787
+   ],
+   "saved_at": "2026-09-21T04:29:45"
+  }
+ ]
+}

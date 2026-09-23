@@ -1,0 +1,7 @@
+{
+ "prereg_sha256": "6b1ef153e26b533c60659508855bde9eb2b71a3f8ffe49cfae2a00c8eaa8a620",
+ "frozen_at": "2026-09-21T00:01:58",
+ "pilot_ids_sha256": "f41086b373d2ac1d2f9eb64dcac23436d70d99d95bba35287e4ba4420373bd23",
+ "final_ids_sha256": "a3f207c89fc0f2b77313bb202f85886e2eea499bf70c8b6ffba8a534dce1fd0d",
+ "benign_set_sha256": "3d77edeb36e3c2876fe1c661e8734f0f5e8f5502bfda93c3390fc2e9bd3ee57f"
+}

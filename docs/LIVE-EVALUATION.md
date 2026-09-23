@@ -1,11 +1,9 @@
 # Live model-side evaluation (M14): results
 
-> **Provenance (added on integration, 2026-09-23).** Measured on the code as of
-> commit `4f99241`, before nine later commits on `main` -- among them the
-> post-audit hardening pass, which changed how redaction spans are applied
-> (closing a redaction leak) and split the policy into profiles. **Not re-run
-> on the current gate.** The figures below describe that earlier version. See
-> `whats_has_been_done.md`, "Integrated after the fact: M13-M18".
+> **Provenance (added on integration, 2026-09-23).** Run on the code as of
+> commit `4f99241`, before nine later commits on `main`, and **not re-run**.
+> The counted trials are all arm A, which has no gate, so later gate changes
+> cannot affect them. The original trials are committed under `results/live/`.
 
 > **Measured on one model (`claude-haiku-4-5-20251001`), one task, one document
 > template, 64 real payloads, one trial each at temperature 0. The result is a

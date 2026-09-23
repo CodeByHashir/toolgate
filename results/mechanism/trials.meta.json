@@ -1,0 +1,12 @@
+{
+ "prereg_sha256": "a33bc514faed8e44254eccf6381c0bb47a0a6cca8e89cae29722eab97965794d",
+ "model": "claude-haiku-4-5-20251001",
+ "setup": "C3",
+ "n_expected": 380,
+ "n_valid": 380,
+ "budget": [
+  1204028,
+  144890
+ ],
+ "saved_at": "2026-09-21T00:48:28"
+}

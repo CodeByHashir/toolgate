@@ -1,15 +1,14 @@
 # End-to-End Gate Evaluation (M13)
 
-> **Provenance (added on integration, 2026-09-23).** Measured on the code as of
-> commit `4f99241`, before nine later commits on `main` -- among them the
-> post-audit hardening pass, which changed how redaction spans are applied
-> (closing a redaction leak) and split the policy into profiles. **Not re-run
-> on the current gate.** The figures below describe that earlier version. See
-> `whats_has_been_done.md`, "Integrated after the fact: M13-M18".
->
-> M13 specifically: its 34 benign controls included `chains/latency_chain.json`,
-> since removed for licensing; a re-run on current `main` would have 9. M13 is
-> offline and costs nothing to re-run (`scripts/eval_e2e.py`).
+> **Provenance (added on integration, 2026-09-23).** Run on the code as of
+> commit `4f99241`, before nine later commits on `main`, and **not re-run**.
+> M13 is offline and was re-run on the current gate: the gate decision is
+> identical on all 2,864 adversarial calls and every adversarial summary figure
+> is unchanged. Diluted inputs differ byte-wise only because the benign filler is
+> drawn from this repository's text, which has changed. Benign controls were 75
+> per policy then and are 59 now (`chains/latency_chain.json` was removed for
+> licensing); none was flagged in either run. The figures below are the
+> original run; re-run with `scripts/eval_e2e.py` at no cost.
 
 > **These are measured numbers for these detectors, this policy, and these three
 > static corpora, delivered as synthetic tool results in an offline harness.

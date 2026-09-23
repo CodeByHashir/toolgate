@@ -73,6 +73,26 @@ results/gauge/*
 results/declarations/*
 !results/declarations/snapshot-*.json
 
+# ...and the paid model-side runs behind docs/{LIVE,ACTION,MECHANISM,REPRESENTATION}-
+# EVALUATION.md (M14-M17). Same reason as the GAUGE run: every figure in those
+# documents is derived from these files, and unlike M13 they cannot be
+# regenerated for free -- they record real model calls. Audited before
+# committing: no credentials, no local paths, and the only personal-looking
+# addresses are fixtures from the public benchmark corpora. M13's results stay
+# ignored; scripts/eval_e2e.py regenerates them offline.
+!results/action/
+!results/live/
+!results/mechanism/
+!results/representation/
+results/action/*
+results/live/*
+results/mechanism/*
+results/representation/*
+!results/action/*.json
+!results/live/*.json
+!results/mechanism/*.json
+!results/representation/*.json
+
 # Tool-declaration pins (plan.md 2.29). Runtime state, so gitignored by the
 # same default as everything else here -- a pin file is a record of what one
 # machine happened to connect to, and a commit should not pick that up unasked.

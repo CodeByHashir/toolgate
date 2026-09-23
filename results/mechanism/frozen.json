@@ -1,0 +1,13 @@
+{
+ "prereg_sha256": "a33bc514faed8e44254eccf6381c0bb47a0a6cca8e89cae29722eab97965794d",
+ "frozen_at": "2026-09-21T00:41:16",
+ "final_ids_sha256": "a3f207c89fc0f2b77313bb202f85886e2eea499bf70c8b6ffba8a534dce1fd0d",
+ "benign_set_sha256": "3d77edeb36e3c2876fe1c661e8734f0f5e8f5502bfda93c3390fc2e9bd3ee57f",
+ "frames_attack_A_no_gate_sha256": "aa50e2ff05e15351a4369eca632b3050c02da8a478599dd7dd6d4608a0656f38",
+ "frames_attack_B_shipped_sha256": "348e22059f3ddcaf29df7d05b88f1852e4222a0a94353a49766324cc0e5bd725",
+ "frames_attack_E_silent_removal_sha256": "2c8e1ab1d1b41fc377d488268bd53d1f085d51af7ca9e782e972b79edf69bd09",
+ "frames_attack_O_obfuscated_address_sha256": "fbaa0af0981eba5aca6e844ce166697406aad43ba916677435ba4a605d3114ba",
+ "frames_benign_A_no_gate_sha256": "14466be56e976d54256f19172180b1ca1dd7086452959dbbc4d10d0b43739d20",
+ "frames_benign_B_shipped_sha256": "e90270a38ce2e80b474d135297cf524a144a33c2b83481493235b17c0806f1de",
+ "frames_benign_E_silent_removal_sha256": "e8c07d8c5cc4c83fabd00af4a3738e003a13f29dc3847b8e7e3a2869ed117df9"
+}

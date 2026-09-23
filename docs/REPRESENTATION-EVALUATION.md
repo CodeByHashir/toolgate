@@ -1,11 +1,10 @@
 # PII protection under attacker-controlled representations (M17): report
 
-> **Provenance (added on integration, 2026-09-23).** Measured on the code as of
-> commit `4f99241`, before nine later commits on `main` -- among them the
-> post-audit hardening pass, which changed how redaction spans are applied
-> (closing a redaction leak) and split the policy into profiles. **Not re-run
-> on the current gate.** The figures below describe that earlier version. See
-> `whats_has_been_done.md`, "Integrated after the fact: M13-M18".
+> **Provenance (added on integration, 2026-09-23).** Run on the code as of
+> commit `4f99241`, before nine later commits on `main`, and **not re-run**.
+> Checked without model calls (`scripts/verify_eval_frames.py`): the current
+> gate reproduces all 17 hashes of the model-visible frames frozen before
+> the run. The original trials are committed under `results/representation/`.
 
 > **Status: complete.** All 700 pre-registered trials were collected and analysed
 > with the pre-registered analysis; validity checks V1-V4 pass. The batch was

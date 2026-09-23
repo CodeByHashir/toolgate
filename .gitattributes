@@ -2,3 +2,12 @@
 *.png binary
 *.joblib binary
 *.safetensors binary
+
+# Paid model-side results (M14-M17) are stored byte-for-byte, never normalised.
+# Some record the SHA-256 of others as written -- results/action/selected.json
+# pins the pilot files that chose M15's setup -- so converting their CRLF line
+# endings would break those links on every checkout.
+results/action/*.json -text
+results/live/*.json -text
+results/mechanism/*.json -text
+results/representation/*.json -text
