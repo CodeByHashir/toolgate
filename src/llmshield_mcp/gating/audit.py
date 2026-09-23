@@ -55,6 +55,17 @@ class Outcome(StrEnum):
     #: request-side decisions never land in a denominator meant for
     #: content-detection statistics -- they are a different experiment.
     TOOL_CALL = "tool_call"
+    #: A tool DECLARATION judged against its pin (`gating/declaration_gate.py`),
+    #: at most once per tool per listing. Distinct from the two above for the
+    #: same reason they are distinct from each other: these rows are the output
+    #: of a hash comparison, not of a classifier, so counting them in any
+    #: detection statistic would mix a deterministic check into a measured one.
+    #:
+    #: They also serve a second purpose. The pin file is not tamper-proof
+    #: (`SECURITY.md`), and these rows are the corroborating record: a `new`
+    #: verdict for a tool this log pinned months ago is a contradiction rather
+    #: than a first sighting, which is what `declaration_seen()` reports.
+    TOOL_DECLARATION = "tool_declaration"
 
 
 SCHEMA = """
@@ -192,6 +203,31 @@ class DecisionLog:
     def count(self) -> int:
         with closing(self._connection.execute("SELECT COUNT(*) FROM decision_log")) as cursor:
             return int(cursor.fetchone()[0])
+
+    def declaration_seen(self, server: str, tool: str) -> bool:
+        """Whether this log already holds a declaration row for one tool.
+
+        The corroborating half of pin-file integrity. A pin file can be deleted
+        to return a tool to trust-on-first-use, and nothing inside that file can
+        prevent it (`SECURITY.md`). But the deletion does not reach this log, so
+        a `new` verdict for a tool with rows here is a contradiction between two
+        stores rather than a first sighting.
+
+        This raises the cost of a silent reset from "delete one file" to "tamper
+        with two stores consistently". It is not a guarantee: an attacker who
+        can delete the pin file can usually delete the database too. It makes
+        the attack noisier, which is the honest claim.
+
+        Uses the existing `(mcp_server_id, tool_name)` index.
+        """
+        query = (
+            "SELECT 1 FROM decision_log "
+            "WHERE mcp_server_id = ? AND tool_name = ? AND outcome = ? LIMIT 1"
+        )
+        with closing(
+            self._connection.execute(query, (server, tool, Outcome.TOOL_DECLARATION.value))
+        ) as cursor:
+            return cursor.fetchone() is not None
 
     def close(self) -> None:
         self._connection.close()

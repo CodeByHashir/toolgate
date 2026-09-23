@@ -144,7 +144,7 @@ def run_agent(
     from anthropic import AsyncAnthropic
 
     from llmshield_mcp.agent import ReferenceAgent, open_servers
-    from llmshield_mcp.gating import Gate, GateConfig, decision_log
+    from llmshield_mcp.gating import DeclarationGate, Gate, GateConfig, decision_log
     from llmshield_mcp.gating.policy import PolicyEngine, load_policy_config
     from llmshield_mcp.servers import load_servers_config
     from llmshield_mcp.settings import Settings
@@ -167,11 +167,19 @@ def run_agent(
             file=sys.stderr,
         )
 
-    async def _run(gate_factory: object) -> ChainRecord:
-        async with open_servers(specs, gate_factory=gate_factory) as servers:  # type: ignore[arg-type]
+    async def _run(gate_factory: object, declarations: DeclarationGate | None) -> ChainRecord:
+        async with open_servers(
+            specs,
+            gate_factory=gate_factory,  # type: ignore[arg-type]
+            declarations=declarations,
+        ) as servers:
             for server in servers.values():
                 names = ", ".join(t.name for t in server.tools)
                 print(f"  {server.name}: {len(server.tools)} tools ({names})")
+            if declarations is not None:
+                for report in declarations.actionable():
+                    # Verdicts and field names, never a field value (SEC-3).
+                    print(f"  declaration: {report.summary()}", file=sys.stderr)
             agent = ReferenceAgent(AsyncAnthropic(api_key=api_key), model=model)
             return await agent.run(task, servers, config.sandbox)
 
@@ -184,15 +192,23 @@ def run_agent(
         # the flag only overrides it when the caller actually passes one.
         gate_config = GateConfig(max_result_chars=max_result_chars) if max_result_chars else None
         gate_factory = None
+        declarations: DeclarationGate | None = None
         if log is not None:
             # One PolicyEngine shared by every server's Gate: the policy file is
             # read and validated once, so a typo fails before any server starts
             # rather than on whichever server happens to be built first.
-            policy = PolicyEngine(load_policy_config(policy_path))
+            config_obj = load_policy_config(policy_path)
+            policy = PolicyEngine(config_obj)
             gate_factory = lambda spec: Gate(  # noqa: E731 -- a def here would read worse
                 spec.name, log, gate_config, policy=policy
             )
-        record = asyncio.run(_run(gate_factory))
+            # Only when the policy file actually carries a `tool_declarations`
+            # block. With no block there is no gate at all, so nothing is
+            # pinned and nothing is logged -- see config/policy.yaml.
+            if config_obj.tool_declarations.enabled:
+                declarations = DeclarationGate(policy=config_obj.tool_declarations, log=log)
+                print("declarations verified against pins/")
+        record = asyncio.run(_run(gate_factory, declarations))
         logged = log.count() if log else 0
 
     print(f"\n{len(record.calls)} tool calls")

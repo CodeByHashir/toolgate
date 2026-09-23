@@ -31,7 +31,7 @@ from mcp.client.stdio import stdio_client
 
 from llmshield_mcp.chain import ChainRecord, ToolCallRecord, UsageRecord, normalise
 from llmshield_mcp.config import DEFAULT_AGENT_MODEL
-from llmshield_mcp.gating import Gate, gating_transport
+from llmshield_mcp.gating import DeclarationGate, Gate, gating_transport
 from llmshield_mcp.servers import ServerSpec
 
 DEFAULT_MODEL = DEFAULT_AGENT_MODEL
@@ -110,12 +110,23 @@ async def open_servers(
     specs: Sequence[ServerSpec],
     transport_factory: TransportFactory = stdio_client,
     gate_factory: Callable[[ServerSpec], Gate] | None = None,
+    declarations: DeclarationGate | None = None,
 ) -> AsyncIterator[dict[str, ConnectedServer]]:
     """Launch each server over stdio and initialise an MCP session for it.
 
     With `gate_factory`, each server's transport is wrapped by the gating
     decorator (M2). The agent code below is identical either way -- that is the
     point of intercepting at the transport boundary rather than in the agent.
+
+    With `declarations`, each server's tool list is checked against its pins
+    before it is stored, and a declaration the gate withholds never becomes a
+    `ToolParam`. Unlike the transport gate this one is *not* at the transport
+    boundary, and `gating/declaration_gate.py` gives the measured reason: the
+    SDK filters and can cache a listing after the transport has seen it, so a
+    frame-level check would verify a different set of bytes from the one the
+    model is given. `tools` below is the tuple the gate returned.
+
+    Omitting it changes nothing, which is how declaration verification ships.
     """
     async with AsyncExitStack() as stack:
         connected: dict[str, ConnectedServer] = {}
@@ -128,9 +139,10 @@ async def open_servers(
             session = await stack.enter_async_context(ClientSession(read, write))
             await session.initialize()
             listed = await session.list_tools()
-            connected[spec.name] = ConnectedServer(
-                name=spec.name, session=session, tools=tuple(listed.tools)
-            )
+            tools = tuple(listed.tools)
+            if declarations is not None:
+                tools = declarations.admit(spec.name, tools)
+            connected[spec.name] = ConnectedServer(name=spec.name, session=session, tools=tools)
         yield connected
 
 

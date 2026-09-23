@@ -4,7 +4,7 @@ Companion to `prd.md` (what to build) and `whats_has_been_done.md` (what is
 built). This file holds the plan, the architecture decisions and their
 rationale, remaining work, and known risks.
 
-**Current position: M0-M10 complete; M12 built, measured and removed (2.25). A post-audit hardening pass has since verified the headline finding against falsification, closed a redaction leak, pinned the evaluation corpus, split the policy into light/research profiles, decoupled gating from logging, and restated the FPR and Escalate claims to match their evidence, added a third publishable classifier (2.26), resolved the licensing exposure by removal rather than attribution (2.27), and added capability gating of outbound tool calls -- the control that survives the negative result (2.28). `docs/REPORT.md` + three committed SVG figures + a rewritten README state the headline findings in plain English. M11 (optional standalone proxy) not started. `config/policy.yaml` still ships uncalibrated by deliberate choice -- see 2.20.**
+**Current position: M0-M10 complete; M12 built, measured and removed (2.25). A post-audit hardening pass has since verified the headline finding against falsification, closed a redaction leak, pinned the evaluation corpus, split the policy into light/research profiles, decoupled gating from logging, and restated the FPR and Escalate claims to match their evidence, added a third publishable classifier (2.26), resolved the licensing exposure by removal rather than attribution (2.27), and added capability gating of outbound tool calls -- the control that survives the negative result (2.28). Tool *declarations*, the third attacker-controlled channel, are now being closed: `docs/PLAN-DECLARATION-INTEGRITY.md` is **complete, all six steps** (concealment decoding in the normaliser, the declaration canonicaliser, the trust-on-first-use pin store, verification at the point of model input, a `tool_declarations` policy block with its own audit outcome, and a measured churn base rate in `docs/DECLARATION-CHURN.md`). It ships OFF: no block in `config/policy.yaml` means no gate, nothing pinned, nothing logged -- see 2.29. `docs/REPORT.md` + three committed SVG figures + a rewritten README state the headline findings in plain English. M11 (optional standalone proxy) not started. `config/policy.yaml` still ships uncalibrated by deliberate choice -- see 2.20.**
 
 ---
 
@@ -1129,6 +1129,246 @@ workflow trips a reasonable policy. That needs realistic multi-step agent
 traces, which this project has one of (`chains/baseline.json`), and one is not a
 benchmark. Until that exists, the README claims the guarantee in terms of what
 the mechanism does and does not claim an FPR.
+
+### 2.29 Declaration integrity: the third channel, and why stripping was the wrong fix
+
+`docs/PLAN-DECLARATION-INTEGRITY.md` holds the full design. This section
+records the two decisions from steps 0-1 that a later reader would otherwise
+assume went the easy way, and the upstream correction that came with them.
+
+**The gap.** There are three attacker-controlled channels at the MCP boundary.
+Tool results are gated by detection (~20% recall, `docs/REPORT.md`). Tool calls
+are gated by capability rules (2.28, deterministic). Tool *declarations* were
+ungated: `agent.py`'s `to_anthropic_tool()` takes `tool.description` and places
+it in the model's context as configuration, at session start, before any call,
+for the whole session. `gating/transport.py`'s own comment called `tools/list`
+"out of scope".
+
+**Decoding, not stripping — and the plan said stripping.** Step 0 was written as
+"extend `INVISIBLE_RE` to the TAG block". Implemented literally that would have
+*reduced* detectability. Two different attacks wear the same clothes:
+
+- *Separator* concealment splits a visible keyword with invisible characters
+  (`Ig<ZWSP>nore`). The payload is the visible text. Stripping reassembles it
+  and the rule fires. This is what the normaliser has always done.
+- *Payload* concealment writes the whole instruction in codepoints that render
+  as nothing, leaving a short truthful label visible. Stripping deletes the
+  instruction and leaves the label, so the normalised text is benign and the
+  pipeline reports clean with *more* confidence than before the transform
+  existed.
+
+So TAG-block runs are decoded and appended (never replacing, so offsets stay
+valid for FR-5), and only then stripped. This mirrors the base64 handling
+already in that module, which made the same choice for the same reason.
+
+The stripping set is now Unicode's `Default_Ignorable_Code_Point` property
+rather than a hand-listed set of ranges. Naming the property rather than
+enumerating observed cases is the point: its definition is "a conforming
+renderer displays nothing for this", which is the threat exactly. It also
+covers what general category misses — U+3164 HANGUL FILLER is category `Lo`
+and renders as nothing.
+
+**Hash raw bytes, and the justification was measured rather than asserted.**
+The canonicaliser (`gating/declarations.py`) applies no NFC, NFKC, stripping or
+whitespace collapsing before hashing; only the JSON *encoding* is canonical
+(sorted keys, tight separators), because that is framing rather than content.
+
+The first draft of the module docstring justified this by saying a TAG-block
+payload would otherwise normalise to the clean string. That turned out to be
+false — precisely *because* step 0 made the normaliser decode rather than
+strip. Measured instead: of six concealment forms, five (zero-width split,
+homoglyph, NFKC fullwidth, bidi override, variation selector) normalise a
+poisoned description to text byte-identical with the clean one. Hashing
+normalised output would have hidden all five from the pin. Those five are now a
+parametrised test, so the argument stays executable.
+
+Arrays are deliberately **not** reordered while object keys are. Array order is
+semantic in a JSON Schema, and the published dangerous-default technique works
+by putting the dangerous value first in an `enum`; a canonicaliser that sorted
+arrays would call that rearrangement `unchanged`.
+
+**Two fields added to the plan's list.** `mcp_types.Tool` under the pinned
+`mcp==2.1.1` also models `execution` and `icons`, which the plan's §2.1
+enumeration predates. Both are server-controlled and both are pinned. A test
+asserts `set(Tool.model_fields) == set(HASHED_FIELDS) | set(EXCLUDED_FIELDS)`,
+so an SDK upgrade that adds a field fails the suite rather than silently
+widening the unpinned surface.
+
+**Upstream correction.** The plan's §5 cited arXiv:2607.05744 as reporting that
+existing sanitizers flagged none of its eight techniques. Reading the paper
+directly: 8/8 reach the model's context, **4/8 evade** the baseline sanitizer
+and 4/8 are caught, and only **1/8** (the TAG-block encoding) also evades the
+human approval render. The plan document is corrected in place with the
+correction marked. The figure matters because it is the baseline this project
+would be measured against, and overstating a prior result's weakness to make
+one's own work look better is the failure mode this repository exists to avoid.
+
+The same reading produced the finding that shapes the scope: **only one of the
+eight techniques is a concealment technique**, so step 0 closes T7 and nothing
+else. The other seven live on surfaces that steps 1-4 cover, or are plain-text
+injection already measured as poorly detected.
+
+**Step 2: the pin store, and three refusals.** `gating/pins.py` turns the
+canonicaliser into a control with memory — `pins/<server>.json`, trust on first
+use, verdicts `new`/`unchanged`/`mutated`/`stale_pin`. The design is mostly
+about what it refuses to do:
+
+- **A mutation never re-pins itself.** `observe()` writes on `new` and on
+  nothing else. A pin that updated itself on mutation would report `unchanged`
+  the next time and erase the rug-pull it exists to record. Accepting a change
+  is an explicit operator act.
+- **A corrupt pin file raises rather than starting empty.** "Start empty" and
+  "trust everything again" are the same thing; an attacker who damages the file
+  must not thereby reset every tool to TOFU silently. A *missing* file is still
+  a legitimate first run.
+- **`stale_pin` rather than a guess.** Digests from two canonicaliser versions
+  are not commensurable, so reporting either `unchanged` or `mutated` across a
+  version change would be inventing a claim.
+
+Content never reaches disk (SEC-3), and that is asserted against the written
+bytes rather than the intent: a marker planted in `description`, `title` and a
+schema property *name* must be absent from the file, as must a TAG-block
+payload in both its UTF-8 and `\ue00…`-escaped forms.
+
+The honest limit, stated in the module docstring rather than implied away: the
+pin file is not tamper-proof. Whoever can write to `pins/` can delete a pin and
+reset that tool to trust-on-first-use. File permissions answer that; this
+module does not.
+
+**Step 3: the one control here that is deliberately not at the transport
+boundary.** §5.4 asked whether client caching could make a pin verify something
+the agent never saw. Checked against `mcp==2.1.1` rather than reasoned about,
+and the answer moved the step: `ClientSession.list_tools()` does not cache, but
+`_absorb_tool_listing()` **drops** tools after the transport has seen them, and
+the higher-level `mcp.client.client.Client` has a response cache whose own
+comment says a hit "skips `session.list_tools`". A frame-level check therefore
+verifies a superset on one API and nothing at all on the other.
+
+So `gating/declaration_gate.py` runs on the `ListToolsResult` the agent
+receives, and the tuple it returns is the tuple that becomes `ToolParam`. The
+guarantee is structural rather than a property of the call graph keeping its
+shape, and the test asserts it against the tool list the fake Anthropic client
+was handed. `open_servers(declarations=...)` is opt-in; omitting it changes
+nothing.
+
+Shadowing is a separate field on the report, not a fifth verdict — a
+declaration can be `unchanged` *and* shadowing, and one enum would lose
+whichever lost the precedence argument. Only admitted tools claim a name, so a
+withheld declaration cannot reserve one against a later server.
+
+Two things recorded rather than glossed. `agent.py` qualifies tools as
+`<server>__<tool>`, so the *substitution* form of shadowing is unavailable in
+this client by construction; what remains is a model choosing between two
+similar tools. And the reference agent lists tools exactly once and never
+re-lists, so `notifications/tools/list_changed` handling would be dead code
+here — deferred with that reason, which is not the same as claiming mid-session
+mutation is handled.
+
+**Step 4: the policy block, and two decisions it forced.**
+`gating/declaration_policy.py` is keyed on **conditions** rather than verdicts,
+because a declaration can be `mutated` *and* concealed *and* shadowing at once
+and steps 1-3 deliberately kept those separate. The most severe action wins
+rather than the first match, so adding a rule can only tighten a verdict.
+Loading is strict: an unknown condition name raises, because `mutatedd: block`
+that quietly does nothing is the failure a security config must not have.
+
+**Defaults escalate, never block**, and the reason is a number this project
+does not have. The mechanism has no false-negative rate, so `calibrated: false`
+does not gate these blocks -- the same argument `tool_calls` makes. But benign
+churn, how often a legitimate server changes a declaration, is unmeasured (3.1,
+step 5). A control that might fire on every routine upstream release is one an
+operator switches off, so the layer has three states rather than two: off
+entirely, observe-only, and enforcing.
+
+**`on_pin_error` fails closed**, which settles the question step 3 left open.
+An unreadable pin store withholds that server's declarations rather than
+forwarding them unverified, scoped to the one server so the session survives.
+A damaged store is never overwritten with fresh pins -- that would turn a
+corrupt file into a clean trust-on-first-use in one step, the exact silent
+reset the exception exists to prevent.
+
+`Outcome.TOOL_DECLARATION` rows carry the verdict, the field *names* that
+moved, the digest and the action -- never a field value, asserted against every
+column. They also do a second job: `DecisionLog.declaration_seen()` makes a
+deleted pin file contradict the log rather than pass as a first sighting,
+raising the cost of a silent reset from one file to two stores.
+
+**Step 5: the measurement, and the statistic it retired.** 7 official MCP
+servers, their last 8 releases each, installed and launched for real --
+`tools/list` over stdio, not source parsing. 54 of 56 releases collected; the
+two that would not start are named rather than dropped.
+
+The pooled churn rate is 35.2% of tool comparisons and it is the **wrong
+number**. The distribution is bimodal with nothing between the modes: of 47
+release transitions, **30 changed no declaration at all and 17 changed every
+tool the server has**. A release either leaves declarations alone or rewrites
+all of them, which is an SDK metadata bump rather than an author editing a
+tool. Pinning is therefore silent through two thirds of upgrades, and when it
+fires it fires on everything -- easy to triage, not a needle in a haystack.
+
+`description` moves surgically where the machine-generated fields move
+wholesale: 9 of 318 tool comparisons (2.8%), across 9 of 47 releases. So a
+description change is not rare per release, but its blast radius is one tool.
+Since a poisoning payload has to reach the model as prose, the signal an
+operator wants is precisely the one SDK churn does not bury.
+
+Three further numbers, reported because they are cheap and unpublished:
+concealment prevalence **0 of 380**, cross-server name collisions **0**, and
+the project's own injection rules firing on **4 of 380** benign descriptions
+(1.1%, all `INJ-018`) -- corroborating from a new surface the existing finding
+that `INJ-*` is all cost and no benefit.
+
+**No default was changed on the strength of it.** `concealed` could defensibly
+become `block` since nothing triggers it, and does not: 380 declarations from
+official servers is not enough to claim a zero rate for an ecosystem, and a
+control whose first false positive blocks a tool gets switched off. Each
+default is now a choice with a number attached rather than a guess.
+
+The measurement does argue for one thing not built: a **field-aware** policy.
+`declaration_policy.py` keys on conditions and cannot express "alert on a
+description change, ignore an annotations change", which the churn shape says
+would be materially quieter. Recorded rather than added, since the step was
+scoped to measuring.
+
+**Step 6** put the third channel and a three-channel coverage table in the
+README, with no recall figure anywhere in it.
+
+**§5.3's self-test, done last and nearly missed.** The plan required running the
+paper's eight techniques against toolgate and publishing the result "either
+way"; steps 0-6 had been declared complete without it. Rebuilt payloads, one per
+technique, run through the layers toolgate actually runs
+(`tests/test_paper_techniques.py`). On first sight toolgate flags **1 of 8**
+outright (T7), against the paper's baseline sanitizer at 4 of 8 -- on disjoint
+techniques, so the controls complement rather than replace each other. After
+approval every declaration payload is flagged by construction. **T5 is missed**
+on the result path, where the baseline catches it. The README states all of it,
+including the loss.
+
+**Sample caveat, stated everywhere it appears.** These are official reference
+servers, chosen for having release histories to walk. They are likelier to be
+stable than the third-party servers an operator installs, so the churn figure
+is a floor rather than a typical value. And 0 collisions means `shadowed` is
+*unmeasured*, not quiet.
+
+**No recall number** is claimed for any of it, and per plan §3.2 none will be —
+pinning catches post-approval mutation by construction, and printing that as a
+result next to a measured AUROC is the rigor slippage this project spent the
+audit removing.
+
+**Still open.** Hashing the parsed `mcp_types.Tool` cannot see fields the SDK
+does not model, since pydantic drops unknown keys, so a nonstandard or future
+field cannot be pinned. The canonicaliser takes a plain mapping, so a raw
+`tools/list` frame could be fed to it — but §5.4 established that the frame is
+the *wrong* object to verify, so closing this gap means reaching the unparsed
+fields at the point the agent receives them, not moving verification back to
+the transport.
+
+Also open, and deliberately so until step 4: what a `PinStoreCorrupt` should
+mean. It currently propagates, which fails closed. That is the safer default to
+sit on, but it should be a policy decision rather than a consequence of where a
+`try` block happens to be.
+
+---
 
 ## 4. Open Questions
 

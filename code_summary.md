@@ -60,13 +60,21 @@ D:\LLMSHIELD-MCP\
 │   ├── benchmark_rules.py       rule recall vs BIPIA + InjecAgent (imports
 │   │                            loaders from llmshield_mcp.corpus.sources)
 │   ├── benchmark_latency.py     per-detector + fused latency (FR-13, M9)
-│   └── generate_report.py       SVG figures from a GAUGE run (AC-7, M10)
+│   ├── generate_report.py       SVG figures from a GAUGE run (AC-7, M10)
+│   └── collect_declarations.py  launches 7 real MCP servers across 8 releases
+│                                each; writes results/declarations/snapshot-*.json
+│                                and renders docs/DECLARATION-CHURN.md
 ├── corpus/
 │   ├── external/                 fetched BIPIA/InjecAgent (gitignored)
 │   ├── reference/                V0/V3 training-data reference corpus,
 │   │                              train.jsonl (gitignored, not published)
 │   └── payload_corpus.sqlite     ingested corpus store (gitignored, *.sqlite)
+├── pins/                         tool-declaration pins, <server>.json
+│                                  (gitignored by default; digests + field
+│                                   names + timestamps, never content)
 ├── results/
+│   ├── declarations/             committed churn snapshot (digests and
+│   │                              metrics only, never declaration text)
 │   └── gauge/                    scores.csv + calibration_report.json per
 │                                  gauge-run (gitignored output directory)
 ├── docs/
@@ -75,6 +83,9 @@ D:\LLMSHIELD-MCP\
 │   ├── POLICY-AUDIT.md          pre-M4 policy/threshold audit, measured
 │   ├── LATENCY-BENCHMARK.md     M9: per-detector, fused, 20-call chain latency
 │   ├── REPORT.md                M10: the public write-up (AC-7)
+│   ├── PLAN-DECLARATION-INTEGRITY.md  the declaration-integrity plan, all
+│   │                            six steps done (plan.md 2.29)
+│   ├── DECLARATION-CHURN.md     measured churn base rate, dated + frozen
 │   └── figures/                 committed SVG charts REPORT.md embeds
 ├── src/llmshield_mcp/
 │   ├── __init__.py              __version__ = "0.1.0"
@@ -92,12 +103,29 @@ D:\LLMSHIELD-MCP\
 │   │   │                        per block; reports unplaceable ones),
 │   │   │                        build_block_result() (FR-5/FR-6)
 │   │   ├── policy.py            fusion + policy engine (FR-4/FR-9) (240)
+│   │   ├── tool_calls.py        capability gating for outbound tools/call:
+│   │   │                        action/paths/egress rules, no content
+│   │   │                        inspection (plan.md 2.28)
+│   │   ├── declarations.py      tool-declaration canonicaliser: raw-byte
+│   │   │                        per-field hashes, concealment flag,
+│   │   │                        render_for_review() (plan.md 2.29)
+│   │   ├── declaration_policy.py  tool_declarations block: conditions ->
+│   │   │                        allow/escalate/block, most-severe-wins,
+│   │   │                        on_pin_error fails closed (plan.md 2.29)
+│   │   ├── declaration_gate.py  verifies the ListToolsResult the AGENT gets,
+│   │   │                        not the frame (SDK filters + caches after the
+│   │   │                        transport); shadowing view; off by default
+│   │   ├── pins.py              TOFU pin store, pins/<server>.json; verdicts
+│   │   │                        new/unchanged/mutated/stale_pin; digests and
+│   │   │                        field names only, never content (plan.md 2.29)
 │   │   └── transport.py         Gate + stream wrappers; wires detectors +
 │   │                            PolicyEngine into observe_inbound (M4) (340)
 │   ├── detectors/
 │   │   ├── __init__.py          exports; V3 imported lazily (31)
 │   │   ├── base.py              detector contract (118)
-│   │   ├── normalise.py         canonicalisation + dual scan (187)
+│   │   ├── normalise.py         canonicalisation + dual scan; NFKC, TAG-block
+│   │   │                        decode, Default_Ignorable strip, homoglyph,
+│   │   │                        base64 (plan.md 2.29)
 │   │   ├── guard.py            published Apache-2.0 binary injection
 │   │   │                        classifier from the HF Hub, pinned by commit
 │   │   │                        SHA; positive class read from id2label
@@ -134,7 +162,14 @@ D:\LLMSHIELD-MCP\
 │   ├── test_corpus_llmail_inject.py  parsing, dedup, sampling cap (6)
 │   ├── test_corpus_sources.py   load_benign() sanity (offline) (2)
 │   ├── test_corpus_store.py     PayloadCorpusItem round-trip, export (7)
-│   ├── test_detector_normalise.py  canonicalisation + dual scan (22)
+│   ├── test_detector_normalise.py  canonicalisation, dual scan, concealment (41)
+│   ├── test_gating_declarations.py canonicaliser: adversarial cases (39)
+│   ├── test_gating_pins.py      TOFU, rug-pull, corruption, SEC-3 bytes (42)
+│   ├── test_gating_declaration_gate.py  verification at model input (22)
+│   ├── test_gating_declaration_policy.py  policy, audit rows, fail-closed (38)
+│   ├── test_declaration_churn.py  churn arithmetic vs synthetic snapshots (17)
+│   ├── test_paper_techniques.py  arXiv:2607.05744 T1-T8 vs toolgate; backs
+│   │                            the README table cell by cell (17)
 │   ├── test_detector_pii.py     PII, redaction, SEC-3 leakage (31)
 │   ├── test_detector_rules.py   rule loading, matching, SEC-6 (24)
 │   ├── test_detector_base.py    contract tests (7)

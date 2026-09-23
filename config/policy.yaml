@@ -182,3 +182,65 @@ gate:
 # exists because detector thresholds are uncalibrated on this surface; a
 # capability rule has no threshold and no false-positive rate to calibrate.
 # See gating/tool_calls.py.
+
+# ---------------------------------------------------------------------------
+# tool_declarations: integrity gating of INBOUND tool declarations
+# ---------------------------------------------------------------------------
+#
+# Absent here on purpose -- the default profile ships with declaration gating
+# OFF, so adding the layer changed nothing for anyone who has not opted in.
+# With no block, no gate is built: nothing is pinned, nothing is logged.
+#
+# The third attacker-controlled channel at the MCP boundary. Tool results are
+# inspected by detectors (~20% recall, docs/REPORT.md). Tool calls are
+# constrained by `tool_calls` above. Tool DECLARATIONS -- the name, description
+# and schema a server sends at `tools/list` -- go straight into the model's
+# context as trusted configuration, at session start, before any call, and stay
+# there for the whole session. See docs/PLAN-DECLARATION-INTEGRITY.md.
+#
+# What this can and cannot tell you. It CANNOT tell you a server is malicious:
+# a server that ships a poisoned description at install time is pinned exactly
+# as faithfully as an honest one. It CAN tell you a server changed its mind
+# after you trusted it. Those are different claims and only the second is made.
+# Concealment is the one exception, because non-rendering characters are a
+# property of a single declaration rather than of a change.
+#
+# The block looks like this:
+#
+#   tool_declarations:
+#     # Actions per CONDITION, not per verdict: a declaration can be mutated
+#     # AND concealed AND shadowing at once, and the most severe action wins.
+#     default:
+#       new:       allow      # trust on first use, recorded and logged
+#       mutated:   escalate   # rug-pull: the pinned bytes changed
+#       stale_pin: escalate   # pin written by another canonicaliser version
+#       shadowed:  escalate   # another server already declares this name
+#       concealed: escalate   # non-rendering characters in a field
+#     on_pin_error: block     # unreadable pin store -> withhold that server
+#     rules:
+#       filesystem.read_file:
+#         mutated: block      # this one tool is stable; a change is refused
+#
+# Every key above is its own default, so `tool_declarations: {}` gives exactly
+# that. Actions: `allow` forwards, `escalate` forwards AND marks the row,
+# `block` withholds the declaration so it never becomes a ToolParam.
+#
+# **Why the defaults escalate rather than block.** The mechanism has no
+# false-negative rate -- a hash comparison either matches or it does not -- so
+# there is nothing to calibrate, and `calibrated: false` above does NOT gate
+# these blocks (same argument as `tool_calls`). But the operationally relevant
+# number is how often a legitimate server changes a declaration, and nobody has
+# published that base rate, including this project. plan.md 3.1 is the
+# measurement. Until it exists, a control that might fire on every routine
+# upstream release ships in observe-only mode, because a noisy control is one
+# an operator switches off.
+#
+# **on_pin_error fails closed.** "The pin store is damaged" and "trust
+# everything again" must not be the same outcome. Blocking is scoped to the one
+# server whose pins could not be read; the session keeps running on whatever
+# else verified cleanly, and the drop is logged.
+#
+# Pins live in `pins/<server>.json`, gitignored by default. They hold digests,
+# field names and timestamps -- never a description or a schema (SEC-3) -- so
+# committing them leaks nothing and turns tampering into a reviewable diff.
+# SECURITY.md explains why that is worth more than signing the file would be.

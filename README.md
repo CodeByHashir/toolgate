@@ -13,17 +13,21 @@ This repository does two things:
    surface. Three classifiers, 337 decontaminated payloads, three independent
    attack corpora, full matched-FPR protocol. **They do not** — including a
    production classifier with ~840k monthly downloads.
-2. **Ships the control that survives that finding.** If you cannot reliably
+2. **Ships the controls that survive that finding.** If you cannot reliably
    detect the attack, stop trying to, and constrain what a compromised agent is
-   allowed to *do* instead. Sandbox confinement, egress allowlists, and named
-   destructive operations — deterministic, no classifier.
+   allowed to *do* instead — and check the configuration it is handed in the
+   first place. Sandbox confinement, egress allowlists, named destructive
+   operations, and integrity pinning of tool declarations — deterministic, no
+   classifier.
 
 > **Status.** Interception, six detector adapters, a fusion/policy engine, a
 > decontaminated 337-item corpus across three independent attack sources,
 > matched-FPR calibration, leave-one-source-out, latency and dilution
-> benchmarks, and capability gating of outbound tool calls are built and run
-> against real weights. 431 tests, CI green. The full evidence is
-> [`docs/REPORT.md`](docs/REPORT.md); the short version is below.
+> benchmarks, capability gating of outbound tool calls, and integrity gating of
+> inbound tool declarations are built and run against real weights. 625 tests,
+> CI green. The full evidence is [`docs/REPORT.md`](docs/REPORT.md) and
+> [`docs/DECLARATION-CHURN.md`](docs/DECLARATION-CHURN.md); the short version is
+> below.
 >
 > An optional standalone stdio proxy is the one planned piece not started. A
 > session-level correlation layer was built, measured, found unable to detect
@@ -125,6 +129,134 @@ transport boundary, so the request never reaches the server.
 Capability gating ships **off** in the default profile — adding it changed
 nothing for anyone who has not opted in. `config/policy.agent.yaml` is a
 working example scoped to the reference servers.
+
+## The third channel: tool declarations
+
+Capability rules cover what the agent *does*. They say nothing about the
+configuration it is handed before it does anything.
+
+When an agent connects to an MCP server it performs a `tools/list` handshake,
+and the returned name, description and JSON schema go straight into the model's
+context as tool definitions. That text is server-controlled, it arrives framed
+as trusted configuration rather than as data, and it stays in context for the
+whole session. It is a better-placed injection surface than a tool result, and
+until recently this project did not look at it at all.
+
+```yaml
+# config/policy.yaml — ships absent, so the layer is off
+tool_declarations:
+  default:
+    mutated:   escalate   # the pinned bytes changed after you trusted them
+    concealed: escalate   # non-rendering characters in a field
+    shadowed:  escalate   # another server already declares this name
+  on_pin_error: block     # unreadable pin store -> withhold that server
+```
+
+Declarations are hashed per field on first sight (`pins/<server>.json`, digests
+only, never content) and re-checked on every listing. A change names the field
+that moved. A declaration the policy refuses is dropped from the list handed to
+the model, so the poisoned text never reaches it.
+
+**The honest framing, and it is narrower than it sounds.** Pinning cannot tell
+you a server is malicious — a server that ships a poisoned description at
+install time is pinned exactly as faithfully as an honest one. It tells you a
+server **changed its mind after you trusted it**. Those are different claims and
+only the second is being made. Concealment is the one exception, because
+non-rendering characters are a property of a single declaration rather than of a
+change.
+
+### Is it deployable? — measured, not asserted
+
+A control that fires on every routine upstream release is one an operator
+switches off. Nobody had published how often real MCP servers change a
+declaration, so the defaults above were a guess. They are not any more:
+**54 releases of 7 official servers, installed and launched for real**
+([`docs/DECLARATION-CHURN.md`](docs/DECLARATION-CHURN.md), 2026-09-23).
+
+| Measurement | Result |
+|---|---|
+| Release transitions that changed **no** declaration | **30 of 47** |
+| Transitions that changed **every** tool at once | **17 of 47** |
+| Anything in between | **none** |
+| Tool comparisons where `description` changed | **9 of 318 (2.8%)** |
+| Declarations carrying non-rendering characters | **0 of 380** |
+| Cross-server tool-name collisions | **0** |
+| Benign descriptions firing the project's own injection rules | **4 of 380 (1.1%)** |
+
+The distribution is bimodal with nothing between the modes: a release either
+leaves declarations alone or rewrites all of them, which is the signature of an
+SDK metadata bump rather than an author editing a tool. So pinning is silent
+through roughly two thirds of upgrades, and when it does fire it fires on
+everything — an easy alert to triage rather than a needle in a haystack. The
+pooled 35% "churn rate" is the wrong statistic and the document says so.
+
+The last row is a false-positive rate, not a recall figure. These are official
+reference servers and nobody is attacking them, so every hit is a false alarm —
+all four from `INJ-*`, the rule family this project already measured at 0/187 on
+real attacks.
+
+**No number here is a detection result.** Pinning catches post-approval mutation
+*by construction* — hashes detect hash changes — and printing that next to a
+measured AUROC would be exactly the rigor slippage the rest of this repository
+exists to avoid.
+
+### Against a published attack catalogue — including what it misses
+
+[arXiv:2607.05744](https://arxiv.org/abs/2607.05744) implements eight
+tool-metadata techniques and reports that a representative string-matching
+sanitizer catches four of them. Here are the same eight run against toolgate's
+shipped layers:
+
+| | Technique | Surface | Paper's baseline sanitizer | toolgate, first sight | toolgate, if it arrives as a change |
+|---|---|---|---|---|---|
+| T1 | Direct description injection | description | caught | not flagged | flagged — `mutated: description` |
+| T2 | Cross-tool shadowing | description | caught | not flagged | flagged — `mutated: description` |
+| T3 | Rug-pull | re-`tools/list` | caught | — | flagged — `mutated: description` |
+| T4 | Confused-deputy credential relay | schema parameter | missed | not flagged | flagged — `mutated: input_schema` |
+| T5 | Error-channel injection | `isError` result | caught | **missed** | n/a — a result, not a declaration |
+| T6 | Namespace collision | tool name | missed | flagged vs another MCP server; **invisible** vs a host built-in | same |
+| T7 | TAG-block concealment | description | missed | **flagged** — `concealed` | flagged |
+| T8 | Dangerous-default coercion | schema `default`/`enum` | missed | not flagged | flagged — `mutated: input_schema` |
+
+**On first sight toolgate flags 1 of 8 outright; the paper's baseline catches 4
+of 8.** That is the honest comparison, and it is not the flattering one. But the
+two catch *different* techniques. The baseline catches the plain-text payloads
+toolgate passes on first sight; toolgate flags T7, which the paper shows is the
+only technique that gets past both the sanitizer and a human reviewer. They are
+complements, not substitutes. T6 is flagged only when the colliding name belongs
+to another connected server — toolgate has no list of the host's built-in tools,
+which is what the paper's T6 actually shadows.
+
+**After approval, every declaration payload is flagged, by construction** — T4
+and T8 included, which carry no imperative for a keyword sanitizer to find.
+Pinning does not care what a change says. No rate is attached to that, for the
+reason given above.
+
+**T5 is a straight loss.** It travels the tool-result path, where the shipped
+detectors let this payload through with nothing firing. The baseline catches it.
+That is consistent with the ~20% recall measured in `docs/REPORT.md`, not an
+exception to it.
+
+Read the table with three limits. The payloads are **rebuilt** from the paper's
+descriptions rather than copied from it, one per technique, so each row is a spot
+check and not a rate — a different phrasing of T5 could fire. **Flagged is not
+withheld**: the shipped defaults escalate, which logs the verdict and forwards
+the declaration; withholding takes an explicit `block`. And the baseline column
+is quoted from the paper's Table 5, not re-run. Every toolgate cell is an
+assertion in [`tests/test_paper_techniques.py`](tests/test_paper_techniques.py).
+
+## Coverage: all three channels at the MCP boundary
+
+| Channel | Direction | Mechanism | Guarantee |
+|---|---|---|---|
+| Tool **results** | server → client | Detection (six detectors, fused) | None. ~20% recall, measured and published |
+| Tool **calls** | client → server | Capability rules | No false-negative rate against the behaviour a rule names |
+| Tool **declarations** | server → client | Per-field integrity pinning | Detects post-approval change, by construction. Says nothing about first sight |
+
+Two of the three need no classifier, which is the whole argument: where
+detection was measured and failed, the control moved to something
+deterministic. Both deterministic layers ship **off** — adding them changed
+nothing for anyone who has not opted in.
 
 ## Why this might be interesting
 
@@ -249,6 +381,23 @@ latency breakdown.
 uv run pytest              # contract tests, no weights needed
 uv run pytest -m models    # reuse audit, requires the local artifacts
 ```
+
+## Reproduce the declaration-churn snapshot
+
+```bash
+uv run python scripts/collect_declarations.py --collect   # installs and launches real servers
+uv run python scripts/collect_declarations.py --report    # renders docs/DECLARATION-CHURN.md
+```
+
+`--collect` walks each server's release history on npm and PyPI, launches every
+version over stdio and records what its real `tools/list` sends back. It needs
+network, `npx` and `uvx`, and takes several minutes. It **overwrites** the
+committed snapshot and therefore every figure in the document, which is why the
+snapshot is dated and frozen rather than refreshed on a schedule.
+
+The snapshot stores digests, tool names and pre-computed metrics — no
+description and no schema — so it neither leaks nor redistributes anything a
+server sent.
 
 ## Record a tool-call chain
 

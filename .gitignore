@@ -61,3 +61,25 @@ results/gauge/*
 !results/gauge/scores.csv
 !results/gauge/calibration_report.json
 !results/gauge/recut.json
+
+# ...and a second. The declaration-churn snapshot backing
+# docs/DECLARATION-CHURN.md is committed for the same reason: the document's
+# every figure is derived from it, and a frozen base rate whose source was
+# discarded is exactly the unreproducible claim plan.md 2.6 forbids. The
+# snapshot holds digests, tool names and pre-computed metrics -- no description
+# and no schema -- so committing it neither leaks nor redistributes anything a
+# server sent (scripts/collect_declarations.py explains the choice).
+!results/declarations/
+results/declarations/*
+!results/declarations/snapshot-*.json
+
+# Tool-declaration pins (plan.md 2.29). Runtime state, so gitignored by the
+# same default as everything else here -- a pin file is a record of what one
+# machine happened to connect to, and a commit should not pick that up unasked.
+#
+# Committing them is a legitimate operator choice and the plan says so: pins
+# under review turn a rug-pull into a reviewable diff, which is strictly better
+# than an alert nobody reads. They hold digests, field names and timestamps
+# only -- never a description or a schema (SEC-3) -- so committing one leaks
+# nothing a server sent. Drop the line below to opt in.
+pins/

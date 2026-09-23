@@ -42,6 +42,7 @@ import yaml
 from llmshield_mcp.config import REPO_ROOT
 from llmshield_mcp.detectors.base import DetectorResult, Span
 from llmshield_mcp.gating.audit import Decision, Outcome
+from llmshield_mcp.gating.declaration_policy import DeclarationPolicy, load_declaration_policy
 from llmshield_mcp.gating.tool_calls import ToolCallPolicy, load_tool_call_policy
 
 DEFAULT_POLICY_PATH = REPO_ROOT / "config" / "policy.yaml"
@@ -65,6 +66,10 @@ class PolicyConfig:
     #: Capability rules for outbound `tools/call` requests. Empty and inert
     #: unless a policy file defines a `tool_calls` block.
     tool_calls: ToolCallPolicy = ToolCallPolicy()
+    #: Verdict actions for inbound tool DECLARATIONS. Disabled unless a policy
+    #: file defines a `tool_declarations` block, in which case the caller builds
+    #: a `DeclarationGate` (`gating/declaration_gate.py`).
+    tool_declarations: DeclarationPolicy = DeclarationPolicy()
 
     def threshold(self, detector_key: str, action: str, default: float = 1.0) -> float:
         return self.thresholds.get(detector_key, {}).get(action, default)
@@ -151,6 +156,7 @@ def load_policy_config(path: Path | None = None) -> PolicyConfig:
         thresholds=thresholds,
         max_result_chars=max_result_chars,
         tool_calls=load_tool_call_policy(raw.get("tool_calls")),
+        tool_declarations=load_declaration_policy(raw.get("tool_declarations")),
     )
 
 
