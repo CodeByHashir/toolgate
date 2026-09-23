@@ -3198,3 +3198,29 @@ ever pushed.
 The repository's git identity is now the noreply address, set in the repository
 config so it applies to every worktree. A full backup bundle of every
 pre-rewrite ref was taken first.
+
+---
+
+## Published
+
+Made public on 2026-09-23, after the rewritten history passed CI on the new
+repository (all eleven steps) and an independent check from a fresh clone of
+GitHub: 29 commits on `main` only, all on the noreply address, and zero
+occurrences of the old address, the local path, the CC BY-SA fixture or any
+secret pattern.
+
+Settings applied at publication:
+
+| Setting | State |
+|---|---|
+| Visibility | public |
+| Private vulnerability reporting | enabled, so the channel `SECURITY.md` points to exists |
+| `main` protection | force-push and deletion blocked, applying to admins too; ordinary pushes unaffected |
+| Topics | `mcp`, `model-context-protocol`, `prompt-injection`, `llm-security`, `ai-agents`, `ai-security` |
+
+The pre-rewrite repository remains private as `toolgate-private-archive`.
+
+Branch protection could only be applied after the visibility change: GitHub
+offers it on public repositories at this plan level. The first attempt returned
+"Repository has been locked" while GitHub processed the visibility change, and
+the retry succeeded.
