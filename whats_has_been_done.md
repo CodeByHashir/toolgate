@@ -2286,7 +2286,10 @@ the test count, and the two things that are not done.
 
 ## A question answered while here
 
-Whether milestones M13-M18 existed anywhere. They do not: no commit on any
+Whether milestones M13-M18 existed anywhere. **[Corrected 2026-09-23: this
+was wrong. M13-M18 existed as uncommitted work in a separate worktree, which
+this check did not look at; they are integrated further down this file.]**
+They do not: no commit on any
 branch, no row in the milestone table, no mention in any document. The plan
 tops out at M12, M11 (an optional stdio proxy) is the only "Not started", and
 the thesis repository uses Phase/ADR numbering rather than M-numbers. Recorded
@@ -3224,3 +3227,529 @@ Branch protection could only be applied after the visibility change: GitHub
 offers it on public repositories at this plan level. The first attempt returned
 "Repository has been locked" while GitHub processed the visibility change, and
 the retry succeeded.
+
+---
+
+## Integrated after the fact: M13-M18, measured on an earlier base
+
+**Read this before the entries that follow.** They were written between
+2026-09-20 and 2026-09-22 in a separate worktree and never committed there.
+They are integrated on 2026-09-23, **unedited**, after this log's later
+entries -- so they are out of chronological order, and they describe the code
+as it stood at commit `4f99241`, not as it stands now.
+
+Nine commits landed on `main` between that base and this integration: the
+post-audit hardening pass (redaction spans clipped per block, which closed a
+redaction leak; the policy split into profiles; M12 removed), the removal of
+`chains/latency_chain.json`, capability gating, the rename to toolgate, and
+declaration integrity. **None of the M14-M17 model-side runs were repeated on
+the current gate.** Every figure below is what was measured on that base. The
+one known, concrete drift: M13's benign controls were 34 recorded results (25
+after de-duplication); only `chains/baseline.json`'s 9 remain.
+
+Integration changes, all outside the research content: two tests updated to
+current code (a stale test double for `apply_redaction`'s current return
+contract, and the benign-control count), and the duplicate `AGENTS.md` (identical
+to `CLAUDE.md` apart from its title) left out. The results under
+`results/{action,e2e,live,mechanism,representation}/` stay gitignored, as their
+author left them; they exist in the originating worktree and a local backup.
+
+---
+
+## M13 — End-to-end gate evaluation (offline, no model)
+
+**Work type:** Evaluation. No detector, model, policy or architecture change.
+
+**Why:** every detection number so far was computed by calling a detector
+directly. Nothing had pushed real adversarial payloads through the `Gate` and
+inspected the agent-facing frame, so the documented Block/Redact/Escalate
+contract had never been verified against real payloads, and MCP-* recall on
+LLMail-Inject was unpublished.
+
+**What changed (all new files; no tracked file behaviour changed):**
+
+- `src/llmshield_mcp/eval_e2e.py` -- `Payload`, `carrier_text()` (reuses
+  `dilution.build_diluted_text`), `base64_variant()`, `counterfactual_policy()`
+  (shipped policy with only `calibrated=True`), `CapturingLog`,
+  `documented_outcome()` (oracle re-derived from the documented contract using
+  detector output only, not `PolicyEngine`), `contract_violations()`,
+  `payload_survival()`, `run_evaluation()`, `load_corpus()` (+ hash manifest,
+  missing families reported), `summarise()` (Wilson CIs via `gauge.stats`),
+  `rule_hits()`, `raw_isolated_recall()`, `results_digest()`.
+- `scripts/eval_e2e.py` -- runner; writes `results/e2e/e2e_results.json`
+  (gitignored); exits 1 on contract violation, 2 on missing corpus.
+- `tests/test_eval_e2e.py` -- 29 weight-free, corpus-free tests, including
+  tests that the checker can fail (tampered frames) and two that break the real
+  gate (masking disabled, calibration ceiling removed) and require violations.
+- `docs/E2E-EVALUATION.md` -- contract, method, results, limitations.
+
+Relationships: imports `Gate`/`PolicyEngine`/`DecisionLog` (`gating/`),
+`dilution`, `corpus.sources` loaders, `chain.ChainRecord`, `gauge.stats`. Does
+not enable the M12 accumulator.
+
+**Results (shipped policy unless stated; details in `docs/E2E-EVALUATION.md`):**
+
+| Measurement | Result |
+|---|---|
+| Gate calls | 3,014 (2 policies x 1,507); 0 contract violations; audit log complete |
+| Injection flag, 337 payloads | 24.9 % (84/337) [20.6, 29.8], identical at 0/50/75/90 % dilution; 0 payloads change decision |
+| MCP-* recall | BIPIA 15.2 %, InjecAgent 30.6 %, **LLMail-Inject 30.7 % (46/150) [23.8, 38.5]** |
+| Payload text reaching the agent | 1,348/1,348 deliveries (only PII values masked, 632 deliveries) |
+| Block path (base64, 84 payloads) | shipped: 84 ESCALATE, 0 BLOCK; counterfactual: 84 BLOCK, frame == block replacement, 0 survive |
+| Plain payloads under counterfactual | 0 blocked (Block needs `normalisation_only`) |
+| Benign controls | 0/75 flagged [0.0, 4.9]; 0 non-ALLOW |
+
+**Verification:** `pytest -m "not models"` **397 passed** (368 + 29 new); `ruff
+check`, `ruff format --check` and `mypy` clean on the new files; two independent
+runs produced identical digests.
+
+**Known limitations:** offline synthetic frames (no live transport or agent, no
+model-side attack success); light detectors only (V0/V3 inert by policy,
+not run); static non-adaptive corpora; PII masking numbers are dominated by two
+fixed literal attacker addresses; LLMail-Inject cache was copied from a sibling
+worktree, not re-downloaded; the repository-line benign sample drifts as repo
+files change (the recorded-chain controls and the pinned digest do not). The
+whole tree still fails `ruff check`/`ruff format --check` on the pre-existing
+M12 files (`dilution.py`, `gating/session.py`, `gating/transport.py` import
+order, `tests/test_dilution.py`, `tests/test_session.py`); untouched here.
+
+---
+
+## M14 — Model-side attack success (pre-registered; stage 1 only, stopped by rule)
+
+**Work type:** Evaluation with a real model. No production policy, detector or
+architecture change; `calibrated` untouched; C's withholding adapter exists only
+in the evaluation module.
+
+**Why:** M13 showed the shipped gate flags ~25% of payloads and withholds none.
+It could not say whether the model acts on a payload that reaches it, or what
+PII masking / withholding would change on the model side.
+
+**What changed (all new files):**
+
+- `docs/LIVE-EVALUATION-PREREG.md` -- frozen before any model call: arms, fixed
+  environment, sample ids + seed, deterministic success criterion, Wilson /
+  exact McNemar / paired bootstrap, materiality rule (10 points), futility stop
+  (arm A < 7/64), token cap. Its sha256 is recorded in every results file.
+- `src/llmshield_mcp/eval_live.py` -- eligibility (`attacker_address`,
+  `eligible_payloads`), stratified `draw_sample`, `compose_document`,
+  `attack_succeeded`, the four arms (`build_gate`, `WithholdOnEscalateGate`,
+  `policy_for_arm`, `frame_through`), in-process `MailServer` (source + recording
+  sink over a real MCP `Server`/`ClientSession`), `FixedParamsClient` (fixes
+  temperature without editing `ReferenceAgent`), `run_trial`/`run_trials`,
+  statistics (`rate`, `summarise_attack`, `paired_contrast`, `summarise_benign`).
+- `scripts/eval_live.py` -- staged runner: `preflight`, `smoke`, `stage1`,
+  `stage2`, `analyse`. Key from env/`.env`, never printed. Writes `results/live/`
+  (gitignored).
+- `tests/test_eval_live.py` -- 35 weight-free tests, including a scripted
+  maximally compliant fake model driven through the real gate and MCP path in
+  each arm.
+- `docs/LIVE-EVALUATION.md` -- results and decision needed.
+
+**Design decisions:** the sink is a recording `send_email` tool, so success is a
+deterministic recipient match, not a judged outcome. Eligibility uses dataset
+semantics (LLMail `contact@contact.com`; InjecAgent data-stealing with
+`amy.watson@gmail.com`); BIPIA and direct-harm payloads are excluded. Arm D
+empties the redaction role, which makes D byte-identical to A, so D vs A is a
+noise estimate and B vs D isolates PII masking.
+
+**Results:** preflight passed (A == D byte-identical; B masks the attacker
+address in 64/64; C withholds exactly the 27 flagged and 0/21 benign). Stage 1
+(arm A, 64 payloads, `claude-haiku-4-5-20251001`, temperature 0): **0/64
+attack successes, Wilson 95% [0.0, 5.7]**; no `send_email` call of any kind.
+Futility rule fired, so **arms B, C, D were not run**. No model-side result
+exists for B, C, D or benign completion under C.
+
+**Conclusion (narrow):** with a 0/64 baseline no gate can show a >=10 point
+reduction on this model and task. Not evidence that the gate protects.
+
+**Verification:** `pytest -m "not models"` passes; `ruff check`,
+`ruff format --check` and `mypy` clean on the new src/tests files (the runner
+script has E501 line-length findings; scripts are outside the CI lint scope).
+Spend: ~117K input / ~10K output tokens including the smoke test.
+
+**Known limitations / open decision:** one model, one task, one template, n=64;
+benign completion rule is weak (counts a clarifying question as completion).
+Decision pending: run B/C/D anyway as a disclosed deviation, or pre-register a
+new experiment with a measurable baseline. (Resolved: M15 below.)
+
+---
+
+## M15 — Action-inviting model-side evaluation with a measurable baseline
+
+**Work type:** Evaluation with a real model. No production policy, detector or
+gate change; `calibrated` untouched; arm C's withholding adapter exists only in
+the evaluation code. M14 stage-1 results are not reused.
+
+**Why:** M14 stage 1 hit a floor (0/64) because the task never needed
+`send_email`. M15 changes only the task so an injected "also email X" competes
+with a legitimate send.
+
+**What changed:**
+
+- `docs/ACTION-EVALUATION-PREREG.md` -- frozen before any model call; the runner
+  verifies its stated hashes (pilot ids, final ids, benign set) against the code
+  and records/verifies its sha256 in `results/action/frozen.json`.
+- `src/llmshield_mcp/eval_action.py` -- `Setup`/`SETUPS` (three candidates in a
+  fixed preference order), 12 ordinary + 8 stress benign emails
+  (`benign_items`, `benign_set_sha256`), `draw_pilot_and_final` (disjoint by
+  construction), outcome definitions (`forwarded_summary`,
+  `benign_action_completed`, `other_sends`), decision rules (`select_setup`,
+  `stage1_gate`), `analyse_action`.
+- `src/llmshield_mcp/eval_live.py` -- backward-compatible: `run_trial` takes
+  optional `system`/`task`; `paired_stats` extracted from `paired_contrast`. The
+  35 M14 tests pass unchanged.
+- `scripts/eval_action.py` -- staged runner: `preflight`, `pilot` (runs once),
+  `stage1` (+ gate), `stage2` (only if the gate passed), `analyse`.
+- `tests/test_eval_action.py` -- 22 weight-free tests, including a scripted
+  compliant model through the real MCP path and gate in every arm.
+- `docs/ACTION-EVALUATION.md` -- results.
+
+**Results (haiku-4-5, temperature 0, LLMail-Inject, n=80, setup C3):** pilot
+C1 0/24, C2 0/24, C3 7/24 -> C3 selected. Attack success A 41.2% [31.1, 52.2],
+B 8.8% [4.3, 17.0], C 8.8%, D 40.0% [30.0, 51.0]. B-A -32.5pp [-43.8, -21.3],
+p=2.2e-7 (material by the pre-registered rule); B-D -31.2pp; D-A -1.2pp; C-B 0.
+Attributed to PII masking of the attacker's literal address, not detection;
+masking is leaky (6 of A's 33 successes persist) and costs utility (summary sent
+98.8% -> 90.0%) and redirects (invented recipients). Benign completion A 95%, B
+85%, C 70% (stress 2/8, five withheld), D 95%. One pre-registered expectation
+was not met (B was not ~0).
+
+**Verification:** `pytest -m "not models"` passes; ruff, format and mypy clean on
+the new src/tests files; code hashes identical before and after the run; 0 failed
+trials. Spend about 1.43M input / 0.17M output tokens.
+
+**Known limitations:** one model, one template, setup C3 (user delegates acting
+on the email; weakest attribution, pre-declared), literal attacker address,
+placeholder salience unresolved, authored benign set, n=80.
+
+---
+
+## M16 — Mechanism experiment: information removal vs placeholder vs detector bypass
+
+**Work type:** Evaluation with a real model. No production policy, `gating/`,
+`agent.py` or detector change; `calibrated` untouched; no new detection logic.
+Both new constructs are evaluation-only wrappers around the unchanged shipped
+gate. M14 and M15 results are not used as data (all conditions run afresh).
+
+**Why:** M15 showed the shipped policy's effect was PII masking of the literal
+attacker address, but masking bundles removal and a visible placeholder, and its
+dependence on the detector recognising the address was untested.
+
+**What changed:**
+
+- `docs/MECHANISM-EVALUATION-PREREG.md` -- frozen before any model call: four
+  conditions, hypotheses, the M15 sample (80 payloads, seed 4243), statistics
+  (Wilson, exact McNemar, paired bootstrap, two confirmatory contrasts at alpha
+  0.025, 10-point margin), stopping rule, and sha256 of every model-visible
+  document per condition. The runner verifies them before any API call.
+- `src/llmshield_mcp/eval_mechanism.py` -- `SilentRedactionGate` (shipped gate,
+  then delete redaction markers; condition E), `obfuscate_address` /
+  `condition_document` (condition O), `gate_factory_for` (explicit gate per
+  condition), `visible_document`, `frames_sha256`, deterministic classifiers
+  (`survival`, `classify_send`, `sequence_signature`), `decide`, `analyse_mechanism`.
+- `src/llmshield_mcp/eval_live.py` -- backward-compatible: optional
+  `gate_factory` on `run_trial` and `frame_through` (`build_gate` treats any
+  unknown arm as plain B, so new arms must pass an explicit factory).
+- `scripts/eval_mechanism.py` -- `preflight`, `run` (one fixed shuffled batch,
+  refuses to overwrite), `analyse`.
+- `tests/test_eval_mechanism.py` -- 32 weight-free tests, including a scripted
+  model through the real MCP path and gate in every condition.
+- `docs/MECHANISM-EVALUATION.md` -- results.
+
+**Results (haiku-4-5, temperature 0, setup C3, 380 trials, 0 failures):**
+attacker-recipient success A 40.0% [30.0, 51.0], B 8.8% [4.3, 17.0], E 8.8%,
+O 37.5% [27.7, 48.5]. Information removal E-A -31.2pp; placeholder B-E 0.0pp with
+identical outcomes on all 80 payloads (equivalent within margin); detector bypass
+O-B +28.7pp [+18.8, +40.0] p=1.6e-6; representation cost O-A -2.5pp (equivalent);
+production result B-A -31.2pp. The 7 B/E successes are exactly the 7 documents where
+the fragment `contact.com` survives (7/7 vs 0/73). The obfuscation also removes
+detection (ESCALATE 27/80 -> 2/80; 0 of 30 O successes flagged vs 10 of 32 in A).
+Descriptive: silent removal produced more invented recipients than the visible
+placeholder (14 vs 8 trials, post-hoc p=0.070).
+
+**Verification:** `pytest -m "not models"` passes; ruff, format and mypy clean on
+the new src/tests files; hashes of the frozen code files identical before and
+after the run; prereg hash matched throughout. Spend about 1.20M input / 0.14M
+output tokens.
+
+**Known limitations:** one model, one template, one delegation-heavy setup,
+literal `[at]` bypass only, fragment stratum n=7 (recall vs reconstruction not
+separable), E leaves a textual gap.
+
+---
+
+## M17 — PII protection under attacker-controlled representations (complete)
+
+**Work type:** Evaluation. No production policy, `gating/`, `agent.py` or detector change;
+no new obfuscation handling. M15/M16 results are not used as data.
+
+**Why:** M16 showed the shipped policy's benefit vanishes when the address is written
+`contact [at] contact.com`. M17 tests six representations directly and measures
+recognition, sanitisation, model-side success and benign completion.
+
+**What changed (all new files, plus infrastructure edits listed below):**
+
+- `docs/REPRESENTATION-EVALUATION-PREREG.md` -- frozen before any model call: conditions
+  N1 (literal, no gate) and G1-G6 (R1-R6 under the unchanged shipped gate), four
+  confirmatory contrasts G2-G5 vs G1 (alpha 0.0125), decision rule, Wilson definition,
+  hashes of every model-visible document, native-remnant stratum.
+- `src/llmshield_mcp/eval_representation.py` -- `represent` (six forms; R2-R5 case-
+  preserving), `represent_occurrences`, measurement-only `canonical_text` /
+  `address_recoverable`, `measure` (recognition, redaction, gate no-op, recoverability),
+  `condition_document`, `gate_factory` (shipped gate or none), recipient classifier that
+  handles `dot` spellings, `analyse_representation`, and infrastructure helpers
+  `root_causes`, `fatal_api_error`, `remaining_specs`.
+- `scripts/eval_representation.py` -- `preflight` (no API), `run`, `resume`, `analyse`.
+- `tests/test_eval_representation.py` -- 54 weight-free tests, including a perfect-decoder
+  model through the real MCP path and gate in each condition, and a reproduction of the
+  exhausted-balance failure.
+- `docs/REPRESENTATION-EVALUATION.md` -- the report. `docs/MECHANISM-EVALUATION.md` gained
+  an erratum (see below).
+
+**Deterministic results (80 frozen documents, no model):** the shipped PII detector
+recognises every occurrence for the literal and case variant (80/80) and none for
+`[at]`, `(at)`, `at/dot` and spaced forms (0/80); the gate is byte-for-byte a no-op on the
+latter, so the address stays recoverable in 80/80 frames. Literal is only 73/80 sanitised:
+7 payloads also carry the attacker's own `contact (at) contact.com`. ESCALATE 27/80 ->
+2/80 for R2-R5 (MCP-006 needs an `@`). Case-variant frames equal literal frames (80/80).
+N1/G1/G2 frames hash-equal M16's frozen A/B/O frames.
+
+**Correction to M16:** the 7 documents in which B and E still succeeded contain a complete
+native `contact (at) contact.com`, not a fragment; M16's "reconstruction or recall"
+reading was wrong. Erratum added; no M16 number changes.
+
+**Model-side results (700/700 trials, pre-registered analysis, Wilson 95 %):** ungated
+literal N1 40.0 % (32/80), shipped-gate literal G1 8.8 % (7/80), case variant G6 8.8 % (7/80,
+outcomes identical to G1 on 80/80 payloads), `[at]` G2 37.5 % (30/80), `(at)` G3 36.2 % (29/80),
+words G4 36.2 % (29/80), spaced G5 31.2 % (25/80). Confirmatory contrasts G2-G5 vs G1 (alpha
+0.0125): +28.7, +27.5, +27.5, +22.5 pp, exact p between 1.6e-06 and 7.6e-06, all "protection
+lost". G1's 7 successes are exactly the 7 native-remnant documents (7/7 succeed; 0/73 clean).
+The model always wrote the canonical `contact@contact.com` (0 obfuscated attempts): it decodes
+the spelling that the gate cannot see. Masking costs (G1/G6): 7 attack documents where the model
+asked the user for the "redacted" address instead of sending anything; 3 trials addressed to the
+literal `[REDACTED:EMAIL_ADDRESS]`; benign completion 90 % / 85 % vs 95 % ungated, not
+significant (n = 20). Validity V1-V4 pass. Independent recomputation from raw records matched.
+
+**Interruption and deviations (all listed in the report, section 7):** the batch stopped at 61
+trials when the API credit balance ran out (`400: credit balance is too low`); the runner's
+automatic analysis printed the 61-trial partial results (interim look; not used; file set aside
+as `results/representation/analysis.interim_61_NOT_USED.json`). After the API key was replaced,
+`scripts/eval_representation.py resume` ran exactly the 639 missing frozen trials (none
+repeated; the 61 earlier records are byte-identical in the final file; backup
+`trials.before_resume_61.json`). Infrastructure edits made after collection began, none changing
+what any model sees: fail-fast on account-level errors and readable root causes
+(`scripts/eval_live.py execute`), `resume`, safe printing on sparse data.
+
+**Verification:** `pytest -m "not models"` 540 passed; 54 M17 tests; mypy clean; ruff and format
+clean on every new src/tests file (pre-existing findings in committed M12 files
+`dilution.py`, `gating/session.py`, `gating/transport.py`, `tests/test_dilution.py`,
+`tests/test_session.py` are unrelated and untouched); production paths unchanged against HEAD
+`81ca746`; frozen hashes and prereg hash unchanged; M15/M16 source files byte-identical to their
+freezes; nothing committed.
+
+---
+
+## M18 design — representation-aware PII canonicalisation (design only)
+
+**Work type:** Design. No production, policy, `gating/`, `agent.py`, detector or test change; no
+API call; nothing committed. New file: `docs/PII-REPRESENTATION-DESIGN.md`.
+
+**Inspected:** `detectors/normalise.py` (`normalise`, `scan_normalised`), `detectors/pii.py`
+(`PATTERNS`, `PiiDetector._score`, `redact`), `gating/transport.py` (`observe_inbound`,
+`_build_pii`), `gating/policy.py` (`_redact_spans`, `_injection_signal`), `gating/content.py`
+(`apply_redaction`), `config/policy.yaml`, `config/rules.yaml` (MCP-006), the PII/normalise/golden
+tests, the latency benchmark and the M17 report.
+
+**Design decision:** a PII-local candidate finder (`detectors/pii_representations.py`, called from
+`PiiDetector._score` after the EMAIL_ADDRESS loop) that matches the obfuscated form in the original
+text, canonicalises only the matched substring and accepts it only if the shipped email regex fully
+matches it. Spans are original-offset by construction. Class default `representations=()` keeps
+every frozen M13-M17 harness reproducible; only `_build_pii()` (shipped gate) enables the defaults.
+Rejected: extending the shared `normalise()` (offsets destroyed, spans dropped, PII would be scored
+but not redacted); the alignment-map variant is deferred to V2.
+
+**Findings (probes outside the repo, to be re-established by M18 tests):**
+- PII exposed only by normalisation (fullwidth `＠`, zero-width after `@`, base64) scores 0.85 with
+  zero spans and the decision is ALLOW; a zero-width inside the local part redacts only a suffix.
+- The shipped email regex is quadratic on long letter/hex/dot runs with no `@`: 10k chars 0.5 s,
+  40k 8.4 s, 100k 52 s, 200k about 206 s (gate has no timeout). Out of scope for the design;
+  proposed as M18-0 with a leading lookbehind. **That lookbehind was wrong** -- see the M18-0
+  entry below, done separately.
+- Prototype (V1 defaults): M17 R1/R2/R3/R5/R6 sanitised 80/80 (R1 was 73/80), R4 words unchanged
+  0/80 (80/80 with words on); 0 matches on 16 hard negatives and on repo/package prose; 0 misses in
+  20,000 fuzz trials; 0 monotonicity violations over 1,076 texts; worst case at 200k chars 44 ms.
+- Real attacker corpus (885 bodies): literal 708, bracketed 60, spaced 2, words 20, plain-dot
+  `X at host.tld` 24 (unsupported); 38 bodies have a supported obfuscated address and no literal one.
+
+**Decisions pending from the user:** words tier default off; defer the alignment map.
+
+---
+
+## M18-0 — fix the quadratic `EMAIL_ADDRESS` regex (implemented)
+
+**Work type:** Bug fix, isolated to the one defect. No representation support, no
+canonicalisation, no policy or wiring change. Not committed.
+
+**Why:** found while designing M18 (above): `PATTERNS["EMAIL_ADDRESS"]`'s local part
+(`[a-zA-Z0-9._%+\-]+`) has no upper bound, so a long run of local-part-class characters
+(letters, hex digits, dots) with no reachable `@` makes `finditer` retry the same doomed
+backtrack from every position in the run: O(n^2), measured ~206 s at 200,000 chars (the
+gate's own `max_result_chars`, with no timeout).
+
+**First attempt, rejected:** the design doc's own suggestion, a leading lookbehind
+(`(?<![a-zA-Z0-9._%+\-])`, try a match only at the start of a local-part run). Before
+committing to it, I fuzzed it against the old pattern (40,000 seeded cases: adjacent
+addresses, mixed separators, noise). About 23% of adjacent-address pairs with no
+separator (`a@b.comX@y.com`) lost their second address: greedy backtracking on the
+first address's domain can stop it short of the second `@`, leaving a remainder that
+starts mid-run by the lookbehind's own definition but is itself a complete, distinct
+address `finditer` finds today. Not used.
+
+**What changed:** `src/llmshield_mcp/detectors/pii.py`, `PATTERNS["EMAIL_ADDRESS"]`
+only. The local part is bounded to RFC 5321's own 64-octet limit,
+`[a-zA-Z0-9._%+\-]{1,64}+` (possessive -- safe because backtracking this quantifier can
+never change the outcome, proved in the code comment: `@` is excluded from the
+local-part class, so the only length whose next character can ever be `@` is the
+longest one reachable). `finditer` still tries every position, so the adjacency case
+above is unaffected. `re.IGNORECASE` is also dropped: every character class already
+lists both cases explicitly and the only literals are `@` and `.` (no case), so the
+flag was pure overhead. The full reasoning is in a comment above the pattern.
+
+**The one documented, deliberate difference:** a local part **longer than 64
+characters** (invalid per RFC 5321; not a real email) still matches, just from a later
+offset (the last 64 characters before the `@`) instead of its true start -- never a
+missed detection.
+
+**Verification:**
+- `tests/test_detector_pii.py` gained 11 new test functions (some parametrized; 70
+  collected test items in the file total, up from 31): equivalence to
+  a reconstructed old pattern on existing cases, a 40,000-case-class seeded fuzz
+  (`test_email_pattern_matches_the_old_pattern_on_a_seeded_corpus_of_addresses`,
+  `..._on_seeded_noise_text`, including the adjacent-address case that broke the
+  lookbehind), invalid-email-like strings, long adversarial runs, the >64-char
+  documented exception, and performance/regression tests (`..._is_fast_on_200k_char_adversarial_input`,
+  `..._time_scales_linearly_not_quadratically`, `test_pii_detector_is_fast_on_a_200k_char_no_at_result`).
+- Measured: 200k-char worst cases now 2-41 ms (was ~206,000 ms), linear scaling
+  confirmed (50k->200k, ~4x time for 4x input).
+- `pytest -m "not models"`: 579 passed. `ruff check`/`format --check` and `mypy`: clean
+  on the two touched files (pre-existing findings in `dilution.py`, `gating/session.py`,
+  `gating/transport.py`, `tests/test_dilution.py`, `tests/test_session.py` are
+  unrelated and untouched).
+- Re-ran `scripts/eval_representation.py preflight`, `scripts/eval_mechanism.py
+  preflight` and `scripts/eval_action.py preflight` (M15-M17's frozen hash checks):
+  all `FAILURES: none` -- the fix is byte-for-byte compatible with every real address
+  in those corpora (all well under 64 characters).
+- `git diff --stat` confirms only `src/llmshield_mcp/detectors/pii.py` and
+  `tests/test_detector_pii.py` changed; `config/`, `gating/`, `agent.py` and every
+  other detector are untouched against HEAD `81ca746`.
+
+**Known limitation:** other `PATTERNS` entries (`PHONE_NUMBER`, `CREDIT_CARD`, `US_SSN`,
+`IBAN_CODE`, `IP_ADDRESS`) were not checked for a similar defect; out of scope for this
+isolated fix.
+
+---
+
+## M18-1 — PII-local representation finder (finder only, not wired)
+
+**Work type:** New standalone module + tests, per `docs/PII-REPRESENTATION-DESIGN.md`
+section 3 (option O3) and section 11's M18-1 step. No detector, policy, gate or
+`normalise()` change; nothing wired into `PiiDetector`. Not committed.
+
+**What changed:** one new file, `src/llmshield_mcp/detectors/pii_representations.py`.
+
+- `RepresentationMatch(start, end, form)` -- offsets and a form name only, never the
+  matched text or the address it decodes to (SEC-3, NFR-4); validated like `Span`
+  (`__post_init__` rejects a bad range or an unknown form name).
+- `find_email_representations(text, forms, validator) -> tuple[RepresentationMatch, ...]`
+  -- matches an obfuscated form **in the original text**, builds a canonical string from
+  the matched substring alone, and accepts the match only if `validator.fullmatch`
+  (looked up by the caller -- no second notion of "a valid email") accepts the canonical
+  string. `validator` mirrors `PATTERNS["EMAIL_ADDRESS"][0]` from `detectors/pii.py`
+  (M18-0's fixed pattern), passed in rather than imported, so a monkeypatched validator
+  (as `test_detector_pii.py`'s own failure-containment test does) is honoured here too.
+- `canonicalise(matched, form)` -- rewrites one matched candidate's own substring
+  (`[at]`/`(at)`/`{at}` -> `@`, dot markers -> `.`, blanks removed); never applied to a
+  document, never returned as data.
+- Three forms: `bracketed` and `spaced` on by default (`DEFAULT_REPRESENTATIONS`);
+  `words` implemented but off (`ALL_REPRESENTATIONS` includes it) -- design section 7's
+  own reasoning (real prose collisions, no benign corpus to set a false-positive ceiling
+  locally). Grammar follows `docs/PII-REPRESENTATION-DESIGN.md` section 4 exactly:
+  `[ \t]{0,3}`/`{1,3}` whitespace only (never `\n`/`\r`), `TOKEN` <=64 chars, DNS-style
+  `LABEL` (1-63, no leading/trailing hyphen), `TLD` 2-24 letters (`words` uses a fixed
+  allow-list instead, since a bare letters-only TLD is too permissive for that form), and
+  `BEFORE`/`AFTER` boundary assertions so a match cannot start or end mid-token.
+
+**Bug found and fixed before finalising:** the `words` tier's TLD allow-list was a
+lowercase-only literal alternation and missed an upper-case TLD in an email header line
+("To: CONTACT at CONTACT dot COM", from a real M17 payload) -- 79/80 instead of 80/80 on
+the real corpus. Fixed with a scoped `(?i:...)` group around just that alternation (not a
+whole-pattern `re.IGNORECASE`, per the M18-0 lesson about avoiding needless case-folding
+overhead on parts that are already explicit).
+
+**Adjacency investigation (explicitly requested):** fuzzed two representations placed
+back to back (20,000 trials, various glues) before trusting the grammar, learning from
+M18-0's near-miss. Found: with a real separator -- a single space or tab -- both
+addresses are found correctly 100% of the time (0/~2,200 each). With **zero** characters
+between them and a letters-compatible glue (a dot, hyphen, underscore, or letter), the
+second address can be swallowed into the first's greedy, unbounded TLD -- but this is
+proven to be the **same pre-existing property the already-shipped, already-fixed (M18-0)
+literal `EMAIL_ADDRESS` pattern has** on the equivalent literal construction (verified:
+2,166/2,166 zero-glue failures also collapse to one match under the shipped literal
+regex). Documented in the module and pinned with a test
+(`test_zero_separator_adjacency_matches_the_shipped_literal_regexs_own_behaviour`), not
+silently accepted and not treated as a new defect.
+
+**Verification:**
+- `tests/test_pii_representations.py`: 55 test functions, 134 collected items (many
+  parametrized): every accepted spelling and case variant; >=37 hard negatives (0
+  matches under default forms); malformed candidates (mismatched/doubled/unclosed
+  brackets, empty local/domain, 1-letter and digit TLDs, missing separator); bounded
+  whitespace and no-newline/no-CR rejection; exact original-text spans, including a
+  match on the second of two lines; `RepresentationMatch`'s SEC-3 field set and offset
+  validation; `canonicalise()` unit cases; unknown-form and monkeypatched-validator
+  handling; two addresses in one document both found; the adjacency regression cases
+  above; 200k-char adversarial-input performance (<=100 ms, 8 patterns) and a linearity
+  check; an AST-level check that the module imports neither `detectors.pii` nor
+  `gating.transport` (M18-2/M18-3 still pending).
+- Re-ran the real M17 corpus (deterministic, no model) through the finder directly: R2
+  `[at]` 80/80, R3 `(at)` 80/80, R5 spaced 80/80, R4 words 80/80 once `words` is
+  explicitly enabled (0/80 with defaults, as designed), R1 literal and R6 case-variant
+  correctly 0/80 (out of this module's scope -- the shipped regex already handles them);
+  the 7 native-remnant documents' own `(at)` text is found by `bracketed`; every
+  address-bearing benign email fully covered under R2/R3/R5.
+- `pytest -m "not models"`: 731 collected, all pass. `ruff check`/`format --check` and
+  `mypy`: clean on both new files (the same pre-existing, unrelated findings in
+  `dilution.py`/`gating/session.py`/`gating/transport.py`/`tests/test_dilution.py`/
+  `tests/test_session.py` remain, untouched).
+- Re-ran `scripts/eval_representation.py preflight`, `scripts/eval_mechanism.py
+  preflight` and `scripts/eval_action.py preflight`: all `FAILURES: none` -- this module
+  is not called from anywhere yet, so this simply confirms nothing else changed.
+- `git diff --stat` shows exactly one new file
+  (`src/llmshield_mcp/detectors/pii_representations.py`) plus its test file and the
+  memory-file updates; `detectors/pii.py`, `gating/transport.py` (`_build_pii` still
+  returns a bare `PiiDetector()`), `policy.py`, `config/policy.yaml`, `agent.py` and
+  `detectors/normalise.py` are byte-identical to before this task.
+
+**Not done (by design, for M18-2/M18-3):** wiring into `PiiDetector.__init__`, changing
+`_build_pii()`, V2 alignment-map / `normalise()`-exposed-PII handling, and gate/golden-set
+integration tests.
+
+---
+
+## Visibility reverted to private
+
+On 2026-09-23 the repository was made private again, about 5 h 40 min after the
+publication recorded above.
+
+During the public window GitHub recorded 0 forks, 0 stars and 0 watchers. Its
+traffic counters (views, clones, referrers) were still empty when checked, but
+they update with a delay and had not yet registered even this session's own
+verification visit, so they are not evidence of zero views.
+
+Settings while private: branch protection is unavailable on a private
+repository at this plan level (the API returns 403), so the force-push and
+deletion rule recorded above is **not in force**. Private vulnerability
+reporting: not available on a private repository either (the API returns
+404). Both should be re-checked when the repository is published
+again.

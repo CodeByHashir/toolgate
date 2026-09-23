@@ -32,8 +32,48 @@ from llmshield_mcp.detectors.base import Detector, RawScore, Span
 #:   EMAIL_ADDRESS 0.85, PHONE_NUMBER 0.75, CREDIT_CARD 0.90 (+ Luhn),
 #:   US_SSN 0.85, IBAN_CODE 0.80, IP_ADDRESS 0.75.
 PATTERNS: dict[str, tuple[re.Pattern[str], float]] = {
+    # M18-0 (docs/PII-REPRESENTATION-DESIGN.md section 1): the local-part `+`
+    # had no upper bound, so on a long run of local-part characters (letters,
+    # hex digits, dots) with no reachable "@" -- e.g. gate input up to
+    # max_result_chars = 200,000 -- `finditer` retried the same doomed
+    # backtrack from every position inside the run: O(n^2) (measured: 200k
+    # chars ~206s).
+    #
+    # A leading `(?<!...)` lookbehind (try a match only at the start of a
+    # local-part run) looks like the obvious fix and was tried first, but is
+    # WRONG: it silently drops real matches whenever two addresses sit close
+    # together with no separator, e.g. "a@b.comX@y.com". There, greedy
+    # backtracking on the FIRST address's domain (searching for the literal
+    # "." that lets "[a-zA-Z]{2,}" complete) can stop the first match short
+    # of the second "@", leaving a remainder that starts mid local-class-run
+    # by the lookbehind's own definition, yet is itself a complete, distinct
+    # address that `finditer` does find today. A 40,000-case seeded fuzz
+    # (adjacent addresses, mixed separators) found ~23% of such pairs would
+    # lose their second address under the lookbehind. Not used.
+    #
+    # The actual fix bounds the local part to RFC 5321's own limit (64
+    # octets) instead: `{1,64}+` (possessive -- Python 3.11+, this project's
+    # pinned version; safe because backtracking this quantifier can never
+    # change the outcome -- "@" is excluded from the local-part class, so the
+    # only length whose next character can ever BE "@" is the longest one
+    # reachable). `finditer` still tries every position (so the adjacency
+    # case above still works, unchanged), but each attempt now costs at most
+    # 64 character comparisons instead of up to the full remaining length,
+    # which is what removes the O(n^2). `re.IGNORECASE` is also dropped: it
+    # was redundant (every class already lists both cases; the only literals
+    # are "@" and ".", which have no case) and cost real time on long inputs.
+    # 200k-char adversarial inputs: ~2-41ms (was ~206,000ms).
+    #
+    # The one semantic difference from the old, unbounded pattern: a "local
+    # part" of MORE than 64 characters (invalid per RFC 5321; not a real
+    # email) is no longer matched from its true start -- `finditer` instead
+    # matches the last (up to) 64 characters before the "@", still flagging
+    # the address, just with a different start offset. Verified equivalent
+    # to the old pattern otherwise (existing tests, a 40,000-case seeded
+    # fuzz including adjacent/no-separator addresses, and long adversarial
+    # runs) by `tests/test_detector_pii.py::test_email_pattern_*`.
     "EMAIL_ADDRESS": (
-        re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}", re.IGNORECASE),
+        re.compile(r"[a-zA-Z0-9._%+\-]{1,64}+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}"),
         0.85,
     ),
     "PHONE_NUMBER": (

@@ -24,7 +24,7 @@ This repository does two things:
 > decontaminated 337-item corpus across three independent attack sources,
 > matched-FPR calibration, leave-one-source-out, latency and dilution
 > benchmarks, capability gating of outbound tool calls, and integrity gating of
-> inbound tool declarations are built and run against real weights. 625 tests,
+> inbound tool declarations are built and run against real weights. 970 tests,
 > CI green. The full evidence is [`docs/REPORT.md`](docs/REPORT.md) and
 > [`docs/DECLARATION-CHURN.md`](docs/DECLARATION-CHURN.md); the short version is
 > below.

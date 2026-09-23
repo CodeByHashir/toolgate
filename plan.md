@@ -4,7 +4,7 @@ Companion to `prd.md` (what to build) and `whats_has_been_done.md` (what is
 built). This file holds the plan, the architecture decisions and their
 rationale, remaining work, and known risks.
 
-**Current position: M0-M10 complete; M12 built, measured and removed (2.25). A post-audit hardening pass has since verified the headline finding against falsification, closed a redaction leak, pinned the evaluation corpus, split the policy into light/research profiles, decoupled gating from logging, and restated the FPR and Escalate claims to match their evidence, added a third publishable classifier (2.26), resolved the licensing exposure by removal rather than attribution (2.27), and added capability gating of outbound tool calls -- the control that survives the negative result (2.28). Tool *declarations*, the third attacker-controlled channel, are now being closed: `docs/PLAN-DECLARATION-INTEGRITY.md` is **complete, all six steps** (concealment decoding in the normaliser, the declaration canonicaliser, the trust-on-first-use pin store, verification at the point of model input, a `tool_declarations` policy block with its own audit outcome, and a measured churn base rate in `docs/DECLARATION-CHURN.md`). It ships OFF: no block in `config/policy.yaml` means no gate, nothing pinned, nothing logged -- see 2.29. `docs/REPORT.md` + three committed SVG figures + a rewritten README state the headline findings in plain English. M11 (optional standalone proxy) not started. `config/policy.yaml` still ships uncalibrated by deliberate choice -- see 2.20.**
+**Current position: M0-M10 complete; M12 built, measured and removed (2.25). A post-audit hardening pass has since verified the headline finding against falsification, closed a redaction leak, pinned the evaluation corpus, split the policy into light/research profiles, decoupled gating from logging, and restated the FPR and Escalate claims to match their evidence, added a third publishable classifier (2.26), resolved the licensing exposure by removal rather than attribution (2.27), and added capability gating of outbound tool calls -- the control that survives the negative result (2.28). Tool *declarations*, the third attacker-controlled channel, are now being closed: `docs/PLAN-DECLARATION-INTEGRITY.md` is **complete, all six steps** (concealment decoding in the normaliser, the declaration canonicaliser, the trust-on-first-use pin store, verification at the point of model input, a `tool_declarations` policy block with its own audit outcome, and a measured churn base rate in `docs/DECLARATION-CHURN.md`). It ships OFF: no block in `config/policy.yaml` means no gate, nothing pinned, nothing logged -- see 2.29. `docs/REPORT.md` + three committed SVG figures + a rewritten README state the headline findings in plain English. M11 (optional standalone proxy) not started. `config/policy.yaml` still ships uncalibrated by deliberate choice -- see 2.20. M13-M18 -- an offline end-to-end gate evaluation, pre-registered model-side evaluations, a PII representation study, and a fix to a quadratic-time email regex -- were built on an earlier base and integrated afterwards; their figures describe that base, not the current gate -- see 2.30.**
 
 ---
 
@@ -28,6 +28,14 @@ Each milestone is independently testable and lands as its own commit.
 | M10 | Report generation; README headline numbers | AC-7, [18] | Tables and plots as static files | **Done** |
 | M11 | *(optional)* Standalone stdio proxy over the same gating core | [11.1] option A | Agent config points at proxy, nothing else changes | Not started |
 | M12 | Session-level observation accumulator; hash-recurrence/dilution detection | [M0-OBSERVATIONS.md §1] | Built, benchmarked, and **removed**: cannot detect the dilution attack it targets (hash changes with the content), divergence unreachable with deterministic detectors, never wired into a runtime path. Finding kept in `docs/DILUTION-BENCHMARK.md` | **Reverted (2.25)** |
+| M13 | End-to-end gate evaluation: real payloads through the real Gate at 0/50/75/90% dilution, checked against the documented policy contract (offline, no model) | [M12 research audit, Gap B] | 29 weight-free tests incl. checker-can-fail and real-regression mutation tests; 3,014 gate calls, 0 contract violations; MCP-* recall on LLMail-Inject published (30.7%) | **Done** (offline gate-level only; model-side attack success not measured) |
+| M14 | Model-side attack success, four arms (A no gate, B shipped, C withhold-on-ESCALATE counterfactual, D PII masking off), pre-registered, deterministic send_email sink | [M13 follow-up] | 35 weight-free tests (scripted fake model through the real in-process MCP path and real gate); stage 1: arm A 0/64 [0.0, 5.7] -> pre-registered futility stop, B/C/D not run | **Stage 1 done; stopped by rule** (decision pending: run B/C/D anyway, or a new pre-registered experiment with a measurable baseline) |
+| M15 | Action-inviting model-side evaluation (pre-registered pilot selects the setup; arms A/B/C/D; benign controls incl. completion under C) | [M14 follow-up] | 22 weight-free tests; pilot C1 0/24, C2 0/24, C3 7/24 -> C3; stage 1 A 33/80 (gate passed); stage 2: B 7/80, C 7/80, D 32/80; B-A -32.5pp [-43.8,-21.3], B-D -31.2pp, D-A -1.2pp; benign completion A 95%, B 85%, C 70%, D 95% | **Done** (one model, one delegation-heavy setup; effect attributable to PII masking, not detection) |
+| M16 | Mechanism experiment: why did PII masking help? Conditions A literal, B visible placeholder, E silent removal, O `contact [at] contact.com` (pre-registered; same C3 setup and 80 payloads) | [M15 follow-up] | 32 weight-free tests; 380 trials, 0 failures; A 32/80, B 7/80, E 7/80, O 30/80; B-E 0.0pp (identical outcomes), O-B +28.7pp [+18.8,+40.0] p=1.6e-6, E-A -31.2pp, O-A -2.5pp; the 7 B/E successes are exactly the 7 documents where `contact.com` survives | **Done** (information removal, no placeholder effect on attack success; benefit does not survive detector bypass; one model, one setup) |
+| M17 | PII protection robustness under attacker-controlled representations (six forms of the address; conditions N1 no gate, G1-G6 shipped gate; pre-registered) | [M16 follow-up] | 54 weight-free tests; deterministic: gate recognises R1 and R6 (80/80), not R2-R5 (0/80), no-op on R2-R5; 73/80 sanitised for literal (7 native `(at)` remnants); ESCALATE 27/80 -> 2/80 | **Done:** 700/700 trials (interrupted at 61 by exhausted API credit, completed with `resume`); attacker success N1 40.0 %, G1 8.8 %, G2-G5 31.2-37.5 %; protection lost for all four obfuscations (p < 1e-5) |
+| M18 | Representation-aware PII canonicalisation (`docs/PII-REPRESENTATION-DESIGN.md`) | [M17 follow-up] | design only, no code: PII-local candidate finder with original-offset spans (not a `normalise()` change); V1 forms `[at]/(at)/{at}` (+ dot markers) and strict spaced `@ .`; bare `at`/`dot` words implemented but off by default; prototype predicts M17 R2/R3/R5 and the 7 native remnants sanitised 80/80 | **Designed, not implemented.** Also found: existing normalisation-exposed PII (fullwidth, zero-width, base64) is scored 0.85 but has zero spans (ALLOW); shipped email regex is quadratic (206 s on 200k chars). Decisions pending: words tier off, defer the alignment map |
+| M18-0 | Fix the quadratic-time shipped `EMAIL_ADDRESS` regex found while designing M18 | [M18 finding] | 11 new test functions in `tests/test_detector_pii.py` (70 collected items, up from 31); equivalence to the old pattern verified on existing cases, a 40,000-case seeded fuzz (incl. adjacent no-separator addresses, which a first-attempt lookbehind fix got wrong -- rejected), and long adversarial runs; 200k-char worst case now 2-41 ms (was ~206 s), linear scaling confirmed; M13-M17 `preflight` all still `FAILURES: none` | **Done.** `src/llmshield_mcp/detectors/pii.py` only: local part bounded to RFC 5321's 64-octet limit (`{1,64}+`, possessive) and redundant `re.IGNORECASE` dropped. One documented, deliberate difference: local parts over 64 chars (RFC-invalid) still match, just from a later offset. `config/policy.yaml`, `policy.py`, `agent.py`, `gating/` untouched |
+| M18-1 | Build the PII-local representation finder (`docs/PII-REPRESENTATION-DESIGN.md` section 3, option O3), finder only, not wired | [M18 finding] | new `tests/test_pii_representations.py`, 55 test functions (134 collected items); grammar matches the design's `bracketed`/`spaced`/`words` forms and every safety rule (bounded whitespace `[ \t]{0,3,1,3}`, no newline, TOKEN/LABEL length bounds, `AFTER`/`BEFORE` boundaries); real M17 corpus (deterministic): R2/R3/R5 80/80, R4 with `words` enabled 80/80 (was 79/80 until a case-only-TLD-allow-list bug was found and fixed), R1/R6 correctly 0/80 (this module's job is obfuscated forms only); >=37 hard negatives 0 matches; 200k-char worst case 41 ms; found and accepted one adjacency limit (see notes) | **Done.** New file only: `src/llmshield_mcp/detectors/pii_representations.py`. `PiiDetector`, `_build_pii`, `policy.py`, `policy.yaml`, `agent.py`, `gating/`, `normalise.py` all untouched -- confirmed by an AST-level test and `git diff`. Found (not fixed, documented): with literally zero characters between two obfuscated addresses, the greedy unbounded TLD can merge them into one match -- proven to be the same pre-existing property the already-shipped (M18-0) literal `EMAIL_ADDRESS` regex has on the equivalent literal construction (100% parity on 2,166 seeded cases), not a new gap; any real separator, including one space or tab, is 100% reliable (0/~4,300 seeded trials) |
 
 Ordering rule: do not skip ahead. M2 deliberately ships with **no detection**
 so that interception transparency can be proven independently of detection
@@ -1367,6 +1375,41 @@ Also open, and deliberately so until step 4: what a `PinStoreCorrupt` should
 mean. It currently propagates, which fails closed. That is the safer default to
 sit on, but it should be a policy decision rather than a consequence of where a
 `try` block happens to be.
+
+---
+
+### 2.30 M13-M18 integrated after the fact, with their provenance kept
+
+M13-M18 were built and run between 2026-09-20 and 2026-09-22 in a separate
+worktree and never committed; an earlier check in this file's history said they
+did not exist, which was wrong (marked as corrected in `whats_has_been_done.md`).
+They were integrated on 2026-09-23.
+
+**The research content was not edited.** The pre-registration documents are
+hash-locked -- their SHA-256 is recorded in every results file -- so they are
+byte-identical to what was run. The results documents gained only a provenance
+note at the top.
+
+**Their figures describe an earlier gate.** They were measured at `4f99241`,
+before nine later commits: the post-audit hardening pass (redaction spans clipped
+per block, closing a redaction leak; the policy split into profiles; M12
+removed), the removal of `chains/latency_chain.json`, capability gating, the
+rename, and declaration integrity. None of the M14-M17 model-side runs was
+repeated. The one measured drift is M13's benign-control set, 34 recorded
+results then and 9 now. M13 is offline and free to re-run; M14-M17 make model
+calls and cost money to repeat, which is the author's decision.
+
+**Integration changes were limited to making the code run on current `main`:**
+two tests updated -- a test double for `apply_redaction` written against its old
+return shape, and the benign-control count -- and the duplicate `AGENTS.md` left
+out. The M18-0 change to the shipped PII detector (a quadratic-time email regex
+replaced; 70 equivalence and performance tests) applied cleanly and is live.
+
+**Results stay gitignored**, as their author chose. That sits uneasily with 2.26,
+which committed the GAUGE run precisely so a published figure could be
+recomputed from the repository. The small `frozen.json`/`analysis.json` files
+behind each document are the candidates if that is revisited; the trial dumps
+(up to 5.8 MB) are not.
 
 ---
 
