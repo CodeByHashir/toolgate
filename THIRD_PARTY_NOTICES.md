@@ -44,12 +44,22 @@ no redistribution restriction, and recorded bodies are additionally scanned for
 third-party content markers. Adding a host to that allowlist is a licensing
 decision that must also be recorded here.
 
-**Note on history.** These commits remain in the git history, which is public.
-Rewriting published history was judged disproportionate for a few kilobytes of
-encyclopedia excerpts in a benchmark fixture, and would break existing clones
-and pull-request references. If that judgement is ever revisited, the remedy is
-`git filter-repo` plus a force push, and it should be a deliberate decision
-rather than a cleanup.
+**Note on history — revisited, and the fixture is now gone from it too.**
+Removal from the working tree originally left the file in git history. Rewriting
+history for it alone was judged disproportionate: a few kilobytes of
+encyclopedia excerpts, against breaking existing clones and pull-request
+references. This note said that if the judgement were ever revisited, the remedy
+was `git filter-repo` and it should be a deliberate decision rather than a
+cleanup.
+
+It was revisited deliberately on 2026-09-23, immediately before the repository
+was first made public. History was being rewritten anyway, to move commit
+metadata off a personal email address, so both costs the original judgement
+weighed were already being paid: the repository was re-created fresh, with one
+local clone and no pull-request references carried over. At zero marginal cost,
+`chains/latency_chain.json` was removed from every commit. The public history
+has never contained it. The pre-rewrite repository is kept private and is not
+redistributed.
 
 ## Evaluation corpora — fetched, never vendored
 

@@ -8,7 +8,7 @@ history. Append new entries at the end.
 
 ## M0 — Scaffold, pinned CPU stack, reuse audit for V0/V3
 
-**Commit:** `50993de` — "M0: scaffold, pinned CPU stack, and reuse audit for V0/V3"
+**Commit:** `77c962f` — "M0: scaffold, pinned CPU stack, and reuse audit for V0/V3"
 
 **What changed:**
 
@@ -3140,3 +3140,61 @@ are the owner's call rather than something to change in passing:
 
 Also corrected: `code_summary.md` labelled `CLAUDE.md` and `architecture_1.png`
 as untracked. Both are tracked.
+
+---
+
+## History rewritten before first publication
+
+Done on 2026-09-23, immediately before the repository was made public for the
+first time. Supersedes the "owner's decision" items in the pre-publication audit
+above: the owner decided to remove them.
+
+### Why a new repository rather than a force-push
+
+A force-push would not have removed anything. The repository had one merged
+pull request, and GitHub keeps a pull request's commits under refs that the
+owner cannot delete, so the original commits would have stayed publicly visible
+from the PR page. Twenty-five Actions runs also linked to them. The only complete
+remedy was a fresh repository. The original was renamed to
+`toolgate-private-archive` and kept private, so nothing was deleted.
+
+### What changed, in one `git filter-repo` pass
+
+| Change | Scope | Verified after |
+|---|---|---|
+| Commit author/committer email -> GitHub noreply address | all 28 commits | 0 occurrences of the old address in any commit or blob |
+| Local Windows path naming the machine user -> `<LLMShield checkout>` | 4 lines in `plan.md` and this file, across history | 0 occurrences |
+| `chains/latency_chain.json` (CC BY-SA excerpts) removed | every commit | absent from all history; see `THIRD_PARTY_NOTICES.md` |
+
+Deliberately **not** removed: the M12 session-correlation files deleted in
+`plan.md` 2.25. They are this project's own MIT code, and keeping the "built,
+measured, removed" record visible is a choice the project already made.
+
+The tip was checked against the pre-rewrite tip file by file: exactly four lines
+differ, all of them the intended path replacements. The one commit ID cited in
+this file was updated to its rewritten value (`77c962f`).
+
+### Local repository
+
+Rewritten in a separate mirror clone, never in the working repository. Seven
+local branches were moved onto the rewritten commits by compare-and-swap ref
+updates; only files that were *not* carrying uncommitted edits were refreshed.
+Every worktree's uncommitted-file list was captured beforehand and compared
+afterwards: identical in all seven.
+
+Two branches were left on the old history on purpose, because their worktrees
+hold uncommitted edits to the very files the path cleanup changed, and moving
+them would have meant editing work that was not this session's:
+`claude/antigravity-status-review-a66815` and
+`claude/llmshield-product-transformation-81a36a`. They are local only, and
+their commits still carry the old address. Branch protection does **not** keep
+them out: merging one into `main` produces an ordinary fast-forward push, which
+a no-force-push rule allows. What does keep them out is GitHub's account setting
+"Block command line pushes that expose my email", which rejects any push
+containing a commit authored with the private address. Until that setting is on,
+those two branches must be rebased onto the rewritten history before they are
+ever pushed.
+
+The repository's git identity is now the noreply address, set in the repository
+config so it applies to every worktree. A full backup bundle of every
+pre-rewrite ref was taken first.
