@@ -14,6 +14,13 @@ dist/
 # Secrets
 .env
 
+# Local-only dev artefacts — untracked from public repo, kept locally
+plan.md
+whats_has_been_done.md
+
+# Sandbox directory — internal test data and meeting notes, keep locally
+sandbox/
+
 # Reused LLMShield model artifacts. Never committed: the trained weights are
 # not publishable (see docs/PINNING.md and README "Reproducibility" section).
 models/
