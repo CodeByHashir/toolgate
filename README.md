@@ -1,44 +1,44 @@
 # toolgate
 
-**Capability gating for MCP agents — and the measurements that argue for it.**
+**Capability gating for MCP agents, plus the measurements that motivate it.**
 
-When an MCP-connected agent calls a tool, the result is inserted straight into
-the model's context. That is a prompt-injection surface, and it is not the one
-most defences were built for: tool results are long, heterogeneous, and full of
-words like "ignore" and "system" in perfectly benign source code.
+When an MCP-connected agent calls a tool, the result goes straight into the
+model's context. That is a prompt-injection surface, but not the one most
+defences were built for. Tool results are long and varied, and benign source
+code is full of words like "ignore" and "system".
 
 This repository does two things:
 
-1. **Measures** whether prompt-injection detectors actually work on that
-   surface. Three classifiers, 337 decontaminated payloads, three independent
-   attack corpora, full matched-FPR protocol. **They do not** — including a
-   production classifier with ~840k monthly downloads.
-2. **Ships the controls that survive that finding.** If you cannot reliably
-   detect the attack, stop trying to, and constrain what a compromised agent is
-   allowed to *do* instead — and check the configuration it is handed in the
-   first place. Sandbox confinement, egress allowlists, named destructive
-   operations, and integrity pinning of tool declarations — deterministic, no
-   classifier.
+1. It measures whether prompt-injection detectors work on that surface. The
+   test used three classifiers, 337 decontaminated payloads, three independent
+   attack corpora and a full matched-FPR protocol. They do not work, including
+   a production classifier with about 840k monthly downloads.
+2. It ships the controls that survive that finding. If you can't reliably
+   detect the attack, limit what a compromised agent is allowed to *do*, and
+   check the configuration it is handed in the first place. The controls are
+   sandbox confinement, egress allowlists, named destructive operations and
+   integrity pinning of tool declarations. All are deterministic and none uses
+   a classifier.
 
-> **Status.** Interception, six detector adapters, a fusion/policy engine, a
-> decontaminated 337-item corpus across three independent attack sources,
-> matched-FPR calibration, leave-one-source-out, latency and dilution
-> benchmarks, capability gating of outbound tool calls, and integrity gating of
-> inbound tool declarations are built and run against real weights. 970 tests,
-> CI green. The full evidence is [`docs/REPORT.md`](docs/REPORT.md) and
-> [`docs/DECLARATION-CHURN.md`](docs/DECLARATION-CHURN.md); the short version is
-> below.
+> **Status.** Built and run against real weights: interception, six detector
+> adapters, a fusion/policy engine, a decontaminated 337-item corpus from three
+> independent attack sources, matched-FPR calibration, leave-one-source-out,
+> latency and dilution benchmarks, capability gating of outbound tool calls,
+> and integrity gating of inbound tool declarations. 970 tests, CI green. The
+> full evidence is in [`docs/REPORT.md`](docs/REPORT.md) and
+> [`docs/DECLARATION-CHURN.md`](docs/DECLARATION-CHURN.md); a short version
+> follows.
 >
-> An optional standalone stdio proxy is the one planned piece not started. A
+> One planned piece, an optional standalone stdio proxy, is not started. A
 > session-level correlation layer was built, measured, found unable to detect
-> the threat it targeted, and removed — the finding is kept in
+> the threat it targeted, and removed. The finding is kept in
 > [`docs/DILUTION-BENCHMARK.md`](docs/DILUTION-BENCHMARK.md).
 
 ## Headline result
 
-**No -- and it is not a quirk of the models being reused.** Three classifiers
-were measured on the same decontaminated 337-payload corpus, through the same
-matched-FPR protocol, against the same benign references:
+**No, and the reused models are not the cause.** Three classifiers were
+measured on the same decontaminated 337-payload corpus, with the same
+matched-FPR protocol and the same benign references:
 
 | Detector | AUROC, realistic benign | Attacks missed at ~4% FPR |
 |---|---|---|
@@ -46,44 +46,43 @@ matched-FPR protocol, against the same benign references:
 | V3 — DeBERTa-v3-base (reused) | 0.310 [0.262, 0.357] | 94.7% |
 | `guard` — [ProtectAI v2](https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2), purpose-built, ~840k downloads/mo | 0.524 [0.472, 0.577] | 93.8% |
 
-The **simplest** model tested is the best one. The purpose-built production
-detector is **statistically indistinguishable from a coin flip** — its 95%
-confidence interval, [0.472, 0.577], contains 0.5 — and it lets 19 in 20 real
-attacks through at its own calibrated operating point. Against benign text that
+The simplest model tested is the best one. The purpose-built production
+detector is statistically indistinguishable from a coin flip: its 95%
+confidence interval, [0.472, 0.577], contains 0.5. At its own calibrated
+operating point it lets 19 in 20 real attacks through. Against benign text that
 merely *looks* suspicious (source code containing "ignore", docs about system
-prompts) both transformers fall *below* chance.
+prompts), both transformers fall *below* chance.
 
 A small rule set derived from real attack data catches roughly one attack in
-five, with zero false positives observed in 4,654 benign lines — which bounds
-its false-positive rate below 0.082% (Wilson 95%), and is not the same claim as
+five, with zero false positives in 4,654 benign lines. That bounds its
+false-positive rate below 0.082% (Wilson 95%), which is not the same claim as
 "zero". The 19 rules carried over unmodified from the user-prompt surface catch
 zero of 187.
 
-None of it generalises: the same detector at the same threshold misses **39% to
-100%** of attacks depending purely on which of three independent real-world
-attack collections is measured.
+None of it generalises. The same detector at the same threshold misses 39% to
+100% of attacks, depending only on which of three independent real-world attack
+collections is measured.
 
-This is shipped as a **detection and audit layer with measured, poor
-coverage** -- Escalate-by-default, Block structurally disabled until a real
-calibration backs it -- not a guardrail that stops attacks.
+This ships as a detection and audit layer with measured, poor coverage. It is
+Escalate-by-default, and Block is structurally disabled until a real
+calibration backs it. It is not a guardrail that stops attacks.
 
-**Be precise about what "Escalate" does here, because the word oversells it.**
-Of the four decisions, only two change what the agent receives: Block replaces
-the tool result, and Redact masks the matched spans. Allow and **Escalate both
-forward the frame byte-identical** -- an Escalate is a row in the decision log
-and nothing else. It is a *record that something looked wrong*, not a control
-that acted on it. There is deliberately no callback, exception or review-queue
-hook yet: an integration contract would invite an embedding application to
-treat Allow as "checked and clean", and on this surface Allow is roughly four
-out of five real attacks. See [`docs/REPORT.md`](docs/REPORT.md) section 5. See
-[`docs/REPORT.md`](docs/REPORT.md) for the full evidence, figures and what
-this does *not* claim.
+The word "Escalate" oversells what happens here. Of the four decisions, only
+two change what the agent receives: Block replaces the tool result, and Redact
+masks the matched spans. Allow and Escalate both forward the frame
+byte-identical, so an Escalate is a row in the decision log and nothing else.
+It records that something looked wrong; it doesn't act on it. There is
+deliberately no callback, exception or review-queue hook yet. An integration
+contract would invite an embedding application to treat Allow as "checked and
+clean", and on this surface Allow is roughly four out of five real attacks. See
+[`docs/REPORT.md`](docs/REPORT.md) section 5 for the full evidence, figures and
+what this does *not* claim.
 
 ## What to do about it: gate the capability, not the content
 
-Every detector above asks *"does this text look like an attack?"* — and this
-project measured that question as unanswerable on this surface. So the control
-moved to a different question: **"is the agent allowed to do this?"**
+Every detector above asks "does this text look like an attack?" This project
+measured that question as unanswerable on this surface. So the control moved to
+a different one: "is the agent allowed to do this?"
 
 ```yaml
 # config/policy.agent.yaml
@@ -107,18 +106,17 @@ exfiltration      fetch.fetch                 BLOCKED   fetch.fetch.egress
 destructive       github.delete_repo          BLOCKED   github.delete_repo.action
 ```
 
-The three checks are not invented — each maps to an attacker objective that
-appears throughout the BIPIA and InjecAgent payloads this project ingests:
-sandbox escape, exfiltration to an attacker-controlled host, and destructive
-operations.
+Each check maps to an attacker objective that appears throughout the BIPIA and
+InjecAgent payloads this project ingests: sandbox escape, exfiltration to an
+attacker-controlled host, and destructive operations.
 
-**Why this works when detection does not.** You do not have to recognise the
-injection that talked an agent into reading `~/.ssh/id_rsa` in order to notice
-that the agent is reading outside its sandbox. Recognising the persuasion is
-unsolved semantics — that is the finding above. Recognising the capability is a
-string comparison. Against the behaviour a rule names there is **no
-false-negative rate**, through any injection technique, in any language, at any
-dilution, because nothing is being classified.
+**Why this works when detection does not.** You don't have to recognise the
+injection that talked an agent into reading `~/.ssh/id_rsa` to notice that the
+agent is reading outside its sandbox. Recognising the persuasion is unsolved
+semantics, which is the finding above. Recognising the capability is a string
+comparison. For the behaviour a rule names, there is no false-negative rate
+under any injection technique, language or dilution, because nothing is being
+classified.
 
 **What it does not do.** It bounds the blast radius of a successful injection
 to whatever the policy still permits. An attacker who only needs a tool the
@@ -126,21 +124,21 @@ policy allows is unaffected. This narrows what a compromised agent can reach;
 it does not stop the compromise. Blocking is enforced by raising at the
 transport boundary, so the request never reaches the server.
 
-Capability gating ships **off** in the default profile — adding it changed
+Capability gating ships off in the default profile, so adding it changed
 nothing for anyone who has not opted in. `config/policy.agent.yaml` is a
 working example scoped to the reference servers.
 
 ## The third channel: tool declarations
 
-Capability rules cover what the agent *does*. They say nothing about the
+Capability rules cover what the agent does. They say nothing about the
 configuration it is handed before it does anything.
 
-When an agent connects to an MCP server it performs a `tools/list` handshake,
-and the returned name, description and JSON schema go straight into the model's
-context as tool definitions. That text is server-controlled, it arrives framed
-as trusted configuration rather than as data, and it stays in context for the
-whole session. It is a better-placed injection surface than a tool result, and
-until recently this project did not look at it at all.
+When an agent connects to an MCP server it performs a `tools/list` handshake.
+The returned name, description and JSON schema go straight into the model's
+context as tool definitions. The server controls that text, it arrives framed
+as trusted configuration rather than data, and it stays in context for the
+whole session. That makes it a better-placed injection surface than a tool
+result, and until recently this project didn't look at it.
 
 ```yaml
 # config/policy.yaml — ships absent, so the layer is off
@@ -157,47 +155,46 @@ only, never content) and re-checked on every listing. A change names the field
 that moved. A declaration the policy refuses is dropped from the list handed to
 the model, so the poisoned text never reaches it.
 
-**The honest framing, and it is narrower than it sounds.** Pinning cannot tell
-you a server is malicious — a server that ships a poisoned description at
-install time is pinned exactly as faithfully as an honest one. It tells you a
-server **changed its mind after you trusted it**. Those are different claims and
-only the second is being made. Concealment is the one exception, because
-non-rendering characters are a property of a single declaration rather than of a
+**The claim is narrower than it sounds.** Pinning cannot tell you a server is
+malicious. A server that ships a poisoned description at install time is pinned
+as faithfully as an honest one. It tells you a server changed after you trusted
+it, and only that claim is made. Concealment is the one exception, because
+non-rendering characters are a property of a single declaration, not of a
 change.
 
-### Is it deployable? — measured, not asserted
+### Is it deployable?
 
 A control that fires on every routine upstream release is one an operator
 switches off. Nobody had published how often real MCP servers change a
-declaration, so the defaults above were a guess. They are not any more:
-**54 releases of 7 official servers, installed and launched for real**
+declaration, so the defaults above started as a guess. Now they are measured:
+54 releases of 7 official servers, each installed and launched for real
 ([`docs/DECLARATION-CHURN.md`](docs/DECLARATION-CHURN.md), 2026-09-23).
 
 | Measurement | Result |
 |---|---|
-| Release transitions that changed **no** declaration | **30 of 47** |
-| Transitions that changed **every** tool at once | **17 of 47** |
-| Anything in between | **none** |
-| Tool comparisons where `description` changed | **9 of 318 (2.8%)** |
-| Declarations carrying non-rendering characters | **0 of 380** |
-| Cross-server tool-name collisions | **0** |
-| Benign descriptions firing the project's own injection rules | **4 of 380 (1.1%)** |
+| Release transitions that changed no declaration | 30 of 47 |
+| Transitions that changed every tool at once | 17 of 47 |
+| Anything in between | none |
+| Tool comparisons where `description` changed | 9 of 318 (2.8%) |
+| Declarations carrying non-rendering characters | 0 of 380 |
+| Cross-server tool-name collisions | 0 |
+| Benign descriptions firing the project's own injection rules | 4 of 380 (1.1%) |
 
-The distribution is bimodal with nothing between the modes: a release either
-leaves declarations alone or rewrites all of them, which is the signature of an
-SDK metadata bump rather than an author editing a tool. So pinning is silent
+The distribution is bimodal with nothing between the modes. A release either
+leaves declarations alone or rewrites all of them, which looks like an SDK
+metadata bump rather than an author editing a tool. So pinning stays silent
 through roughly two thirds of upgrades, and when it does fire it fires on
-everything — an easy alert to triage rather than a needle in a haystack. The
-pooled 35% "churn rate" is the wrong statistic and the document says so.
+everything, which is easy to triage. The pooled 35% "churn rate" is the wrong
+statistic, and the document says so.
 
 The last row is a false-positive rate, not a recall figure. These are official
-reference servers and nobody is attacking them, so every hit is a false alarm —
-all four from `INJ-*`, the rule family this project already measured at 0/187 on
-real attacks.
+reference servers and nobody is attacking them, so every hit is a false alarm.
+All four came from `INJ-*`, the rule family this project already measured at
+0/187 on real attacks.
 
-**No number here is a detection result.** Pinning catches post-approval mutation
-*by construction* — hashes detect hash changes — and printing that next to a
-measured AUROC would be exactly the rigor slippage the rest of this repository
+No number here is a detection result. Pinning catches post-approval mutation by
+construction, since hashes detect hash changes. Printing that next to a
+measured AUROC would be the kind of rigor slippage the rest of this repository
 exists to avoid.
 
 ### Against a published attack catalogue — including what it misses
@@ -218,30 +215,29 @@ shipped layers:
 | T7 | TAG-block concealment | description | missed | **flagged** — `concealed` | flagged |
 | T8 | Dangerous-default coercion | schema `default`/`enum` | missed | not flagged | flagged — `mutated: input_schema` |
 
-**On first sight toolgate flags 1 of 8 outright; the paper's baseline catches 4
-of 8.** That is the honest comparison, and it is not the flattering one. But the
-two catch *different* techniques. The baseline catches the plain-text payloads
-toolgate passes on first sight; toolgate flags T7, which the paper shows is the
-only technique that gets past both the sanitizer and a human reviewer. They are
-complements, not substitutes. T6 is flagged only when the colliding name belongs
-to another connected server — toolgate has no list of the host's built-in tools,
-which is what the paper's T6 actually shadows.
+On first sight toolgate flags 1 of 8 outright, and the paper's baseline catches
+4 of 8. That comparison is not flattering, but the two catch different
+techniques. The baseline catches the plain-text payloads toolgate passes on
+first sight. Toolgate flags T7, which the paper shows is the only technique that
+gets past both the sanitizer and a human reviewer. They complement each other.
+T6 is flagged only when the colliding name belongs to another connected server,
+because toolgate has no list of the host's built-in tools, which is what the
+paper's T6 actually shadows.
 
-**After approval, every declaration payload is flagged, by construction** — T4
-and T8 included, which carry no imperative for a keyword sanitizer to find.
+After approval, every declaration payload is flagged by construction. That
+includes T4 and T8, which carry no imperative for a keyword sanitizer to find.
 Pinning does not care what a change says. No rate is attached to that, for the
 reason given above.
 
-**T5 is a straight loss.** It travels the tool-result path, where the shipped
-detectors let this payload through with nothing firing. The baseline catches it.
-That is consistent with the ~20% recall measured in `docs/REPORT.md`, not an
-exception to it.
+T5 is a straight loss. It travels the tool-result path, where the shipped
+detectors let the payload through with nothing firing, while the baseline
+catches it. That fits the ~20% recall measured in `docs/REPORT.md`.
 
-Read the table with three limits. The payloads are **rebuilt** from the paper's
-descriptions rather than copied from it, one per technique, so each row is a spot
-check and not a rate — a different phrasing of T5 could fire. **Flagged is not
-withheld**: the shipped defaults escalate, which logs the verdict and forwards
-the declaration; withholding takes an explicit `block`. And the baseline column
+The table has three limits. The payloads are rebuilt from the paper's
+descriptions rather than copied, one per technique, so each row is a spot check
+and not a rate; a different phrasing of T5 could fire. Flagged is not withheld:
+the shipped defaults escalate, which logs the verdict and forwards the
+declaration, and withholding takes an explicit `block`. And the baseline column
 is quoted from the paper's Table 5, not re-run. Every toolgate cell is an
 assertion in [`tests/test_paper_techniques.py`](tests/test_paper_techniques.py).
 
@@ -253,15 +249,15 @@ assertion in [`tests/test_paper_techniques.py`](tests/test_paper_techniques.py).
 | Tool **calls** | client → server | Capability rules | No false-negative rate against the behaviour a rule names |
 | Tool **declarations** | server → client | Per-field integrity pinning | Detects post-approval change, by construction. Says nothing about first sight |
 
-Two of the three need no classifier, which is the whole argument: where
+Two of the three need no classifier, which is the whole argument. Where
 detection was measured and failed, the control moved to something
-deterministic. Both deterministic layers ship **off** — adding them changed
+deterministic. Both deterministic layers ship off, so adding them changed
 nothing for anyone who has not opted in.
 
-## Why this might be interesting
+## Why the 512-token window matters
 
-The reused V3 transformer has a **512-token window**. User prompts fit inside
-it. Tool results routinely do not — a file read or web fetch is often 10–100×
+The reused V3 transformer has a 512-token window. User prompts fit inside it.
+Tool results routinely don't: a file read or web fetch is often 10 to 100 times
 that. An injection planted past token 512 of a long file is invisible to a
 truncating detector, not because the detector is weak but because it never sees
 the text. This project implements both a truncating and a chunking scorer and
@@ -279,23 +275,22 @@ uv sync --extra dev
 
 | | Model | Classes | Token limit | Available to you? |
 |---|---|---|---|---|
-| **V0** | TF-IDF (word 1–2 + char_wb 3–5) + logistic regression | 4 | none | No — reused, unpublishable |
-| **V3** | DeBERTa-v3-base sequence classifier | 4 | 512 | No — reused, unpublishable |
-| **`guard`** | [ProtectAI `deberta-v3-base-prompt-injection-v2`](https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2) | 2 | 512 | **Yes** — Apache-2.0, fetched from the Hub |
+| **V0** | TF-IDF (word 1–2 + char_wb 3–5) + logistic regression | 4 | none | No. Reused, unpublishable |
+| **V3** | DeBERTa-v3-base sequence classifier | 4 | 512 | No. Reused, unpublishable |
+| **`guard`** | [ProtectAI `deberta-v3-base-prompt-injection-v2`](https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2) | 2 | 512 | Yes. Apache-2.0, fetched from the Hub |
 
-V0 and V3 are reused from prior work by the same author and are **not
-retrained**; both classify over `(benign, injection, jailbreak, harmful)`. They
-were trained for the *user-prompt* surface, which is exactly what this project
-set out to test. `guard` is a
-published binary `(SAFE, INJECTION)` classifier pinned by commit SHA in
-`config/models.yaml`, added so that at least one measured classifier is one a
-reader can rerun. See `docs/REPORT.md` section 4 for how it scored — it is
-included for verifiability, not because it works.
+V0 and V3 are reused from prior work by the same author and are not retrained.
+Both classify over `(benign, injection, jailbreak, harmful)`. They were trained
+for the user-prompt surface, which is exactly what this project set out to test.
+`guard` is a published binary `(SAFE, INJECTION)` classifier pinned by commit
+SHA in `config/models.yaml`. It was added so that at least one measured
+classifier is one a reader can rerun. See `docs/REPORT.md` section 4 for how it
+scored. It is included for verifiability, not because it works.
 
-The V0/V3 trained weights are **not distributed with this repository** and are
-not publishable. `config/models.yaml` defaults to a repository-relative `models/`
-directory, which is gitignored — copy, symlink or junction your artifacts
-there, or point `LLMSHIELD_MODELS_ROOT` at wherever they live:
+The V0/V3 trained weights are not distributed with this repository and are not
+publishable. `config/models.yaml` defaults to a repository-relative `models/`
+directory, which is gitignored. Copy, symlink or junction your artifacts there,
+or point `LLMSHIELD_MODELS_ROOT` at wherever they live:
 
 ```bash
 # Windows (no admin needed)
@@ -307,10 +302,9 @@ New-Item -ItemType Junction -Path .\models -Target C:\path\to\artifacts
 ln -s /path/to/artifacts ./models
 ```
 
-See
-[docs/PINNING.md](docs/PINNING.md) for why the scikit-learn and transformers
-versions are pinned exactly, and for how the statistical claims stay
-independently reproducible without the weights.
+See [docs/PINNING.md](docs/PINNING.md) for why the scikit-learn and transformers
+versions are pinned exactly, and how the statistical claims stay reproducible
+without the weights.
 
 ## Verify the reuse audit
 
@@ -320,10 +314,11 @@ uv run toolgate verify-models
 
 Loads V0 and V3 on CPU, scores a small set of probe texts, and prints per-class
 probabilities and latency. The final rows contrast the `truncate` and
-`chunk_max` strategies on an over-length input, which is the clearest
-demonstration of the 512-token problem.
+`chunk_max` strategies on an over-length input, which shows the 512-token
+problem most clearly.
 
-Probe texts are a smoke test, not an evaluation. Draw no conclusions from them.
+Probe texts are a smoke test, not an evaluation. Don't draw conclusions from
+them.
 
 ## Build the corpus
 
@@ -331,13 +326,13 @@ Probe texts are a smoke test, not an evaluation. Draw no conclusions from them.
 uv run toolgate corpus-ingest
 ```
 
-Fetches three independent adversarial source families (BIPIA, InjecAgent,
-LLMail-Inject; all MIT), pulls benign reference lines from this repository's
-own content, decontaminates every item against the ~19,000-row corpus V0/V3
-were actually trained on, and stores the result in
-`corpus/payload_corpus.sqlite` (gitignored — the store is regenerable, not a
-one-off you need to guard). Prints a drop-count report: how many items were
-flagged as near-duplicates of training data, per source.
+Fetches three independent adversarial source families (BIPIA, InjecAgent and
+LLMail-Inject, all MIT), pulls benign reference lines from this repository's own
+content, and decontaminates every item against the ~19,000-row corpus V0/V3 were
+actually trained on. The result is stored in `corpus/payload_corpus.sqlite`,
+which is gitignored because it can be regenerated. It prints a drop-count
+report: how many items per source were flagged as near-duplicates of training
+data.
 
 ## Run the evaluation
 
@@ -349,31 +344,30 @@ uv run python scripts/generate_report.py   # regenerate docs/figures/*.svg
 uv run toolgate gauge-recut              # re-derive AUROC from scores.csv, no weights needed
 ```
 
-`gauge-recut` is the falsification check for the headline, and **it needs no
-model weights and no corpus** — only the committed
+`gauge-recut` is the falsification check for the headline. It needs no model
+weights and no corpus, only the committed
 [`results/gauge/scores.csv`](results/gauge/scores.csv). A DeLong AUROC below 0.5
-has two explanations: the detector really is anti-correlated on this surface, or
-the wrong scalar is being cut out of its four-class probability vector.
-`scores.csv` stores all four class probabilities precisely so the second can be
-tested by anyone, and `gauge-recut` re-derives the AUROC under every score mode
-from the same stored inference.
+has two possible explanations: the detector really is anti-correlated on this
+surface, or the wrong scalar is being cut out of its four-class probability
+vector. `scores.csv` stores all four class probabilities so anyone can test the
+second, and `gauge-recut` re-derives the AUROC under every score mode from the
+same stored inference.
 
 It found a real problem. V3's published below-chance figure comes from the
-`injection` cut V3 was originally scored with (0.325); under `not_benign` the
-same probabilities give **0.540**, an interval straddling chance. So V3 is not
-reliably anti-correlated — it simply does not separate, and how badly it reads
-depends on the cut. `docs/REPORT.md` section 4 carries the full table and the
+`injection` cut V3 was originally scored with (0.325). Under `not_benign` the
+same probabilities give 0.540, an interval straddling chance. So V3 is not
+reliably anti-correlated; it just doesn't separate, and how bad it looks depends
+on the cut. `docs/REPORT.md` section 4 carries the full table and the
 correction. Run this before quoting any AUROC from that section.
 
 `gauge-run` needs a corpus already produced by `corpus-ingest`, plus the real
-reused weights (like `benchmark_latency.py`); `benchmark_rules.py` only
+reused weights (like `benchmark_latency.py`). `benchmark_rules.py` only
 exercises the rule engine and needs neither. `gauge-run` never edits
-`config/policy.yaml` —
-reviewing its report and deciding whether to promote V0/V3 out of `inert` is
-a deliberate step for a human, not something the harness does for itself.
-See [`docs/REPORT.md`](docs/REPORT.md) for the numbers these produced and
-[`docs/LATENCY-BENCHMARK.md`](docs/LATENCY-BENCHMARK.md) for the full
-latency breakdown.
+`config/policy.yaml`. Reviewing its report and deciding whether to promote V0/V3
+out of `inert` is a deliberate step for a human. See
+[`docs/REPORT.md`](docs/REPORT.md) for the numbers these produced and
+[`docs/LATENCY-BENCHMARK.md`](docs/LATENCY-BENCHMARK.md) for the full latency
+breakdown.
 
 ## Test
 
@@ -391,12 +385,12 @@ uv run python scripts/collect_declarations.py --report    # renders docs/DECLARA
 
 `--collect` walks each server's release history on npm and PyPI, launches every
 version over stdio and records what its real `tools/list` sends back. It needs
-network, `npx` and `uvx`, and takes several minutes. It **overwrites** the
-committed snapshot and therefore every figure in the document, which is why the
-snapshot is dated and frozen rather than refreshed on a schedule.
+network, `npx` and `uvx`, and takes several minutes. It overwrites the committed
+snapshot and therefore every figure in the document, which is why the snapshot
+is dated and frozen rather than refreshed on a schedule.
 
-The snapshot stores digests, tool names and pre-computed metrics — no
-description and no schema — so it neither leaks nor redistributes anything a
+The snapshot stores digests, tool names and pre-computed metrics, with no
+description and no schema, so it neither leaks nor redistributes anything a
 server sent.
 
 ## Record a tool-call chain
@@ -407,40 +401,39 @@ uv run toolgate run-agent --servers filesystem,fetch --out chains/baseline.json
 
 Launches both reference MCP servers, drives them with a Claude tool-use loop,
 and records every call and result to a JSON fixture. The evaluation then runs
-offline against that recording, so API spend is a one-off rather than something
-that scales with the corpus.
+offline against that recording, so API spend is a one-off and doesn't scale with
+the corpus.
 
-**Gating is on by default and is independent of logging.** `--db` persists the
+Gating is on by default and is independent of logging. `--db` persists the
 decision log to SQLite; without it the log is in-memory and discarded, but the
 gate still runs. `--no-gate` disables interception entirely and prints a warning
 saying so, because `--out` then records raw, unredacted tool output to disk.
 
-Four policy profiles ship. The three *detector* profiles **cannot change any
-decision** — `PolicyEngine.decide()` never reads a detector that appears only
-under `inert`, so they change what is scored, logged and paid for, never the
+Four policy profiles ship. The three detector profiles cannot change any
+decision. `PolicyEngine.decide()` never reads a detector that appears only under
+`inert`, so they change what is scored, logged and paid for, never the
 Allow/Redact/Block/Escalate outcome. A test asserts this.
 
-`policy.agent.yaml` is the exception, and deliberately so: it adds a
-*request-side* capability control, which is the one thing here that is meant to
-change what happens. Its detector roles are still identical to the default.
+`policy.agent.yaml` is the deliberate exception. It adds a request-side
+capability control, which is the one thing here meant to change what happens.
+Its detector roles are still identical to the default.
 
 | Profile | Adds | Cost / result | Runnable after a plain clone? |
 |---|---|---|---|
-| `config/policy.yaml` (default) | — rules + PII | 0.08 ms | Yes |
-| `config/policy.agent.yaml` | capability gating of tool calls | 0.08 ms | **Yes** |
-| `config/policy.guard.yaml` | `guard` | 170 ms | **Yes** (downloads ~700 MB once) |
-| `config/policy.research.yaml` | `v0`, `v3`, `guard` | 345 ms | No — needs the unpublishable weights |
+| `config/policy.yaml` (default) | rules + PII | 0.08 ms | Yes |
+| `config/policy.agent.yaml` | capability gating of tool calls | 0.08 ms | Yes |
+| `config/policy.guard.yaml` | `guard` | 170 ms | Yes (downloads ~700 MB once) |
+| `config/policy.research.yaml` | `v0`, `v3`, `guard` | 345 ms | No, needs the unpublishable weights |
 
 ```bash
 uv run toolgate run-agent --db logs/decisions.sqlite                       # default
 uv run toolgate run-agent --policy config/policy.guard.yaml --db logs/d.sqlite
 ```
 
-`policy.guard.yaml` exists because it is the only ML profile a stranger can
-run: V0 and V3 need artifacts only the author has. Read
-`docs/REPORT.md` section 4 before reaching for it — `guard` measured at AUROC
-0.524 on this surface, and it ships `inert` for the same reason everything else
-does.
+`policy.guard.yaml` exists because it is the only ML profile a stranger can run.
+V0 and V3 need artifacts only the author has. Read `docs/REPORT.md` section 4
+before using it: `guard` measured AUROC 0.524 on this surface, and it ships
+`inert` for the same reason everything else does.
 
 Chains that feed the evaluation use the default model. For cheap smoke runs:
 
@@ -465,6 +458,6 @@ see [LICENSE](LICENSE).
 
 Every committed file is covered by it. A recorded benchmark fixture that
 embedded verbatim CC BY-SA web content was removed rather than attributed, and
-`tests/test_chain_licensing.py` now prevents another one being committed.
+`tests/test_chain_licensing.py` now stops another from being committed.
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) records that decision, the
-fetched-corpus licences, and why the reused model weights are not distributed.
+fetched-corpus licences, and why the reused model weights aren't distributed.
