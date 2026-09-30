@@ -212,7 +212,7 @@ With `ml_probability >= 0.95` applied to `not_benign` scores:
 - Under `injection` scores: **0 / 8**.
 
 Reading `README.md` would be blocked. This makes the score-mode decision
-recorded in `prd.md` 9.2 far more consequential than it looked: it is not only
+far more consequential than it looked: it is not only
 a reporting choice, it decides whether the system is usable at all under an
 inherited threshold.
 

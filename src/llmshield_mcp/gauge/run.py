@@ -12,18 +12,18 @@ Runs the workflow `PROPOSAL.md` section 8.2 describes:
    type AND by source family (FR-12, M8 -- see below), achieved FPR on the
    held-out benign test split, DeLong AUROC -- every figure with a
    confidence interval (NFR-7).
-5. Write `scores.csv` (`plan.md` section 2.6): every item, every detector,
+5. Write `scores.csv`: every item, every detector,
    raw score plus the four class probabilities where they exist. Because the
-   reused weights are not published (`prd.md` A1), this file -- not the
+   reused weights are not published, this file -- not the
    models -- is what every downstream statistic must be recomputable from.
 
 **FR-12, leave-one-source-out, and why it is a report breakdown rather than a
 retraining loop.** The dissertation's own leave-one-out protocol
 (`exp2_lobo.py`) retrains a classifier with and without each benchmark family
-and compares the two. This project never retrains V0/V3 (`prd.md` scope), so
+and compares the two. This project never retrains V0/V3, so
 there is no IN/OUT training distinction to make, and no meaningful sense in
 which a family could be "held out" of a training set that was never built
-from this corpus at all (`plan.md` section 2.20 records this correction).
+from this corpus at all.
 What generalisation means here instead: calibration never looks at adversarial
 data (only the benign reference sets, matched-FPR), so the *same* calibrated
 threshold already applies uniformly to every source family. FR-12's real
@@ -74,7 +74,7 @@ CALIBRATABLE_DETECTORS: tuple[str, ...] = ("v0", "v3", "guard")
 #: A benign line drawn at random from ~7,000 real repository lines is cheap
 #: to score with rules/PII but not with V3 (~180-220ms/window,
 #: docs/M0-OBSERVATIONS.md) at thousands of items. Sampling keeps one run in
-#: the low hundreds per reference, matching prd.md's own corpus-scale target,
+#: the low hundreds per reference, matching the corpus-scale target,
 #: with a fixed seed so a run is exactly reproducible.
 DEFAULT_BENIGN_SAMPLE_SIZE = 300
 DEFAULT_SEED = 42

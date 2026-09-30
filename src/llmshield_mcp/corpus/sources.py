@@ -21,7 +21,7 @@ upper bound on real-world recall.
 
 `load_adversarial()` -- and by extension `scripts/benchmark_rules.py`, which
 imports it -- deliberately covers ONLY these two. `load_llmail_inject()`
-below is the third source family `plan.md` open question Q3 asked for
+below is the third source family
 (`corpus-ingest` calls it separately); folding it into `load_adversarial()`
 would silently change what the already-published rule-recall numbers in
 `docs/POLICY-AUDIT.md` measure.
@@ -192,7 +192,7 @@ def load_adversarial() -> list[tuple[str, str, str]]:
     return cases
 
 
-# --- LLMail-Inject: the third adversarial source family (plan.md Q3, M8) ---
+# --- LLMail-Inject: the third adversarial source family ---
 #
 # microsoft/llmail-inject-challenge on HuggingFace, MIT licensed: 462,000 raw
 # submissions from a real adaptive prompt-injection competition (839 teams
@@ -229,7 +229,7 @@ LLMAIL_INJECT_SPLITS: tuple[tuple[str, int], ...] = (("Phase1", 370_724), ("Phas
 LLMAIL_INJECT_PAGE_SIZE = 100
 #: Pages sampled per split. 6 pages x 100 rows x 2 splits = up to 1,200 raw
 #: rows before de-duplication -- enough headroom to reach a "low hundreds"
-#: unique sample (`prd.md`) after the fuzzing duplicates collapse.
+#: unique sample after the fuzzing duplicates collapse.
 LLMAIL_INJECT_PAGES_PER_SPLIT = 6
 #: Cap on unique items load_llmail_inject() returns, so this source stays
 #: comparable in scale to BIPIA (125) and InjecAgent (62) rather than

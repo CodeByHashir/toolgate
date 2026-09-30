@@ -11,7 +11,7 @@ corpus and its JSONL export.
 
 Nothing caught it: the fixture was committed by a milestone, the licence
 implication was not obvious from a diff, and no check existed. The file has
-since been removed (`plan.md` 2.27). This test is the part that stops it
+since been removed. This test is the part that stops it
 coming back, because the same thing will happen again the next time someone
 runs `toolgate run-agent --out chains/something.json` against real URLs and
 commits the result.

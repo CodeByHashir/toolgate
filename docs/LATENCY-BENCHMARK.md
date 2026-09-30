@@ -46,7 +46,7 @@ doubles the fused figure.
 **Shipping a classifier as `inert` does not save any of this.** An inert
 detector still runs and is still scored on every intercepted tool result;
 inert only means it does not affect the *decision*. That is precisely why the
-policy profiles exist (`plan.md` 2.25, 2.26): the only way to stop paying for a
+policy profiles exist: the only way to stop paying for a
 classifier is to leave it out of the policy file entirely, which is what
 `config/policy.yaml` now does by default. The default profile pays 0.08 ms of
 detector time; adding `guard` takes it to ~170 ms; the research profile with

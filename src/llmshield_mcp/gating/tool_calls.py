@@ -97,8 +97,8 @@ class ToolCallBlocked(RuntimeError):
     (`mcp/shared/jsonrpc_dispatcher.py`), so an exception from `send()` cleans
     up correctly and surfaces to whoever called `session.call_tool()`. The
     alternative -- fabricating a JSON-RPC error and pushing it back through the
-    read stream -- would need a pump task and a shared queue, which `plan.md`
-    2.8 rejected for good reasons that still hold.
+    read stream -- would need a pump task and a shared queue, which was rejected
+    for good reasons that still hold.
 
     It also reads more honestly: the call did not fail, it was refused.
     """

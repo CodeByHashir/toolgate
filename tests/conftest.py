@@ -8,7 +8,7 @@ the shipped `config/policy.yaml`. V0 and V3 ship `inert` there (M5):
 never change a decision. Most of the suite can therefore use this fixture
 instead of the real `build_detectors(load_policy_config())`, staying fast and
 independent of the reused LLMShield weights, which are not published
-(`prd.md` A1) and are not present in CI. Tests that specifically need V0/V3 to
+and are not present in CI. Tests that specifically need V0/V3 to
 be real live in `tests/test_gating_transport_with_models.py`, marked `models`.
 """
 

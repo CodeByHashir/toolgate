@@ -42,7 +42,7 @@ class Outcome(StrEnum):
     denominator instead of silently counting as benign allows.
 
     A fourth member, `SESSION_SUMMARY`, existed briefly for M12's session
-    accumulator and was removed with it (`plan.md` 2.25). Every row in this
+    accumulator and was removed with it. Every row in this
     table is a per-call decision again, so no consumer has to remember to
     filter a non-decision row out of an FPR denominator or a latency average.
     """
@@ -133,7 +133,7 @@ class DecisionLog:
 
     Append-only literally: there is no update or delete on this class. An
     earlier revision added an `update_note` for M12's session accumulator; both
-    were removed (`plan.md` 2.25), which restored the property that a written
+    were removed, which restored the property that a written
     row never changes.
 
     `path=None` opens an in-memory database instead of a file. That is what

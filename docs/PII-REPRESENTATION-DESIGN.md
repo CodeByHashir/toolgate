@@ -8,8 +8,7 @@
 > one of them before anything is claimed.
 >
 > **M18-0 (the quadratic-regex fix flagged in section "A separate, pre-existing
-> defect" below) is now done** -- see `plan.md`'s M18-0 row and
-> `whats_has_been_done.md`. **Erratum:** that section's proposed fix, a leading
+> defect" below) is now done.** **Erratum:** that section's proposed fix, a leading
 > lookbehind, turned out to be wrong: a 40,000-case fuzz run while implementing it
 > found the lookbehind silently drops real matches whenever two addresses sit
 > together with no separator (`a@b.comX@y.com`), in about 23% of such pairs. The

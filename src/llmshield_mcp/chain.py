@@ -4,8 +4,8 @@ A chain is what the reference agent produces: an ordered record of the tool
 calls a real Claude agent made against real MCP servers, together with the
 results those servers returned.
 
-Why this is a stored artifact rather than something replayed live: assumption
-A2 in prd.md resolves the agent's role to *hosting chains only*. The agent runs
+Why this is a stored artifact rather than something replayed live: the agent's role is
+limited to *hosting chains only*. The agent runs
 once to capture realistic call sequences; the GAUGE evaluation then runs
 offline against the recording (NFR-6). That keeps API spend a one-off, makes
 runs reproducible, and means evaluation does not depend on a live network or a

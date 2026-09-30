@@ -3,7 +3,7 @@
 Marked `models`, like `tests/test_adapters_with_models.py`: these need the
 LLMShield artifacts on disk (`config/models.yaml`'s `models/`, or
 `LLMSHIELD_MODELS_ROOT` pointing at wherever they actually live). They are not
-published (`prd.md` A1) and are not present in CI, so this file is deselected
+published and are not present in CI, so this file is deselected
 there exactly as the rest of the `models`-marked suite is.
 
 Everything decision-relevant about V0/V3 is already covered without weights:

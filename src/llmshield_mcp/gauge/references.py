@@ -15,8 +15,8 @@ needs the pool split into:
 
 The split is a MECHANICAL FILTER over already-real content, not new authored
 sentences -- unlike the hand-written adversarial cases M3b's audit found were
-contaminated by the author's own knowledge of the rule patterns (`plan.md`
-section 2.13), nothing here invents what an attacker would say. The keyword
+contaminated by the author's own knowledge of the rule patterns, nothing here invents what an
+attacker would say. The keyword
 list below is deliberately broader than -- and independent of -- the actual
 `INJ-*`/`MCP-*` regex patterns: those score 0 on every item in this corpus by
 construction (M3b), which is exactly why a same-vocabulary filter would

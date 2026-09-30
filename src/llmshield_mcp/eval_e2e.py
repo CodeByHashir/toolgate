@@ -15,7 +15,7 @@ Each payload is wrapped in a synthetic MCP `tools/call` result (a real
 decision, and the frame the gate forwarded.
 
 The documented contract (`gating/policy.py`, `gating/content.py`,
-`config/policy.yaml`, `plan.md` 2.15-2.17) that every call is checked against:
+`config/policy.yaml`) that every call is checked against:
 
 * Precedence BLOCK > ESCALATE > REDACT > ALLOW; max/OR fusion.
 * `rules_mcp` >= its `escalate` threshold means an injection hit; PII at or

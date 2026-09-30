@@ -2,7 +2,7 @@
 
 Reads `results/gauge/calibration_report.json` (produced by `toolgate
 gauge-run`, gitignored -- the raw calibration data is regenerable and its
-sampling varies run to run, per plan.md 2.20/2.22) and writes plain SVG bar
+sampling varies run to run) and writes plain SVG bar
 charts to `docs/figures/` (committed: these are the curated, reported
 figures, not raw data). No plotting library: three simple bar charts do not
 need one, and it keeps NFR-8's pinned dependency set unchanged.

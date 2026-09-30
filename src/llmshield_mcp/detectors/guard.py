@@ -5,11 +5,11 @@ Default checkpoint is `protectai/deberta-v3-base-prompt-injection-v2`
 
 ## Why a third classifier at all
 
-V0 and V3 are reused dissertation artifacts and are not publishable
-(`prd.md` A1). A reader of `docs/REPORT.md` therefore cannot check a single
-number this project reports about them, and someone who clones the repository
-cannot run the research profile at all. That is a real limit on both the
-evidence and the usability, and it is not fixed by writing more carefully.
+V0 and V3 are reused dissertation artifacts and are not publishable. A reader
+of `docs/REPORT.md` therefore cannot check a single number this project reports
+about them, and someone who clones the repository cannot run the research
+profile at all. That is a real limit on both the evidence and the
+usability, and it is not fixed by writing more carefully.
 
 This adapter loads a classifier anyone can fetch, under a licence that permits
 redistribution, and runs it through the *identical* GAUGE protocol against the
@@ -26,8 +26,8 @@ is P(INJECTION).
 
 **The positive class is resolved by name, not by index.** V3's checkpoint
 carries only `LABEL_0..LABEL_3`, so `1 = injection` lived in a comment in a
-training script and had to be verified empirically against the weights
-(`plan.md` 2.25) -- precisely the class of bug that makes a below-chance AUROC
+training script and had to be verified empirically against the weights,
+precisely the class of bug that makes a below-chance AUROC
 ambiguous. This checkpoint publishes `{0: SAFE, 1: INJECTION}`, so the adapter
 reads it and raises if `positive_label` is absent. An index is never assumed.
 

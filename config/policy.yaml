@@ -36,10 +36,9 @@
 # costing ~0.03 ms, and logging its score every run is what keeps its 0/187
 # transfer result visible rather than filed away in a document.
 #
-# Every setting here traces to a measurement in docs/POLICY-AUDIT.md and a
-# decision recorded in plan.md 2.15 -- nothing is a default carried over from
-# LLMShield's policies/default.json (plan.md 2.12 explains why that file is
-# not safe to adopt on this surface).
+# Every setting here traces to a measurement in docs/POLICY-AUDIT.md --
+# nothing is a default carried over from LLMShield's policies/default.json,
+# which is not safe to adopt on this surface.
 #
 #   * Max/OR fusion, never weighted-linear averaging. Detectors are
 #     near-orthogonal (pairwise Jaccard 0.00-0.09) and none exceeds 20.3%
@@ -132,7 +131,7 @@ thresholds:
     # the injection signal decides.
     redact: 0.7
 
-# Indicative per-action false-positive budgets from plan.md 2.15. Not
+# Indicative per-action false-positive budgets. Not
 # enforced numerically anywhere yet -- there is no calibration data until M7.
 # Recorded here so the target survives the gap between design and calibration.
 fpr_budget:
@@ -230,8 +229,8 @@ gate:
 # there is nothing to calibrate, and `calibrated: false` above does NOT gate
 # these blocks (same argument as `tool_calls`). But the operationally relevant
 # number is how often a legitimate server changes a declaration, and nobody has
-# published that base rate, including this project. plan.md 3.1 is the
-# measurement. Until it exists, a control that might fire on every routine
+# published that base rate, including this project. docs/DECLARATION-CHURN.md
+# is the measurement. Until it exists, a control that might fire on every routine
 # upstream release ships in observe-only mode, because a noisy control is one
 # an operator switches off.
 #

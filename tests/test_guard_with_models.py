@@ -29,7 +29,7 @@ def guard() -> GuardDetector:
 
 class TestLabelResolution:
     def test_positive_class_is_read_from_the_checkpoint(self, guard: GuardDetector) -> None:
-        """The bug class `plan.md` 2.25 had to verify empirically for V3.
+        """The bug class that had to be verified empirically for V3.
 
         This checkpoint publishes real class names, so the index is derived,
         never assumed.

@@ -442,7 +442,7 @@ the step 4 policy block, and until then the exception propagates.
 
 | Idea | Why not |
 |---|---|
-| **Cross-server taint / data-flow control** | Needs content lineage across calls, which contradicts SEC-1/NFR-3. M12 already died attempting cross-call correlation from hashes alone (`plan.md` 2.25). Unanimous kill. |
+| **Cross-server taint / data-flow control** | Needs content lineage across calls, which contradicts SEC-1/NFR-3. M12 already died attempting cross-call correlation from hashes alone. Unanimous kill. |
 | **Secret / API-key detection** | Commodity — `gitleaks`, `trufflehog`, `detect-secrets` do it better. Off-thesis and invites the "gateway #51" read. Unanimous kill. |
 | **Trust-on-first-use PKI with versioned pins, policy objects, cross-server identity** | Four of five reviewers named this the worst answer: a multi-month project for a solo maintainer, with no version where half of it ships. With no signing key or CA, "server identity" is just the config string. |
 | **Live registry scraper on a schedule** | Unbounded maintenance; scrapers rot. Frozen dated snapshot instead. |

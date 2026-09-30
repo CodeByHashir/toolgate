@@ -3,7 +3,7 @@
 #     uv run toolgate run-agent --policy config/policy.guard.yaml --db logs/d.sqlite
 #
 # **This is the ML profile anyone can actually run.** V0 and V3 are reused
-# dissertation artifacts whose weights are not publishable (prd.md A1), so
+# dissertation artifacts whose weights are not publishable, so
 # config/policy.research.yaml only works for someone who already has them.
 # `guard` is fetched from the Hugging Face Hub at a pinned commit under
 # Apache-2.0, so cloning this repository is enough. First run downloads roughly
@@ -85,7 +85,7 @@ thresholds:
     # the injection signal decides.
     redact: 0.7
 
-# Indicative per-action false-positive budgets from plan.md 2.15. Not
+# Indicative per-action false-positive budgets. Not
 # enforced numerically anywhere yet -- there is no calibration data until M7.
 # Recorded here so the target survives the gap between design and calibration.
 fpr_budget:

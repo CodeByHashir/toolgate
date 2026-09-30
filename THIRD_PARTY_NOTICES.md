@@ -19,7 +19,7 @@ and python.org pages, and a Project Gutenberg text.
 licence.** Whether share-alike obligations actually attach to a JSON benchmark
 fixture containing verbatim excerpts is a legal question this project is not
 qualified to answer — so rather than attributing the content and hoping the
-answer was favourable, **the file was deleted** (`plan.md` 2.27).
+answer was favourable, **the file was deleted**.
 
 Nothing depended on it programmatically: no test and no script read it, and the
 SQLite database its published latency figures were computed from was never

@@ -1,17 +1,17 @@
 """Fusion and policy engine (FR-4, FR-5, FR-6, FR-7, FR-9).
 
 Turns a bundle of named `DetectorResult`s into exactly one `Decision`. The
-fusion rule is max/OR, never weighted-linear averaging: `plan.md` 2.15 records
-why -- the four detectors are near-orthogonal (Jaccard 0.00-0.09) and none
-exceeds 20.3% recall, so averaging them at ~0.3 weight each could never cross
-a useful threshold. Each detector's own per-action threshold decides whether
-IT fires; any firing detector in a role is enough.
+fusion rule is max/OR, never weighted-linear averaging. The four detectors are
+near-orthogonal (Jaccard 0.00-0.09) and none exceeds 20.3% recall, so averaging
+them at ~0.3 weight each could never cross a useful threshold. Each detector's
+own per-action threshold decides whether IT fires; any firing detector in a
+role is enough.
 
 Two roles, kept structurally separate rather than mixed into one weighted
 score:
 
 * `injection` detectors decide Escalate/Block. In M4 this is `rules_mcp`
-  only -- V0 and V3 join in M5 (`plan.md` milestone table).
+  only -- V0 and V3 join in M5.
 * `redaction` detectors (`pii`) decide which spans get masked. This is
   independent of the injection decision: PII carries zero injection weight
   (its apparent recall in the pre-M3b audit was an InjecAgent benchmark

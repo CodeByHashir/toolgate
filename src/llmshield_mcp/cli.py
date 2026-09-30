@@ -247,13 +247,12 @@ def ingest_corpus(
 ) -> int:
     """Fetch, label, decontaminate and store the payload corpus (FR-10, M6, M8).
 
-    Adversarial items come from BIPIA/InjecAgent and, by default, LLMail-Inject
-    (`corpus.sources`) -- the third adversarial source family `plan.md` open
-    question Q3 asked for. Benign items are lines from this repository's own
-    real content. All labels are checked against the V0/V3 training-data
-    reference corpus -- the reused training set includes a benign class too
-    (dolly/alpaca), so a benign item can be contaminated exactly as an
-    adversarial one can.
+    Adversarial items come from BIPIA/InjecAgent and, by default,
+    LLMail-Inject (`corpus.sources`), the third adversarial source family.
+    Benign items are lines from this repository's own real content. All labels
+    are checked against the V0/V3 training-data reference corpus -- the reused
+    training set includes a benign class too (dolly/alpaca), so a benign item
+    can be contaminated exactly as an adversarial one can.
     """
     from llmshield_mcp.corpus import (
         CorpusLabel,
@@ -422,7 +421,7 @@ def gauge_recut(scores_csv: Path, output: Path | None) -> int:
     """Recompute AUROC from a saved `scores.csv` under every score mode.
 
     Needs neither the reused weights nor a corpus -- only the CSV a previous
-    `gauge-run` wrote. This is the executable form of `plan.md` section 2.6's
+    `gauge-run` wrote. This is the executable form of the
     promise that the published statistics are reproducible without the
     unpublishable artifacts, and the falsification test for `docs/REPORT.md`
     section 4's below-chance V3 AUROC: see `gauge/recut.py` for why a below-

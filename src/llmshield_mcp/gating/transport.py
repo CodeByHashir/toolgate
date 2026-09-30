@@ -5,7 +5,7 @@ manager yielding a `(ReadStream, WriteStream)` pair of `SessionMessage`, and
 every transport -- stdio, SSE, streamable HTTP -- yields exactly that same pair
 (`mcp/client/_transport.py`). Wrapping it therefore gives one code path for all
 transports and requires no re-implementation of the protocol, which is why
-plan.md 2.1 chose this over an out-of-process proxy.
+this was chosen over an out-of-process proxy.
 
 M2 shipped with the wrappers forwarding every frame unchanged and no
 detectors, on purpose: interception transparency had to be demonstrable on its
@@ -28,7 +28,7 @@ section 3.1's scope of tool *results*. They are now also **gated on capability**
 (`gating/tool_calls.py`): `observe_outbound` raises `ToolCallBlocked` when the
 policy refuses a call, and `_ObservedWriteStream.send` calls it before
 forwarding, so the request never reaches the server. That is a deliberate
-scope extension, argued in `plan.md` 2.28 -- content detection on this surface
+scope extension: content detection on this surface
 was measured not to work, so the control moved to capability, which needs no
 classifier.
 """
@@ -79,7 +79,7 @@ def _build_pii() -> Detector:
 
 def _build_v0() -> Detector:
     # Imported lazily: constructing this loads a joblib artifact that is not
-    # published (prd.md A1) and is not present in CI, so nothing should pay
+    # published and is not present in CI, so nothing should pay
     # for this import unless a policy file actually names "v0" in a role.
     from llmshield_mcp.config import load_models_config
     from llmshield_mcp.detectors.v0_lexical import V0LexicalDetector
@@ -114,7 +114,7 @@ def _build_guard() -> Detector:
 
 
 #: Every detector key a policy file's `detectors.*` roles may name. Adding V0
-#: and V3 here (M5) is what makes `plan.md`'s "ablation by config alone"
+#: and V3 here (M5) is what makes "ablation by config alone"
 #: verification literal: a key only gets constructed -- and only then pays its
 #: load cost -- if some role in the policy actually names it.
 _DETECTOR_FACTORIES: dict[str, Callable[[], Detector]] = {

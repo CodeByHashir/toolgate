@@ -60,7 +60,7 @@ v3:
 # ---------------------------------------------------------------------------
 #
 # Why this exists. V0 and V3 are reused dissertation artifacts that are NOT
-# publishable (prd.md A1). That makes every number this project reports about
+# publishable. That makes every number this project reports about
 # them unverifiable by a reader: they cannot run the detector. It also makes
 # the repository unusable as shipped -- clone it and the default research
 # profile has nothing to load.
@@ -91,7 +91,7 @@ guard:
   # Resolved against the checkpoint's OWN id2label ({0: SAFE, 1: INJECTION}),
   # not assumed to be index 1. V3's checkpoint carries only LABEL_0..LABEL_3,
   # so its mapping lived in a comment and had to be verified empirically
-  # (plan.md 2.25). A checkpoint that names its classes gets read.
+  # A checkpoint that names its classes gets read.
   positive_label: "INJECTION"
 
   device: "cpu"

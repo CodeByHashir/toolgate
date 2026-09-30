@@ -17,6 +17,9 @@ dist/
 # Local-only dev artefacts — untracked from public repo, kept locally
 plan.md
 whats_has_been_done.md
+prd.md
+code_summary.md
+CLAUDE.md
 
 # Sandbox directory — internal test data and meeting notes, keep locally
 sandbox/

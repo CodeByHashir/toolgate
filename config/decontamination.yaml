@@ -27,7 +27,7 @@ jaccard_threshold: 0.85
 # config/models.yaml's model weights, this is NOT vendored into the
 # repository -- it is a ~19k-row JSONL assembled from mixed-license public
 # datasets (deepset, safe-guard, jayavibhav, jackhhao, in-the-wild, rubend18,
-# dolly, alpaca; see plan.md section 3's Reuse Inventory) and this project has
+# dolly, alpaca) and this project has
 # no redistribution rights over it. Override with LLMSHIELD_TRAINING_CORPUS.
 #
 # Relative paths resolve against the repository root. `corpus/reference/` is

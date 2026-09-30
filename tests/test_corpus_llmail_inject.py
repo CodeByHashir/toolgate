@@ -1,4 +1,4 @@
-"""Tests for the LLMail-Inject loader (plan.md open question Q3, M8).
+"""Tests for the LLMail-Inject loader.
 
 `fetch_llmail_inject()` itself is a live network call to HuggingFace's
 datasets-server -- not unit tested here, matching how `fetch()`

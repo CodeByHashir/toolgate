@@ -74,7 +74,7 @@ thresholds:
     # the injection signal decides.
     redact: 0.7
 
-# Indicative per-action false-positive budgets from plan.md 2.15. Not
+# Indicative per-action false-positive budgets. Not
 # enforced numerically anywhere yet -- there is no calibration data until M7.
 # Recorded here so the target survives the gap between design and calibration.
 fpr_budget:

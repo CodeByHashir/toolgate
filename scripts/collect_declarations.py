@@ -35,8 +35,8 @@ description, no schema. Three reasons, in order of weight:
    made the same choice for the same reason.
 2. Churn is a question about *whether bytes changed*, which digests answer
    completely. Storing the text would add nothing to the measurement.
-3. It keeps third-party text out of the repository. `plan.md` 2.27 records what
-   it cost to resolve that once already.
+3. It keeps third-party text out of the repository, which already cost one
+   removed fixture to resolve (see THIRD_PARTY_NOTICES.md).
 
 The trade-off, stated because it is real: metrics that need the text -- the
 rule false-positive rate below -- are computed at collection time and stored as

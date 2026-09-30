@@ -39,7 +39,7 @@ looked like. M13 does that offline and answers four things:
 ## 2. The policy contract under test
 
 Read from `gating/policy.py`, `gating/transport.py`, `gating/content.py`,
-`config/policy.yaml` and `plan.md` 2.15-2.17 before any code was written.
+and `config/policy.yaml` before any code was written.
 
 | Item | Contract |
 |---|---|

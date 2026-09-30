@@ -220,7 +220,7 @@ properties and their dilution responses cannot be compared.
 INJ-\* rules were written against user prompts (direct injection attempts) and
 have zero transfer to the tool-result surface where BIPIA and InjecAgent payloads
 are framed as indirect instructions. Dilution has no effect because no pattern
-fires. This confirms the finding in `docs/POLICY-AUDIT.md` and `plan.md §2.14`.
+fires. This confirms the finding in `docs/POLICY-AUDIT.md`.
 
 ### Comparison with single-call baseline
 

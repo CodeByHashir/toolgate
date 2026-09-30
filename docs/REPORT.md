@@ -4,9 +4,8 @@ This is the headline report AC-7 asks for: what was measured, what it says,
 and what it does not say. Every number below traces to a script under
 `scripts/` or `toolgate`'s own subcommands and is reproducible from the
 committed corpus and code -- the reused model weights are the only
-unreproducible input (`prd.md` A1), and every evaluation run emits a
-per-item `scores.csv` specifically so the statistics recompute without them
-(`plan.md` section 2.6).
+unreproducible input, and every evaluation run emits a
+per-item `scores.csv` specifically so the statistics recompute without them.
 
 **Headline answer: no -- and this is not a property of any one model.** Six
 detectors were measured on the same decontaminated corpus through the same
@@ -30,7 +29,7 @@ collections is measured.
 ## 1. What this system is
 
 An interception layer sits at the MCP client's transport boundary and
-inspects every tool result before it reaches the agent (`plan.md` 2.1). Six
+inspects every tool result before it reaches the agent. Six
 detectors run against every result: a frozen 19-rule set ported from the
 author's dissertation (`INJ-*`), a 6-rule set derived from real MCP-surface
 attack data (`MCP-*`), a PII scanner, two reused-not-retrained classifiers
@@ -50,7 +49,7 @@ this system's output is "here is what was noticed", not "here is what was
 stopped".
 
 **This is a detection and audit layer with measured, poor coverage, not a
-guardrail that blocks attacks** (`plan.md` 2.16). That framing is not a
+guardrail that blocks attacks**. That framing is not a
 disclaimer added after the fact; it is the actual finding, and the rest of
 this report is the evidence for it.
 
@@ -236,8 +235,7 @@ decision-carrying role still requires a calibration this data does not support.
 ## 5. Leave-one-source-out: the generalisation gap (FR-12, M8)
 
 The dissertation's own leave-one-out protocol retrains a classifier with and
-without each benchmark family. This project never retrains V0/V3
-(`plan.md` 2.20), so the meaningful question here is narrower: does the
+without each benchmark family. This project never retrains V0/V3, so the meaningful question here is narrower: does the
 *same* calibrated threshold produce consistent recall across independent
 attack sources, or not?
 
@@ -256,7 +254,7 @@ against three genuinely disjoint real-world sources:
 
 V0's failure rate swings by **~58 percentage points** depending purely on
 which source is measured. A report built from only the first two families
-(this project's own state before Q3 was resolved, `plan.md` 2.21) would have
+(this project's own state before the third source family was added) would have
 significantly overstated how consistently V0 fails -- and would have missed
 that it fails *least* on the family most like a live, adaptive attacker
 (LLMail-Inject: real human submissions against real live defenses). V3 is
@@ -301,7 +299,7 @@ file, which the default profile now does.
 
 ## 7. Why the system is still designed this way
 
-Given detectors this weak, three design decisions (`plan.md` 2.15) follow
+Given detectors this weak, three design decisions follow
 directly from the numbers above, not from caution for its own sake:
 
 - **Max/OR fusion, never weighted-linear averaging.** The four detectors that
@@ -327,7 +325,7 @@ directly from the numbers above, not from caution for its own sake:
 - No claim that this system blocks attacks reliably. Section 5's own numbers
   are the argument against that claim.
 - No claim about non-English content, non-text payloads, or transports
-  beyond local stdio and reachable HTTP+SSE (out of scope, `prd.md` 3.2).
+  beyond local stdio and reachable HTTP+SSE (out of scope).
 - The `MCP-*` rules' 20.3% recall does not generalise evenly across sources
   either (15.2% BIPIA vs 30.6% InjecAgent, `docs/POLICY-AUDIT.md`) -- the
   same generalisation caveat as section 5 applies to the rules, not only the
@@ -345,7 +343,7 @@ uv run toolgate gauge-recut               # every AUROC in section 4, from resul
 uv run python scripts/benchmark_rules.py    # rule recall vs BIPIA + InjecAgent
 ```
 
-`results/gauge/scores.csv` is committed on purpose (`plan.md` 2.26): it carries
+`results/gauge/scores.csv` is committed on purpose: it carries
 every per-item score behind section 4, so the statistics recompute with no
 weights, no corpus and no network. It holds item ids and numbers only -- no
 payload text.
@@ -357,7 +355,7 @@ uv run toolgate corpus-ingest
 uv run toolgate gauge-run                 # scores guard alongside anything else configured
 ```
 
-**With the reused V0/V3 artifacts**, which are not publishable (`prd.md` A1) and
+**With the reused V0/V3 artifacts**, which are not publishable and
 so reproducible only by the author:
 
 ```bash

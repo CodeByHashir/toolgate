@@ -94,9 +94,9 @@ class GuardConfig:
     """A published, redistributable injection classifier fetched from the Hub.
 
     Deliberately identified by `repo` + `revision` rather than a local path,
-    which is the whole point of it. V0 and V3 are unpublishable artifacts
-    (`prd.md` A1): nobody but the author can run them, so every number this
-    project reports about them is unverifiable by a reader. A Hub-hosted,
+    which is the whole point of it. V0 and V3 are unpublishable artifacts, so
+    nobody but the author can run them and every number this project reports
+    about them is unverifiable by a reader. A Hub-hosted,
     permissively-licensed model is reproducible by anyone with the repository
     and a network connection.
 
@@ -107,7 +107,7 @@ class GuardConfig:
     `positive_label` is resolved against the checkpoint's own `id2label` map
     rather than assumed to be an index. V3's checkpoint carries only
     `LABEL_0..LABEL_3`, so its class mapping lives in a training-script comment
-    and had to be verified empirically (`plan.md` 2.25). A checkpoint that
+    and had to be verified empirically. A checkpoint that
     names its classes should be read, not guessed at.
     """
 

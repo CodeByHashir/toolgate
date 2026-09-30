@@ -1,8 +1,8 @@
 """Recompute AUROC from a saved `scores.csv` under a different score mode.
 
-`plan.md` section 2.6 promises that every statistic this project publishes is
-recomputable from `scores.csv` alone, without the unpublishable V0/V3 weights
-(`prd.md` A1). `gauge/run.py` writes all four class probabilities for exactly
+The project promises that every statistic it publishes is
+recomputable from `scores.csv` alone, without the unpublishable V0/V3 weights.
+`gauge/run.py` writes all four class probabilities for exactly
 that reason. Until this module existed, the promise was architectural rather
 than executable: nothing actually read those columns back.
 

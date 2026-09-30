@@ -11,8 +11,7 @@ already a pinned dependency with nothing else using it yet.
 DeLong AUROC is the one exception: there is no ready `statsmodels`/`scipy`
 implementation of it, and `evaluation/experiment2/exp2_auroc_delong.py`'s
 pure-Python midrank version is correct (confirmed by reading it, not
-assumed -- `plan.md` section 3's Reuse Inventory already flagged it as "the
-one already implemented correctly"). Ported near-verbatim; only renamed for
+assumed). Ported near-verbatim; only renamed for
 this project's style and typed.
 """
 
