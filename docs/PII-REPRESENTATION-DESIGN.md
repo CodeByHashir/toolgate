@@ -14,7 +14,7 @@
 > together with no separator (`a@b.comX@y.com`), in about 23% of such pairs. The
 > shipped fix instead bounds the local part to RFC 5321's 64-octet limit
 > (`{1,64}+`, possessive) and drops the redundant `re.IGNORECASE`; see the comment
-> above `PATTERNS["EMAIL_ADDRESS"]` in `src/llmshield_mcp/detectors/pii.py` for the
+> above `PATTERNS["EMAIL_ADDRESS"]` in `src/toolgate/detectors/pii.py` for the
 > full reasoning. No number in this document that depends on the *representation*
 > forms (`[at]`, spaced, words) changes; only the "leading lookbehind ... 2ms"
 > claim below is superseded.
@@ -88,7 +88,7 @@ tool result -> extract() (blocks joined by "\n")
 
 Files (V1):
 
-1. **New** `src/llmshield_mcp/detectors/pii_representations.py`: pure functions, no I/O.
+1. **New** `src/toolgate/detectors/pii_representations.py`: pure functions, no I/O.
    `find_email_representations(text, forms, validator) -> tuple[RepresentationMatch, ...]`
    where `RepresentationMatch(start, end, form)` carries offsets and a form name only,
    never the address (SEC-3, NFR-4; the canonical string exists only transiently for

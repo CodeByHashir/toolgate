@@ -84,10 +84,10 @@ from mcp.client.stdio import stdio_client
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from llmshield_mcp.config import REPO_ROOT  # noqa: E402
-from llmshield_mcp.detectors.normalise import normalise  # noqa: E402
-from llmshield_mcp.detectors.rules import RuleDetector  # noqa: E402
-from llmshield_mcp.gating.declarations import (  # noqa: E402
+from toolgate.config import REPO_ROOT  # noqa: E402
+from toolgate.detectors.normalise import normalise  # noqa: E402
+from toolgate.detectors.rules import RuleDetector  # noqa: E402
+from toolgate.gating.declarations import (  # noqa: E402
     CANONICALISER_VERSION,
     HASHED_FIELDS,
     declaration_fields,

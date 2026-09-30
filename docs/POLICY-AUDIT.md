@@ -27,7 +27,7 @@ realistic content for a filesystem MCP server to serve.
 | Documents after excluding self-referential files | **0 / 43** |
 
 The three hits are `config/rules.yaml`, `tests/test_detector_rules.py` and
-`src/llmshield_mcp/cli.py` — files that contain injection strings *because they
+`src/toolgate/cli.py` — files that contain injection strings *because they
 are about injection detection*. The text really is an injection string; it is
 just quoted.
 
@@ -119,7 +119,7 @@ percentiles on a small benign sample. Directional, not a result.
 LLMShield's `normaliser.py` is **step 1 of the pre-LLM pipeline and its
 docstring says it "runs before any detection component"**. M3 ported steps 2
 and 3 but not step 1. Now ported as
-`src/llmshield_mcp/detectors/normalise.py`.
+`src/toolgate/detectors/normalise.py`.
 
 It applies NFKC, invisible-character stripping, homoglyph folding and base64
 decoding. Measured against deliberately obfuscated variants it recovers exactly
@@ -202,7 +202,7 @@ Measured on eight benign documents, V0 and V3 on CPU:
 | `sandbox/notes/meeting-notes.md` | 0.710 | 0.047 | **0.998** |
 | `sandbox/src/config_loader.py` | 0.937 | 0.300 | **1.000** |
 | `sandbox/data/quarterly.csv` | 0.291 | 0.021 | 0.159 |
-| `src/llmshield_mcp/config.py` | 0.973 | 0.047 | **1.000** |
+| `src/toolgate/config.py` | 0.973 | 0.047 | **1.000** |
 | `docs/PINNING.md` | 0.945 | 0.049 | **1.000** |
 | `config/servers.yaml` | 0.737 | 0.047 | **1.000** |
 

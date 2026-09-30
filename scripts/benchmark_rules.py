@@ -25,9 +25,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from llmshield_mcp.corpus.sources import fetch, load_adversarial, load_benign
-from llmshield_mcp.detectors.normalise import normalise
-from llmshield_mcp.detectors.rules import RuleDetector
+from toolgate.corpus.sources import fetch, load_adversarial, load_benign
+from toolgate.detectors.normalise import normalise
+from toolgate.detectors.rules import RuleDetector
 
 
 def main() -> int:

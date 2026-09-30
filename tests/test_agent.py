@@ -12,7 +12,7 @@ from typing import Any
 import mcp_types
 import pytest
 
-from llmshield_mcp.agent import (
+from toolgate.agent import (
     ConnectedServer,
     ReferenceAgent,
     flatten_result,

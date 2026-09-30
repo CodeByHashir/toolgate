@@ -2,7 +2,7 @@
 
 Marked `models`, like `tests/test_adapters_with_models.py`: these need the
 LLMShield artifacts on disk (`config/models.yaml`'s `models/`, or
-`LLMSHIELD_MODELS_ROOT` pointing at wherever they actually live). They are not
+`TOOLGATE_MODELS_ROOT` pointing at wherever they actually live). They are not
 published and are not present in CI, so this file is deselected
 there exactly as the rest of the `models`-marked suite is.
 
@@ -25,13 +25,18 @@ import mcp_types
 import pytest
 from mcp.shared.message import SessionMessage
 
-from llmshield_mcp.cli import PROBES
-from llmshield_mcp.detectors.normalise import scan_normalised
-from llmshield_mcp.gating.audit import Decision, DecisionLog
-from llmshield_mcp.gating.policy import PolicyEngine, load_policy_config
-from llmshield_mcp.gating.transport import Gate, build_detectors
+from toolgate.cli import PROBES
+from toolgate.detectors.normalise import scan_normalised
+from toolgate.gating.audit import Decision, DecisionLog
+from toolgate.gating.policy import PolicyEngine, load_policy_config
+from toolgate.gating.transport import Gate, build_detectors
 
 pytestmark = pytest.mark.models
+
+# V0/V3 ship `inert` in the research profile. The default profile no longer
+# constructs them at all (rules + PII only), so the tests that need them
+# running load this one explicitly.
+RESEARCH_POLICY = Path(__file__).resolve().parent.parent / "config" / "policy.research.yaml"
 
 
 def _call_request(request_id: Any, tool: str = "read_text_file") -> SessionMessage:
@@ -79,8 +84,8 @@ thresholds:
 """
 
 
-def test_shipped_default_detectors_include_v0_and_v3_as_inert() -> None:
-    config = load_policy_config()
+def test_research_profile_includes_v0_and_v3_as_inert() -> None:
+    config = load_policy_config(RESEARCH_POLICY)
     detectors = build_detectors(config)
 
     assert "v0" in detectors
@@ -90,7 +95,7 @@ def test_shipped_default_detectors_include_v0_and_v3_as_inert() -> None:
 
 
 def test_v0_and_v3_score_real_text_but_never_escalate() -> None:
-    config = load_policy_config()
+    config = load_policy_config(RESEARCH_POLICY)
     detectors = build_detectors(config)
     engine = PolicyEngine(config)
 
@@ -114,7 +119,13 @@ def test_v0_and_v3_scores_reach_the_audit_log_through_a_real_gate(
     # actual scores landing in the decision log -- not just in an in-memory
     # PolicyEngine.decide call.
     log = DecisionLog(tmp_path / "decisions.sqlite")
-    gate = Gate("filesystem", log)  # default detectors: the shipped policy, real weights
+    config = load_policy_config(RESEARCH_POLICY)
+    gate = Gate(
+        "filesystem",
+        log,
+        policy=PolicyEngine(config),
+        detectors=build_detectors(config),
+    )
 
     gate.observe_outbound(_call_request(1))
     gate.observe_inbound(_call_response(1, BENIGN_TECHNICAL_TEXT))

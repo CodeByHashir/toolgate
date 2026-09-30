@@ -17,11 +17,11 @@ from typing import Any
 import mcp_types
 import pytest
 
-from llmshield_mcp.agent import ReferenceAgent, open_servers, qualified_tool_name
-from llmshield_mcp.gating.declaration_gate import DeclarationGate, DeclarationReport
-from llmshield_mcp.gating.pins import DeclarationVerdict, PinStore
-from llmshield_mcp.servers import ServerSpec
 from tests.test_agent import FakeAnthropic, FakeResponse, FakeText
+from toolgate.agent import ReferenceAgent, open_servers, qualified_tool_name
+from toolgate.gating.declaration_gate import DeclarationGate, DeclarationReport
+from toolgate.gating.pins import DeclarationVerdict, PinStore
+from toolgate.servers import ServerSpec
 
 
 def tag_encode(text: str) -> str:
@@ -263,7 +263,7 @@ async def _fake_transport(_params: Any) -> AsyncIterator[tuple[Any, Any]]:
 @pytest.fixture
 def patched_session(monkeypatch: pytest.MonkeyPatch) -> Any:
     """Patch `agent.ClientSession` so no MCP server is launched."""
-    import llmshield_mcp.agent as agent_module
+    import toolgate.agent as agent_module
 
     holder: dict[str, list[mcp_types.Tool]] = {"tools": []}
 

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from llmshield_mcp.config import load_models_config
+from toolgate.config import load_models_config
 
 BASE = """
 root: "models"

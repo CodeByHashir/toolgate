@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from llmshield_mcp.gating.audit import (
+from toolgate.gating.audit import (
     Decision,
     DecisionLog,
     DecisionRecord,

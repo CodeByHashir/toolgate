@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from llmshield_mcp.detectors.base import Detector, DetectorResult, RawScore, Span
+from toolgate.detectors.base import Detector, DetectorResult, RawScore, Span
 
 
 class _Constant(Detector):

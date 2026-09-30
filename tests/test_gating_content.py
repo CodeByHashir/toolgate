@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-from llmshield_mcp.detectors.base import Span
-from llmshield_mcp.gating.content import BLOCK_MESSAGE, apply_redaction, build_block_result, extract
+from toolgate.detectors.base import Span
+from toolgate.gating.content import BLOCK_MESSAGE, apply_redaction, build_block_result, extract
 
 
 def _text_result(*texts: str, is_error: bool = False) -> dict[str, object]:
@@ -277,7 +277,7 @@ def test_span_across_the_block_join_is_masked_in_both_blocks() -> None:
 
 def test_real_pii_detector_span_across_blocks_is_actually_redacted() -> None:
     """End to end with the real detector, not a hand-built span."""
-    from llmshield_mcp.detectors.pii import PiiDetector
+    from toolgate.detectors.pii import PiiDetector
 
     result = _text_result("Call 555", "123 4567 for support.")
     content = extract(result, max_chars=1000)

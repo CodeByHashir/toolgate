@@ -13,13 +13,13 @@ from pathlib import Path
 
 import pytest
 
-from llmshield_mcp.corpus.store import (
+from toolgate.corpus.store import (
     CorpusLabel,
     CorpusStore,
     DecontaminationStatus,
     PayloadCorpusItem,
 )
-from llmshield_mcp.gauge.run import run_gauge
+from toolgate.gauge.run import run_gauge
 
 pytestmark = pytest.mark.models
 
@@ -105,7 +105,9 @@ def test_run_gauge_produces_a_report_and_a_scores_csv(corpus_db: Path, tmp_path:
 
     assert set(report["references"]) == {"realistic", "adversarial_styled"}
     for reference_report in report["references"].values():
-        assert set(reference_report["detectors"]) == {"v0", "v3"}
+        # guard is scored alongside V0/V3 so one run covers every classifier
+        # docs/REPORT.md compares.
+        assert set(reference_report["detectors"]) == {"v0", "v3", "guard"}
 
     scores_path = Path(report["scores_csv"])
     assert scores_path.exists()

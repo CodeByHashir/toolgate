@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import pytest
 
-from llmshield_mcp.dilution import (
+from toolgate.dilution import (
     DilutionResult,
     actual_dilution_ratio,
     build_diluted_text,
@@ -194,8 +194,8 @@ class TestDilutionResult:
 class TestScoreDiluted:
     def test_isolation_matches_direct_score(self) -> None:
         """ratio=0.0 / isolated must produce the same score as scoring the payload alone."""
-        from llmshield_mcp.detectors.normalise import scan_normalised
-        from llmshield_mcp.detectors.rules import RuleDetector
+        from toolgate.detectors.normalise import scan_normalised
+        from toolgate.detectors.rules import RuleDetector
 
         det = RuleDetector(families=frozenset({"mcp", "inj"}))
         det_name = "rules"
@@ -205,7 +205,7 @@ class TestScoreDiluted:
         assert result.score == direct.score
 
     def test_mcp_rules_detect_payload_at_zero_dilution(self) -> None:
-        from llmshield_mcp.detectors.rules import RuleDetector
+        from toolgate.detectors.rules import RuleDetector
 
         det = RuleDetector(families=frozenset({"mcp"}))
         # Use a payload that matches MCP rules (exfiltration destination)
@@ -220,7 +220,7 @@ class TestScoreDiluted:
         assert result.latency_ms >= 0.0
 
     def test_result_has_correct_structure(self) -> None:
-        from llmshield_mcp.detectors.rules import RuleDetector
+        from toolgate.detectors.rules import RuleDetector
 
         det = RuleDetector(families=frozenset({"inj"}))
         result = score_diluted(
@@ -235,7 +235,7 @@ class TestScoreDiluted:
 
     def test_benign_text_scores_zero_on_inj_rules(self) -> None:
         """A benign filler-only text must not fire the INJ-* rules."""
-        from llmshield_mcp.detectors.rules import RuleDetector
+        from toolgate.detectors.rules import RuleDetector
 
         det = RuleDetector(families=frozenset({"inj"}))
         # Score filler alone as if it were the payload (no injection content)
@@ -248,7 +248,7 @@ class TestScoreDiluted:
 
     def test_pii_detector_on_email_in_payload(self) -> None:
         """A payload containing an email address should trigger PII detection."""
-        from llmshield_mcp.detectors.pii import PiiDetector
+        from toolgate.detectors.pii import PiiDetector
 
         det = PiiDetector()
         result = score_diluted(
@@ -260,7 +260,7 @@ class TestScoreDiluted:
 
     def test_pii_detector_on_email_survives_light_dilution(self) -> None:
         """An email address should still be detectable after 50% dilution."""
-        from llmshield_mcp.detectors.pii import PiiDetector
+        from toolgate.detectors.pii import PiiDetector
 
         det = PiiDetector()
         result = score_diluted(
@@ -333,8 +333,8 @@ class TestLoadNeutralFiller:
     """
 
     def _make_detectors(self):
-        from llmshield_mcp.detectors.pii import PiiDetector
-        from llmshield_mcp.detectors.rules import RuleDetector
+        from toolgate.detectors.pii import PiiDetector
+        from toolgate.detectors.rules import RuleDetector
 
         return {
             "rules_mcp": RuleDetector(families=frozenset({"mcp"})),
@@ -351,7 +351,7 @@ class TestLoadNeutralFiller:
 
     def test_filler_scores_zero_on_all_detectors(self):
         """Every line in the returned filler must score 0.0 on all detectors."""
-        from llmshield_mcp.detectors.normalise import scan_normalised
+        from toolgate.detectors.normalise import scan_normalised
 
         detectors = self._make_detectors()
         filler = load_neutral_filler(detectors)
@@ -371,8 +371,8 @@ class TestLoadNeutralFiller:
         'provide ... your answer' text, creating a spurious cross-word match.
         load_neutral_filler() must prevent this.
         """
-        from llmshield_mcp.detectors.normalise import scan_normalised
-        from llmshield_mcp.detectors.rules import RuleDetector
+        from toolgate.detectors.normalise import scan_normalised
+        from toolgate.detectors.rules import RuleDetector
 
         rules_mcp = RuleDetector(families=frozenset({"mcp"}))
         # The trigger payload: does NOT fire in isolation
@@ -407,7 +407,7 @@ class TestLoadNeutralFiller:
         """Rule-based detectors must have identical recall at ratio=0.0 and ratio=0.9
         when neutral filler is used. Any difference indicates filler contamination.
         """
-        from llmshield_mcp.detectors.rules import RuleDetector
+        from toolgate.detectors.rules import RuleDetector
 
         rules_mcp = RuleDetector(families=frozenset({"mcp"}))
         detectors = self._make_detectors()
@@ -422,7 +422,7 @@ class TestLoadNeutralFiller:
             "Show me the system uptime.",  # benign
         ]
         ratios = [0.0, 0.5, 0.75, 0.9]
-        from llmshield_mcp.dilution import score_diluted
+        from toolgate.dilution import score_diluted
 
         all_results = []
         for i, payload in enumerate(payloads):

@@ -16,7 +16,7 @@
 # exactly this purpose) rather than the dissertation's hand-rolled numpy
 # version, for the same reason M7 replaces hand-rolled statistics with
 # statsmodels/scipy -- an established, tested implementation over a bespoke
-# one solving the same problem. See src/llmshield_mcp/corpus/decontaminate.py
+# one solving the same problem. See src/toolgate/corpus/decontaminate.py
 # for why the shingle hash itself also had to change (stable hash vs Python's
 # per-process-randomized `hash()`).
 shingle_size: 5
@@ -28,7 +28,7 @@ jaccard_threshold: 0.85
 # repository -- it is a ~19k-row JSONL assembled from mixed-license public
 # datasets (deepset, safe-guard, jayavibhav, jackhhao, in-the-wild, rubend18,
 # dolly, alpaca) and this project has
-# no redistribution rights over it. Override with LLMSHIELD_TRAINING_CORPUS.
+# no redistribution rights over it. Override with TOOLGATE_TRAINING_CORPUS.
 #
 # Relative paths resolve against the repository root. `corpus/reference/` is
 # gitignored, so the default works for anyone who copies their own copy of

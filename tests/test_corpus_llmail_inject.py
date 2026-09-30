@@ -16,8 +16,8 @@ from pathlib import Path
 
 import pytest
 
-from llmshield_mcp.corpus import sources as sources_module
-from llmshield_mcp.corpus.sources import load_llmail_inject
+from toolgate.corpus import sources as sources_module
+from toolgate.corpus.sources import load_llmail_inject
 
 
 def _write_page(cache_dir: Path, name: str, bodies: list[tuple[str, str]]) -> None:

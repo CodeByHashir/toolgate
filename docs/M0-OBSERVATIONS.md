@@ -6,7 +6,7 @@ no statistics behind them. They are recorded because they shape the design of
 later milestones, and nothing here should be quoted as a finding.
 
 Setup: reused LLMShield V0 and V3, CPU, unmodified. Probes are in
-`src/llmshield_mcp/cli.py`.
+`src/toolgate/cli.py`.
 
 ## 1. Context dilution, not the 512-token window, looks like the dominant failure
 

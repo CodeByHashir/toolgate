@@ -2,7 +2,7 @@
 #
 # These are NOT vendored into this repository -- the trained weights are not
 # publishable. This file points at wherever they live locally. Override the
-# root with the LLMSHIELD_MODELS_ROOT environment variable.
+# root with the TOOLGATE_MODELS_ROOT environment variable.
 #
 # V0 was serialised by scikit-learn 1.8.0 and V3's config was written by
 # transformers 5.12.1; both are pinned exactly in pyproject.toml to match.

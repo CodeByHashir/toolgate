@@ -44,11 +44,11 @@ from pathlib import Path
 # Make sure the project package is importable when run directly.
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from llmshield_mcp.corpus.sources import load_adversarial, load_benign
-from llmshield_mcp.detectors.normalise import scan_normalised
-from llmshield_mcp.detectors.pii import PiiDetector
-from llmshield_mcp.detectors.rules import RuleDetector
-from llmshield_mcp.dilution import (
+from toolgate.corpus.sources import load_adversarial, load_benign
+from toolgate.detectors.normalise import scan_normalised
+from toolgate.detectors.pii import PiiDetector
+from toolgate.detectors.rules import RuleDetector
+from toolgate.dilution import (
     DilutionResult,
     load_neutral_filler,
     mean_score_at_ratio,

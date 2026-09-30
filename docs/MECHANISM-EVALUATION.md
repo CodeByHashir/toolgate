@@ -17,7 +17,7 @@
 Design, hypotheses, sample, statistics and stopping rule were frozen before any
 model call: `docs/MECHANISM-EVALUATION-PREREG.md` (sha256 recorded in the results;
 identical at the end; every model-visible document was also fixed by hash). Code:
-`src/llmshield_mcp/eval_mechanism.py`, `scripts/eval_mechanism.py`. Tests:
+`src/toolgate/eval_mechanism.py`, `scripts/eval_mechanism.py`. Tests:
 `tests/test_eval_mechanism.py`. **No M14 or M15 results were used as data**; all
 four conditions were run afresh, and M15 is cited only as context.
 

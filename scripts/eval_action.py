@@ -35,9 +35,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import eval_live as live  # sibling runner: Budget, execute, make_client (scripts/ is sys.path[0])
 
-from llmshield_mcp.detectors.pii import PiiDetector
-from llmshield_mcp.detectors.rules import RuleDetector
-from llmshield_mcp.eval_action import (
+from toolgate.detectors.pii import PiiDetector
+from toolgate.detectors.rules import RuleDetector
+from toolgate.eval_action import (
     BENIGN_A_MIN_COMPLETED,
     FINAL_MIN_A_SUCCESSES,
     FINAL_QUOTAS,
@@ -55,8 +55,8 @@ from llmshield_mcp.eval_action import (
     setup_by_id,
     stage1_gate,
 )
-from llmshield_mcp.eval_e2e import load_corpus
-from llmshield_mcp.eval_live import (
+from toolgate.eval_e2e import load_corpus
+from toolgate.eval_live import (
     ARM_A,
     ARM_B,
     ARM_C,
@@ -70,9 +70,9 @@ from llmshield_mcp.eval_live import (
     load_results,
     results_to_json,
 )
-from llmshield_mcp.gating.audit import Decision
-from llmshield_mcp.gating.content import BLOCK_MESSAGE
-from llmshield_mcp.gating.policy import PolicyConfig, load_policy_config
+from toolgate.gating.audit import Decision
+from toolgate.gating.content import BLOCK_MESSAGE
+from toolgate.gating.policy import PolicyConfig, load_policy_config
 
 ROOT = Path(__file__).parent.parent
 PREREG = ROOT / "docs" / "ACTION-EVALUATION-PREREG.md"
@@ -173,7 +173,7 @@ def benign_spec(arm: str, item: BenignItem, flagged: bool, setup: Setup) -> dict
 
 def benign_flags(items: list[BenignItem], detectors: Any, shipped: PolicyConfig) -> dict[str, bool]:
     """Would the shipped policy ESCALATE this benign email? (Deterministic, no model.)"""
-    from llmshield_mcp.eval_e2e import documented_outcome
+    from toolgate.eval_e2e import documented_outcome
 
     return {
         i.payload.payload_id: documented_outcome(i.document, detectors, shipped).decision

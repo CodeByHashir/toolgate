@@ -13,7 +13,7 @@ Naming: the masking result being explained is **M15**
 nor M15 results are used as data here**; all four conditions, including A and B,
 are run afresh.
 
-Code: `src/llmshield_mcp/eval_mechanism.py` (this design), `eval_live.py` (arms,
+Code: `src/toolgate/eval_mechanism.py` (this design), `eval_live.py` (arms,
 sink, statistics), `eval_action.py` (setup, sample, benign set), runner
 `scripts/eval_mechanism.py`. Tests: `tests/test_eval_mechanism.py` (32).
 
@@ -206,9 +206,9 @@ frames_benign_E_silent_removal_sha256:  e8c07d8c5cc4c83fabd00af4a3738e003a13f29d
 Code at freeze (sha256):
 
 ```
-src/llmshield_mcp/eval_mechanism.py  3cea400f47dd307c77b82c7f5b9310680108e7ae970514121bc77697e2d7400c
-src/llmshield_mcp/eval_live.py       510de16887755dedd12f60c520c7914b44f1cf25dba8132b77f7191aa236a295
-src/llmshield_mcp/eval_action.py     f441b62779abe8a6e4b5e84d4fdf2d743ccecbeaaccc915ce25b08b0465e035c
+src/toolgate/eval_mechanism.py  3cea400f47dd307c77b82c7f5b9310680108e7ae970514121bc77697e2d7400c
+src/toolgate/eval_live.py       510de16887755dedd12f60c520c7914b44f1cf25dba8132b77f7191aa236a295
+src/toolgate/eval_action.py     f441b62779abe8a6e4b5e84d4fdf2d743ccecbeaaccc915ce25b08b0465e035c
 scripts/eval_mechanism.py            c0d5c065ba8af0edf5731e11a5b9c579accf85d9b2a3bac8b9dbf5205b93627a
 ```
 

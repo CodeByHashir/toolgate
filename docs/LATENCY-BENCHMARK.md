@@ -5,7 +5,7 @@ assumption A3): per-detector/fused latency on a sample of the real ingested
 corpus (FR-13), and gate overhead across a real >=20-call agent chain
 (FR-14). Mean and p95 in milliseconds throughout, warmup excluded --
 `evaluation/experiment2/exp2_eval.py`'s own `latency_hf`/`latency_sklearn`
-convention (`n_warm=10`), reused rather than invented (`src/llmshield_mcp/latency.py`).
+convention (`n_warm=10`), reused rather than invented (`src/toolgate/latency.py`).
 
 **Verdict:** NFR-1 (~5ms rule/PII budget) is met with room to spare. NFR-2
 (report honestly against a 100ms SME budget, even if missed) is missed by
@@ -112,7 +112,7 @@ toolgate run-agent --task "..." --model claude-haiku-4-5 \
 ```
 
 Both need the real reused weights (`config/models.yaml` /
-`LLMSHIELD_MODELS_ROOT`) and, for the first, a corpus already produced by
+`TOOLGATE_MODELS_ROOT`) and, for the first, a corpus already produced by
 `toolgate corpus-ingest`. Exact figures will vary run to run (model
 non-determinism in which URLs/files get how many tool calls, CPU load,
 network conditions for the live fetches); the shape -- rules/PII/V0 trivial,

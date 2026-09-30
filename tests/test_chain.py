@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from llmshield_mcp.chain import (
+from toolgate.chain import (
     SCHEMA_VERSION,
     ChainRecord,
     ToolCallRecord,
@@ -16,7 +16,7 @@ from llmshield_mcp.chain import (
     normalise,
     restore,
 )
-from llmshield_mcp.config import REPO_ROOT, SANDBOX_PLACEHOLDER
+from toolgate.config import REPO_ROOT, SANDBOX_PLACEHOLDER
 
 SANDBOX = r"D:\LLMSHIELD-MCP\sandbox"
 

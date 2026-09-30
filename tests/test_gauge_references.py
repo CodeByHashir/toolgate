@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from llmshield_mcp.gauge.references import is_adversarial_styled, partition_benign_references
+from toolgate.gauge.references import is_adversarial_styled, partition_benign_references
 
 
 def test_plain_text_is_realistic() -> None:

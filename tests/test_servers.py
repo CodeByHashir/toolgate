@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from llmshield_mcp.servers import ServersConfig, ServerSpec, load_servers_config
+from toolgate.servers import ServersConfig, ServerSpec, load_servers_config
 
 VALID = """
 sandbox: "{sandbox_dir}"
@@ -63,7 +63,7 @@ def test_env_var_overrides_sandbox(
 ) -> None:
     other = tmp_path / "elsewhere"
     other.mkdir()
-    monkeypatch.setenv("LLMSHIELD_SANDBOX_ROOT", str(other))
+    monkeypatch.setenv("TOOLGATE_SANDBOX_ROOT", str(other))
 
     config = load_servers_config(_write(tmp_path, sandbox))
 

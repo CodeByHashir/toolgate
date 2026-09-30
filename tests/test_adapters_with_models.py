@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-from llmshield_mcp.cli import LONG_PROBE, PROBES
-from llmshield_mcp.config import DETECTOR_CLASSES, load_models_config
+from toolgate.cli import LONG_PROBE, PROBES
+from toolgate.config import DETECTOR_CLASSES, load_models_config
 
 pytestmark = pytest.mark.models
 
@@ -26,7 +26,7 @@ def config():  # type: ignore[no-untyped-def]
 
 @pytest.fixture(scope="module")
 def v0(config):  # type: ignore[no-untyped-def]
-    from llmshield_mcp.detectors import V0LexicalDetector
+    from toolgate.detectors import V0LexicalDetector
 
     if not config.v0.path.exists():
         pytest.skip(f"V0 artifact not present at {config.v0.path}")
@@ -35,7 +35,7 @@ def v0(config):  # type: ignore[no-untyped-def]
 
 @pytest.fixture(scope="module")
 def v3(config):  # type: ignore[no-untyped-def]
-    from llmshield_mcp.detectors import V3TransformerDetector
+    from toolgate.detectors import V3TransformerDetector
 
     if not config.v3.path.exists():
         pytest.skip(f"V3 artifact not present at {config.v3.path}")
@@ -74,7 +74,7 @@ def test_v3_separates_benign_from_injection(v3) -> None:  # type: ignore[no-unty
 def test_v3_truncate_flags_lost_content(config) -> None:  # type: ignore[no-untyped-def]
     import dataclasses
 
-    from llmshield_mcp.detectors import V3TransformerDetector
+    from toolgate.detectors import V3TransformerDetector
 
     if not config.v3.path.exists():
         pytest.skip("V3 artifact not present")
@@ -98,7 +98,7 @@ def test_chunking_never_scores_below_truncation(config) -> None:  # type: ignore
     """
     import dataclasses
 
-    from llmshield_mcp.detectors import V3TransformerDetector
+    from toolgate.detectors import V3TransformerDetector
 
     if not config.v3.path.exists():
         pytest.skip("V3 artifact not present")

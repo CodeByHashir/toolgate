@@ -1,0 +1,42 @@
+"""Interchangeable detector adapters.
+
+V3 is imported lazily: it pulls in torch and transformers, which cost seconds
+of import time. Nothing that only needs the detector contract or V0 should pay
+that, and CI runs the contract tests without a torch install.
+"""
+
+from typing import TYPE_CHECKING, Any
+
+from toolgate.detectors.base import Detector, DetectorResult, RawScore, Span
+from toolgate.detectors.normalise import Normalised, normalise, scan_normalised
+from toolgate.detectors.pii import PiiDetector, redact
+from toolgate.detectors.rules import Rule, RuleDetector, load_rules
+from toolgate.detectors.v0_lexical import V0LexicalDetector
+
+if TYPE_CHECKING:
+    from toolgate.detectors.v3_transformer import V3TransformerDetector
+
+__all__ = [
+    "Detector",
+    "DetectorResult",
+    "Normalised",
+    "PiiDetector",
+    "RawScore",
+    "Rule",
+    "RuleDetector",
+    "Span",
+    "V0LexicalDetector",
+    "V3TransformerDetector",
+    "load_rules",
+    "normalise",
+    "redact",
+    "scan_normalised",
+]
+
+
+def __getattr__(name: str) -> Any:
+    if name == "V3TransformerDetector":
+        from toolgate.detectors.v3_transformer import V3TransformerDetector
+
+        return V3TransformerDetector
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

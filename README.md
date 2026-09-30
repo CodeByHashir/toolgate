@@ -290,7 +290,7 @@ scored. It is included for verifiability, not because it works.
 The V0/V3 trained weights are not distributed with this repository and are not
 publishable. `config/models.yaml` defaults to a repository-relative `models/`
 directory, which is gitignored. Copy, symlink or junction your artifacts there,
-or point `LLMSHIELD_MODELS_ROOT` at wherever they live:
+or point `TOOLGATE_MODELS_ROOT` at wherever they live:
 
 ```bash
 # Windows (no admin needed)

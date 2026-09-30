@@ -31,10 +31,10 @@ from typing import Any
 
 import pytest
 
-from llmshield_mcp.detectors.base import Detector
-from llmshield_mcp.detectors.normalise import scan_normalised
-from llmshield_mcp.gating.audit import Decision
-from llmshield_mcp.gating.policy import PolicyEngine, load_policy_config
+from toolgate.detectors.base import Detector
+from toolgate.detectors.normalise import scan_normalised
+from toolgate.gating.audit import Decision
+from toolgate.gating.policy import PolicyEngine, load_policy_config
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "golden_set.json"
 

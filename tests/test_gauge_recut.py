@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from llmshield_mcp.config import DETECTOR_CLASSES
-from llmshield_mcp.gauge.recut import (
+from toolgate.config import DETECTOR_CLASSES
+from toolgate.gauge.recut import (
     DEFAULT_MODES,
     format_table,
     load_rows,

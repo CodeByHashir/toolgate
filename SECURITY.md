@@ -116,7 +116,7 @@ anywhere you can, regardless of what its tool surface permits.
 
 **So a signed or HMAC'd pin file would be theatre.** An attacker who can write
 `pins/` can equally write `config/policy.yaml` to disable gating, edit
-`src/llmshield_mcp/gating/pins.py` so verification always passes, or replace the
+`src/toolgate/gating/pins.py` so verification always passes, or replace the
 installed package in `.venv/`. Any key stored on the same filesystem is
 available to the same attacker, so a signature over the pin file would add a
 guarantee-shaped artifact and no guarantee. It is recorded as rejected, with

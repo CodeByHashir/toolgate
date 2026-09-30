@@ -12,7 +12,7 @@ Run:
 Needs the cached corpus under `corpus/external/` (gitignored). Fetch it once
 (this downloads BIPIA, InjecAgent and sampled LLMail-Inject pages):
 
-    uv run python -c "from llmshield_mcp.corpus.sources import fetch, \
+    uv run python -c "from toolgate.corpus.sources import fetch, \
 fetch_llmail_inject; fetch(); fetch_llmail_inject()"
 
 (`mcp-shield corpus-ingest` also fetches, but then decontaminates against the
@@ -38,10 +38,10 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from llmshield_mcp.detectors.pii import PiiDetector
-from llmshield_mcp.detectors.rules import RuleDetector
-from llmshield_mcp.dilution import load_neutral_filler
-from llmshield_mcp.eval_e2e import (
+from toolgate.detectors.pii import PiiDetector
+from toolgate.detectors.rules import RuleDetector
+from toolgate.dilution import load_neutral_filler
+from toolgate.eval_e2e import (
     ARM_BASE64,
     ARM_BENIGN,
     ARM_PLAIN,
@@ -56,8 +56,8 @@ from llmshield_mcp.eval_e2e import (
     run_evaluation,
     summarise,
 )
-from llmshield_mcp.gating.audit import Decision
-from llmshield_mcp.gating.policy import load_policy_config
+from toolgate.gating.audit import Decision
+from toolgate.gating.policy import load_policy_config
 
 DEFAULT_OUT_DIR = Path(__file__).parent.parent / "results" / "e2e"
 ADVERSARIAL = ("bipia", "injecagent", "llmail_inject")

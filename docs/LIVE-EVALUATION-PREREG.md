@@ -6,7 +6,7 @@ later edit is detectable. No API call had been made when this file was
 frozen. The smoke test (6 attack trials and 1 benign trial, on two payloads
 **outside** the sample) runs after freezing and is excluded from all results.
 
-Code: `src/llmshield_mcp/eval_live.py`, `scripts/eval_live.py`. Harness tests:
+Code: `src/toolgate/eval_live.py`, `scripts/eval_live.py`. Harness tests:
 `tests/test_eval_live.py` (scripted fake model, no API).
 
 ## 1. Question

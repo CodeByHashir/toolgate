@@ -14,7 +14,7 @@
 Design, hypotheses, statistics and stopping rule were frozen before any model call:
 `docs/REPRESENTATION-EVALUATION-PREREG.md` (sha256 `2151c5dc...`, unchanged, recorded
 in `results/representation/frozen.json`, `trials.meta.json` and `analysis.json`).
-Code: `src/llmshield_mcp/eval_representation.py`, `scripts/eval_representation.py`.
+Code: `src/toolgate/eval_representation.py`, `scripts/eval_representation.py`.
 Tests: `tests/test_eval_representation.py` (54). Production policy, `gating/`,
 `agent.py`, detectors and the M15/M16 evaluation code are untouched. M15/M16 results are
 not used as data; every condition was run afresh.

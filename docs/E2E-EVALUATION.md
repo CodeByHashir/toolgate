@@ -16,7 +16,7 @@
 > a payload that reaches it.**
 
 Run: `uv run python scripts/eval_e2e.py` (about 45 s, no API key, no model, no
-network once the corpus cache exists). Code: `src/llmshield_mcp/eval_e2e.py`.
+network once the corpus cache exists). Code: `src/toolgate/eval_e2e.py`.
 Tests: `tests/test_eval_e2e.py`.
 
 ---
@@ -315,7 +315,7 @@ it is not a live-attack result.
 
 ```
 # once: fetch the corpus cache (downloads BIPIA, InjecAgent, sampled LLMail-Inject)
-uv run python -c "from llmshield_mcp.corpus.sources import fetch, fetch_llmail_inject; fetch(); fetch_llmail_inject()"
+uv run python -c "from toolgate.corpus.sources import fetch, fetch_llmail_inject; fetch(); fetch_llmail_inject()"
 
 uv run python scripts/eval_e2e.py          # ~45 s; writes results/e2e/e2e_results.json (gitignored)
 uv run pytest tests/test_eval_e2e.py       # CI-safe: no corpus, models or network

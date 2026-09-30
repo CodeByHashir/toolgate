@@ -359,7 +359,7 @@ uv run toolgate gauge-run                 # scores guard alongside anything else
 so reproducible only by the author:
 
 ```bash
-LLMSHIELD_MODELS_ROOT=/path/to/artifacts uv run toolgate gauge-run
+TOOLGATE_MODELS_ROOT=/path/to/artifacts uv run toolgate gauge-run
 uv run python scripts/benchmark_latency.py
 uv run python scripts/generate_report.py    # regenerates the SVGs in docs/figures/
 ```

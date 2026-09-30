@@ -13,8 +13,8 @@ import dataclasses
 
 import pytest
 
-from llmshield_mcp.config import load_models_config
-from llmshield_mcp.detectors.guard import GuardDetector
+from toolgate.config import load_models_config
+from toolgate.detectors.guard import GuardDetector
 
 pytestmark = pytest.mark.models
 

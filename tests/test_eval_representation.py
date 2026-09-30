@@ -17,11 +17,11 @@ from typing import Any
 
 import pytest
 
-from llmshield_mcp.detectors.base import Detector
-from llmshield_mcp.eval_action import MANAGER, SETUPS, compose_document
-from llmshield_mcp.eval_live import TrialResult, run_trial
-from llmshield_mcp.eval_mechanism import obfuscate_address
-from llmshield_mcp.eval_representation import (
+from toolgate.detectors.base import Detector
+from toolgate.eval_action import MANAGER, SETUPS, compose_document
+from toolgate.eval_live import TrialResult, run_trial
+from toolgate.eval_mechanism import obfuscate_address
+from toolgate.eval_representation import (
     COND_N1,
     CONDITIONS,
     G1,
@@ -50,8 +50,8 @@ from llmshield_mcp.eval_representation import (
     represent_occurrences,
     sequence_signature,
 )
-from llmshield_mcp.gating.policy import PolicyConfig, load_policy_config
-from llmshield_mcp.gating.transport import Gate
+from toolgate.gating.policy import PolicyConfig, load_policy_config
+from toolgate.gating.transport import Gate
 
 TARGET = "contact@contact.com"
 SETUP = SETUPS[2]  # C3, the frozen setup
@@ -216,7 +216,7 @@ class TestGateBehaviour:
     def test_gate_factories_are_explicit_and_use_the_unchanged_shipped_gate(
         self, tmp_path: Path, light_detectors: dict[str, Detector], shipped: PolicyConfig
     ) -> None:
-        from llmshield_mcp.eval_live import RecordingLog
+        from toolgate.eval_live import RecordingLog
 
         with pytest.raises(ValueError):
             gate_factory("X_unknown", shipped, light_detectors)
@@ -239,7 +239,7 @@ class TestGateBehaviour:
 
 
 def cond_rep(cond: str) -> str:
-    from llmshield_mcp.eval_representation import REP_OF
+    from toolgate.eval_representation import REP_OF
 
     return REP_OF[cond]
 
@@ -492,7 +492,7 @@ class TestAnalysis:
 
 class TestInfrastructure:
     def test_nested_exception_groups_are_flattened_to_their_leaves(self) -> None:
-        from llmshield_mcp.eval_representation import root_causes
+        from toolgate.eval_representation import root_causes
 
         leaf = ValueError("boom")
         group = ExceptionGroup("outer", [ExceptionGroup("inner", [leaf]), KeyError("k")])
@@ -500,7 +500,7 @@ class TestInfrastructure:
         assert root_causes(leaf) == [leaf]
 
     def test_only_account_level_failures_are_fatal(self) -> None:
-        from llmshield_mcp.eval_representation import fatal_api_error
+        from toolgate.eval_representation import fatal_api_error
 
         class AuthenticationError(Exception):
             pass
@@ -514,7 +514,7 @@ class TestInfrastructure:
         assert fatal_api_error(RuntimeError("token budget exceeded")) is None
 
     def test_remaining_specs_are_exactly_the_missing_frozen_trials(self) -> None:
-        from llmshield_mcp.eval_representation import remaining_specs
+        from toolgate.eval_representation import remaining_specs
 
         specs = [
             {"arm": COND_N1, "kind": "attack", "payload_id": "p0"},
@@ -552,7 +552,7 @@ class TestInfrastructure:
             spec.loader.exec_module(module)
         finally:
             sys.path.remove(str(scripts))
-        from llmshield_mcp.eval_representation import fatal_api_error
+        from toolgate.eval_representation import fatal_api_error
 
         calls = {"n": 0}
 

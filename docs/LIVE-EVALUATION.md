@@ -13,7 +13,7 @@
 
 Pre-registration (frozen before any model call): `docs/LIVE-EVALUATION-PREREG.md`
 (sha256 recorded in every results file; the file was not edited after freezing).
-Code: `src/llmshield_mcp/eval_live.py`, `scripts/eval_live.py`. Tests:
+Code: `src/toolgate/eval_live.py`, `scripts/eval_live.py`. Tests:
 `tests/test_eval_live.py`.
 
 ## 1. What was run

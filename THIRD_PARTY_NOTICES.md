@@ -65,7 +65,7 @@ redistributed.
 
 None of the following is committed to this repository. Each is downloaded on
 demand into `corpus/external/` (gitignored) by
-`src/llmshield_mcp/corpus/sources.py`, pinned to an upstream commit SHA and
+`src/toolgate/corpus/sources.py`, pinned to an upstream commit SHA and
 verified against a recorded SHA-256:
 
 | Source | Licence |

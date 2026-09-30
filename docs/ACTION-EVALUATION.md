@@ -18,8 +18,8 @@
 
 Design, thresholds, samples and statistics were frozen before any model call:
 `docs/ACTION-EVALUATION-PREREG.md` (sha256 recorded in every results file and
-identical at the end). Code: `src/llmshield_mcp/eval_action.py`,
-`src/llmshield_mcp/eval_live.py`, `scripts/eval_action.py`. Tests:
+identical at the end). Code: `src/toolgate/eval_action.py`,
+`src/toolgate/eval_live.py`, `scripts/eval_action.py`. Tests:
 `tests/test_eval_action.py`. **M14 stage 1 results are not used anywhere.**
 
 ## 1. What ran

@@ -9,8 +9,8 @@ import time
 
 import pytest
 
-from llmshield_mcp.detectors.base import Span
-from llmshield_mcp.detectors.pii import (
+from toolgate.detectors.base import Span
+from toolgate.detectors.pii import (
     NER_ONLY_ENTITIES,
     PATTERNS,
     PiiDetector,

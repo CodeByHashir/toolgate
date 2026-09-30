@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from llmshield_mcp.gauge.calibrate import attack_success_rate, flagged, threshold_at_fpr
+from toolgate.gauge.calibrate import attack_success_rate, flagged, threshold_at_fpr
 
 
 def test_achieved_fpr_never_exceeds_the_target() -> None:

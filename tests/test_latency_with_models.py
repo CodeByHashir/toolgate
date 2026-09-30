@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import pytest
 
-from llmshield_mcp.config import load_models_config
-from llmshield_mcp.detectors.v0_lexical import V0LexicalDetector
-from llmshield_mcp.latency import time_calls
+from toolgate.config import load_models_config
+from toolgate.detectors.v0_lexical import V0LexicalDetector
+from toolgate.latency import time_calls
 
 pytestmark = pytest.mark.models
 

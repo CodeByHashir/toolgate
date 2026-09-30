@@ -13,9 +13,9 @@ from pathlib import Path
 import mcp_types
 import pytest
 
-from llmshield_mcp.gating import pins
-from llmshield_mcp.gating.declarations import CANONICALISER_VERSION, hash_declaration
-from llmshield_mcp.gating.pins import (
+from toolgate.gating import pins
+from toolgate.gating.declarations import CANONICALISER_VERSION, hash_declaration
+from toolgate.gating.pins import (
     PIN_SCHEMA_VERSION,
     DeclarationVerdict,
     PinStore,

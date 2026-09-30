@@ -6,7 +6,7 @@
 
 # Directory the filesystem server is confined to (SEC-4). Everything under it
 # is synthetic and benign. Relative paths resolve against the repository root.
-# Override with LLMSHIELD_SANDBOX_ROOT.
+# Override with TOOLGATE_SANDBOX_ROOT.
 sandbox: "sandbox"
 
 servers:

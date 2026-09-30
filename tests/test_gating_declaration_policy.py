@@ -12,16 +12,16 @@ from pathlib import Path
 import mcp_types
 import pytest
 
-from llmshield_mcp.gating.audit import Decision, DecisionLog, Outcome
-from llmshield_mcp.gating.declaration_gate import DeclarationGate
-from llmshield_mcp.gating.declaration_policy import (
+from toolgate.gating.audit import Decision, DecisionLog, Outcome
+from toolgate.gating.declaration_gate import DeclarationGate
+from toolgate.gating.declaration_policy import (
     CONDITIONS,
     DeclarationAction,
     DeclarationPolicy,
     evaluate_declaration,
     load_declaration_policy,
 )
-from llmshield_mcp.gating.pins import PIN_SCHEMA_VERSION
+from toolgate.gating.pins import PIN_SCHEMA_VERSION
 
 
 def tag_encode(text: str) -> str:
@@ -409,13 +409,13 @@ def test_a_stale_schema_version_also_fails_closed(tmp_path: Path) -> None:
 
 def test_the_shipped_policy_file_leaves_declaration_gating_off() -> None:
     """The layer must add nothing for anyone who has not opted in."""
-    from llmshield_mcp.gating.policy import load_policy_config
+    from toolgate.gating.policy import load_policy_config
 
     assert not load_policy_config().tool_declarations.enabled
 
 
 def test_a_policy_file_with_the_block_enables_it(tmp_path: Path) -> None:
-    from llmshield_mcp.gating.policy import load_policy_config
+    from toolgate.gating.policy import load_policy_config
 
     path = tmp_path / "policy.yaml"
     path.write_text(
@@ -438,7 +438,7 @@ def test_a_policy_file_with_the_block_enables_it(tmp_path: Path) -> None:
 
 
 def test_a_typo_in_the_policy_file_fails_at_load_not_at_runtime(tmp_path: Path) -> None:
-    from llmshield_mcp.gating.policy import load_policy_config
+    from toolgate.gating.policy import load_policy_config
 
     path = tmp_path / "policy.yaml"
     path.write_text(

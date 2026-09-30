@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from llmshield_mcp.corpus.decontaminate import (
+from toolgate.corpus.decontaminate import (
     DecontaminationConfig,
     decontaminate,
     load_decontamination_config,
@@ -115,13 +115,13 @@ def test_missing_training_corpus_path_is_rejected(tmp_path: Path) -> None:
         load_decontamination_config(bad)
 
 
-def test_llmshield_training_corpus_env_var_overrides_the_file(
+def test_toolgate_training_corpus_env_var_overrides_the_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config_path = tmp_path / "decontamination.yaml"
     config_path.write_text("training_corpus_path: 'x.jsonl'\n", encoding="utf-8")
     override = tmp_path / "elsewhere" / "train.jsonl"
-    monkeypatch.setenv("LLMSHIELD_TRAINING_CORPUS", str(override))
+    monkeypatch.setenv("TOOLGATE_TRAINING_CORPUS", str(override))
 
     config = load_decontamination_config(config_path)
 
@@ -136,5 +136,5 @@ def test_missing_reference_file_raises_a_usable_error(tmp_path: Path) -> None:
         training_corpus_path=tmp_path / "does-not-exist.jsonl",
     )
 
-    with pytest.raises(FileNotFoundError, match="LLMSHIELD_TRAINING_CORPUS"):
+    with pytest.raises(FileNotFoundError, match="TOOLGATE_TRAINING_CORPUS"):
         decontaminate(["anything"], config)

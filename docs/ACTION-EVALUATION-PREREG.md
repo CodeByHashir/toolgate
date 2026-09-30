@@ -7,8 +7,8 @@ section 4 match the code, records the sha256 of this file in
 `results/action/frozen.json` on first use, and aborts every later command if the
 file changed. Every results file carries the hash.
 
-Code: `src/llmshield_mcp/eval_action.py` (this design),
-`src/llmshield_mcp/eval_live.py` (arms, sink, statistics; M14), runner
+Code: `src/toolgate/eval_action.py` (this design),
+`src/toolgate/eval_live.py` (arms, sink, statistics; M14), runner
 `scripts/eval_action.py`. Tests: `tests/test_eval_action.py`.
 
 ## 1. Question and what changed from M14

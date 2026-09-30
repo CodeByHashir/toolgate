@@ -2,9 +2,9 @@
 
 Mean + p95 in milliseconds, warmup excluded -- `exp2_eval.py`'s own
 `latency_hf`/`latency_sklearn` convention (`n_warm=10`), reused via
-`llmshield_mcp.latency` rather than invented for this project.
+`toolgate.latency` rather than invented for this project.
 
-Needs the real reused weights (`config/models.yaml` / `LLMSHIELD_MODELS_ROOT`)
+Needs the real reused weights (`config/models.yaml` / `TOOLGATE_MODELS_ROOT`)
 and a corpus already produced by `toolgate corpus-ingest`. Samples items
 from that corpus (both labels, so the mix is realistically benign-heavy,
 matching what a live gate actually scans) rather than a handful of hand-picked
@@ -22,12 +22,12 @@ from __future__ import annotations
 
 import random
 
-from llmshield_mcp.corpus.store import CorpusStore, DecontaminationStatus
-from llmshield_mcp.detectors.base import Detector
-from llmshield_mcp.detectors.normalise import scan_normalised
-from llmshield_mcp.gating.policy import PolicyEngine, load_policy_config
-from llmshield_mcp.gauge.run import DEFAULT_CORPUS_DB, build_detectors
-from llmshield_mcp.latency import LatencyStats, time_calls
+from toolgate.corpus.store import CorpusStore, DecontaminationStatus
+from toolgate.detectors.base import Detector
+from toolgate.detectors.normalise import scan_normalised
+from toolgate.gating.policy import PolicyEngine, load_policy_config
+from toolgate.gauge.run import DEFAULT_CORPUS_DB, build_detectors
+from toolgate.latency import LatencyStats, time_calls
 
 SAMPLE_SIZE = 60
 SEED = 42

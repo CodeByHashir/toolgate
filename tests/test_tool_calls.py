@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from llmshield_mcp.gating.tool_calls import (
+from toolgate.gating.tool_calls import (
     ToolCallBlocked,
     ToolCallPolicy,
     ToolDecision,
@@ -235,6 +235,6 @@ def test_rule_dataclass_defaults_are_permissive() -> None:
 
 def test_shipped_default_policy_does_not_enable_capability_gating(tmp_path: Path) -> None:
     """Adding this layer must not change behaviour for anyone who has not opted in."""
-    from llmshield_mcp.gating.policy import load_policy_config
+    from toolgate.gating.policy import load_policy_config
 
     assert not load_policy_config().tool_calls.enabled

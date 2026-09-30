@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from llmshield_mcp.latency import LatencyStats, summarize, time_calls
+from toolgate.latency import LatencyStats, summarize, time_calls
 
 
 def test_summarize_computes_mean_and_p95() -> None:

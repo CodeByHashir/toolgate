@@ -9,8 +9,8 @@ nothing to do with which detector produced the numbers.
 
 from __future__ import annotations
 
-from llmshield_mcp.corpus.store import CorpusLabel
-from llmshield_mcp.gauge.run import CorpusItemRef, ScoreRecord, _build_report
+from toolgate.corpus.store import CorpusLabel
+from toolgate.gauge.run import CorpusItemRef, ScoreRecord, _build_report
 
 
 def _benign_records(detector: str, scores: list[float], split: str) -> list[ScoreRecord]:

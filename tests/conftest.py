@@ -16,9 +16,9 @@ from __future__ import annotations
 
 import pytest
 
-from llmshield_mcp.detectors.base import Detector
-from llmshield_mcp.detectors.pii import PiiDetector
-from llmshield_mcp.detectors.rules import RuleDetector
+from toolgate.detectors.base import Detector
+from toolgate.detectors.pii import PiiDetector
+from toolgate.detectors.rules import RuleDetector
 
 
 @pytest.fixture

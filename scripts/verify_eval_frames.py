@@ -42,8 +42,8 @@ import eval_action as act_runner  # noqa: E402  (sibling runner: build_inputs)
 import eval_mechanism as mechanism  # noqa: E402
 import eval_representation as representation  # noqa: E402
 
-from llmshield_mcp.eval_action import ids_sha256  # noqa: E402
-from llmshield_mcp.eval_live import frame_through  # noqa: E402
+from toolgate.eval_action import ids_sha256  # noqa: E402
+from toolgate.eval_live import frame_through  # noqa: E402
 
 RESULTS = ROOT / "results"
 

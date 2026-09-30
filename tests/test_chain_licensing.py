@@ -28,7 +28,7 @@ from urllib.parse import urlparse
 
 import pytest
 
-from llmshield_mcp.config import REPO_ROOT
+from toolgate.config import REPO_ROOT
 
 #: Hosts whose fetched content may be committed inside this MIT repository.
 #:
@@ -130,7 +130,7 @@ def test_chain_fixtures_are_still_a_benign_corpus_source() -> None:
     glob is ever removed the corpus gets safer, not less safe, and this test
     failing is the signal to re-read the reasoning above rather than to panic.
     """
-    from llmshield_mcp.corpus import sources
+    from toolgate.corpus import sources
 
     source = pathlib.Path(sources.__file__).read_text(encoding="utf-8")
     assert '"chains/*.json"' in source, (

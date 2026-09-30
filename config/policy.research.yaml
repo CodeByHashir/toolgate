@@ -11,7 +11,7 @@
 # the measurements behind the split.
 #
 # **This profile requires the reused V0/V3 weights** (`config/models.yaml` or
-# `LLMSHIELD_MODELS_ROOT`). Without them, `build_detectors` raises at Gate
+# `TOOLGATE_MODELS_ROOT`). Without them, `build_detectors` raises at Gate
 # construction rather than degrading silently -- a missing detector that a
 # policy explicitly names is a configuration error, not something to skip.
 #
@@ -29,7 +29,7 @@
 #
 # `calibrated: false` is load-bearing, not a placeholder. FR-11 requires
 # matched-FPR calibration on THIS surface before Block is safe to use; until
-# this flips to true, PolicyEngine.decide() (src/llmshield_mcp/gating/policy.py)
+# this flips to true, PolicyEngine.decide() (src/toolgate/gating/policy.py)
 # refuses to ever return Decision.BLOCK, downgrading it to Decision.ESCALATE
 # instead. Flip it only after an M7 calibration run has actually produced
 # thresholds for this file -- not by hand, and not to unblock a test.

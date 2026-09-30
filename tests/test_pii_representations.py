@@ -13,8 +13,8 @@ import time
 
 import pytest
 
-from llmshield_mcp.detectors.pii import PATTERNS
-from llmshield_mcp.detectors.pii_representations import (
+from toolgate.detectors.pii import PATTERNS
+from toolgate.detectors.pii_representations import (
     ALL_REPRESENTATIONS,
     BRACKETED,
     DEFAULT_REPRESENTATIONS,
@@ -616,7 +616,7 @@ def test_module_does_not_import_pii_detector() -> None:
     """
     import ast
 
-    import llmshield_mcp.detectors.pii_representations as mod
+    import toolgate.detectors.pii_representations as mod
 
     source = mod.__file__
     assert source is not None
@@ -630,5 +630,5 @@ def test_module_does_not_import_pii_detector() -> None:
         elif isinstance(node, ast.Import):
             imported_modules.update(alias.name for alias in node.names)
 
-    assert "llmshield_mcp.detectors.pii" not in imported_modules
-    assert "llmshield_mcp.gating.transport" not in imported_modules
+    assert "toolgate.detectors.pii" not in imported_modules
+    assert "toolgate.gating.transport" not in imported_modules

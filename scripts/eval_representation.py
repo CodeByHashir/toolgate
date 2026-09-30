@@ -39,10 +39,10 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union
 import eval_action as act  # sibling runner: build_inputs, benign_flags
 import eval_live as live
 
-from llmshield_mcp.eval_action import BenignItem, setup_by_id
-from llmshield_mcp.eval_live import MODEL, SampleItem, load_results, results_to_json
-from llmshield_mcp.eval_mechanism import frames_sha256
-from llmshield_mcp.eval_representation import (
+from toolgate.eval_action import BenignItem, setup_by_id
+from toolgate.eval_live import MODEL, SampleItem, load_results, results_to_json
+from toolgate.eval_mechanism import frames_sha256
+from toolgate.eval_representation import (
     COND_N1,
     CONDITIONS,
     EXPECTED_TRIALS,
@@ -62,7 +62,7 @@ from llmshield_mcp.eval_representation import (
     measure,
     remaining_specs,
 )
-from llmshield_mcp.gating.policy import PolicyConfig
+from toolgate.gating.policy import PolicyConfig
 
 ROOT = Path(__file__).parent.parent
 PREREG = ROOT / "docs" / "REPRESENTATION-EVALUATION-PREREG.md"

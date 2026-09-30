@@ -18,9 +18,9 @@ import unicodedata
 import mcp_types
 import pytest
 
-from llmshield_mcp.detectors.normalise import normalise
-from llmshield_mcp.gating import declarations
-from llmshield_mcp.gating.declarations import (
+from toolgate.detectors.normalise import normalise
+from toolgate.gating import declarations
+from toolgate.gating.declarations import (
     CANONICALISER_VERSION,
     EXCLUDED_FIELDS,
     HASHED_FIELDS,

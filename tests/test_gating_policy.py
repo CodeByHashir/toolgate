@@ -13,10 +13,10 @@ from pathlib import Path
 
 import pytest
 
-from llmshield_mcp.config import REPO_ROOT
-from llmshield_mcp.detectors.base import DetectorResult, Span
-from llmshield_mcp.gating.audit import Decision, Outcome
-from llmshield_mcp.gating.policy import PolicyConfig, PolicyEngine, load_policy_config
+from toolgate.config import REPO_ROOT
+from toolgate.detectors.base import DetectorResult, Span
+from toolgate.gating.audit import Decision, Outcome
+from toolgate.gating.policy import PolicyConfig, PolicyEngine, load_policy_config
 
 
 def _result(

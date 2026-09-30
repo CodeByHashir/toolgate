@@ -16,9 +16,9 @@ from typing import Any
 
 import pytest
 
-from llmshield_mcp.detectors.base import Detector
-from llmshield_mcp.dilution import build_diluted_text
-from llmshield_mcp.eval_e2e import (
+from toolgate.detectors.base import Detector
+from toolgate.dilution import build_diluted_text
+from toolgate.eval_e2e import (
     ARM_BASE64,
     ARM_BENIGN,
     ARM_PLAIN,
@@ -40,9 +40,9 @@ from llmshield_mcp.eval_e2e import (
     sample_benign_lines,
     summarise,
 )
-from llmshield_mcp.gating.audit import Decision
-from llmshield_mcp.gating.content import BLOCK_MESSAGE, build_block_result
-from llmshield_mcp.gating.policy import PolicyConfig, load_policy_config
+from toolgate.gating.audit import Decision
+from toolgate.gating.content import BLOCK_MESSAGE, build_block_result
+from toolgate.gating.policy import PolicyConfig, load_policy_config
 
 # Verified neutral by `test_test_filler_is_neutral`: scores 0.0 on every detector.
 FILLER = (
@@ -234,7 +234,7 @@ class TestCheckerIsNotTautological:
     def evaluate(
         self, light_detectors: dict[str, Detector], shipped: PolicyConfig, tmp_path: Path, text: str
     ) -> tuple[Any, dict[str, Any], dict[str, Any], Any]:
-        from llmshield_mcp.eval_e2e import _PolicySession  # noqa: PLC0415
+        from toolgate.eval_e2e import _PolicySession  # noqa: PLC0415
 
         session = _PolicySession("shipped", shipped, light_detectors, tmp_path / "x.sqlite")
         session.deliver(ARM_PLAIN, payload(text), 0.0, text, text)
@@ -314,7 +314,7 @@ class TestCheckerIsNotTautological:
         blob = base64_variant(payload(INSTRUCTION)).text
         oracle = documented_outcome(blob, light_detectors, counterfactual)
         assert oracle.decision is Decision.BLOCK
-        from llmshield_mcp.gating.audit import DecisionRecord  # noqa: PLC0415
+        from toolgate.gating.audit import DecisionRecord  # noqa: PLC0415
 
         record = DecisionRecord(
             correlation_id="c",
@@ -340,7 +340,7 @@ class TestHarnessDetectsRealGateRegressions:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr(
-            "llmshield_mcp.gating.transport.apply_redaction",
+            "toolgate.gating.transport.apply_redaction",
             # Current contract: (masked result, spans it could not apply). A
             # silent masking failure returns the input unchanged and reports
             # nothing unapplied -- exactly what the harness must still catch.
@@ -359,7 +359,7 @@ class TestHarnessDetectsRealGateRegressions:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr(
-            "llmshield_mcp.gating.policy.PolicyEngine._ceiling", lambda self, decision: decision
+            "toolgate.gating.policy.PolicyEngine._ceiling", lambda self, decision: decision
         )
         calls = run_no_audit_assert(tmp_path, light_detectors, policies, [payload(INSTRUCTION)])
         shipped = pick(calls, policy=POLICY_SHIPPED, arm=ARM_BASE64)[0]
@@ -521,7 +521,7 @@ class TestCorpusAndSummary:
         assert results_digest(changed) != results_digest(first)
 
     def test_capturing_log_still_persists_rows(self, tmp_path: Path) -> None:
-        from llmshield_mcp.gating.audit import DecisionRecord  # noqa: PLC0415
+        from toolgate.gating.audit import DecisionRecord  # noqa: PLC0415
 
         log = CapturingLog(tmp_path / "l.sqlite")
         assert log.last is None

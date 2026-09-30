@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from llmshield_mcp.config import (
+from toolgate.config import (
     DEFAULT_CONFIG_PATH,
     DETECTOR_CLASSES,
     REPO_ROOT,
@@ -55,7 +55,7 @@ def test_loads_valid_config(tmp_path: Path) -> None:
 
 def test_env_var_overrides_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     elsewhere = tmp_path / "elsewhere"
-    monkeypatch.setenv("LLMSHIELD_MODELS_ROOT", str(elsewhere))
+    monkeypatch.setenv("TOOLGATE_MODELS_ROOT", str(elsewhere))
 
     config = load_models_config(_write(tmp_path, VALID))
 

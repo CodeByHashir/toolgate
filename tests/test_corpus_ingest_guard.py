@@ -19,8 +19,8 @@ from pathlib import Path
 
 import pytest
 
-from llmshield_mcp.cli import ingest_corpus
-from llmshield_mcp.corpus import CorpusLabel, PayloadCorpusItem, corpus_store
+from toolgate.cli import ingest_corpus
+from toolgate.corpus import CorpusLabel, PayloadCorpusItem, corpus_store
 
 
 def _seed(db: Path, n: int = 3) -> None:
@@ -61,12 +61,12 @@ def test_refusal_happens_before_any_network_fetch(
 ) -> None:
     """Otherwise the check would cost a download before deciding to stop.
 
-    Patched on `llmshield_mcp.corpus`, not `...corpus.sources`: `ingest_corpus`
-    does `from llmshield_mcp.corpus import fetch`, so the package namespace is
+    Patched on `toolgate.corpus`, not `...corpus.sources`: `ingest_corpus`
+    does `from toolgate.corpus import fetch`, so the package namespace is
     the one it actually resolves. Patching `sources` looks right and does
     nothing.
     """
-    import llmshield_mcp.corpus as corpus_pkg
+    import toolgate.corpus as corpus_pkg
 
     def _explode() -> None:  # pragma: no cover - must never run
         raise AssertionError("fetch() was called despite a populated store")
@@ -92,7 +92,7 @@ def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
     full multi-minute ingest. The assertion is about the guard NOT firing, so
     everything after it just needs to stop predictably.
     """
-    import llmshield_mcp.corpus as corpus_pkg
+    import toolgate.corpus as corpus_pkg
 
     def _stop() -> None:
         raise _Stop("network disabled for this test")

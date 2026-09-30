@@ -31,10 +31,10 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from llmshield_mcp.detectors.pii import PiiDetector
-from llmshield_mcp.detectors.rules import RuleDetector
-from llmshield_mcp.eval_e2e import Payload, load_corpus
-from llmshield_mcp.eval_live import (
+from toolgate.detectors.pii import PiiDetector
+from toolgate.detectors.rules import RuleDetector
+from toolgate.eval_e2e import Payload, load_corpus
+from toolgate.eval_live import (
     ARM_A,
     ARM_B,
     ARM_C,
@@ -59,9 +59,9 @@ from llmshield_mcp.eval_live import (
     summarise_attack,
     summarise_benign,
 )
-from llmshield_mcp.gating.audit import Decision
-from llmshield_mcp.gating.content import BLOCK_MESSAGE
-from llmshield_mcp.gating.policy import PolicyConfig, load_policy_config
+from toolgate.gating.audit import Decision
+from toolgate.gating.content import BLOCK_MESSAGE
+from toolgate.gating.policy import PolicyConfig, load_policy_config
 
 ROOT = Path(__file__).parent.parent
 PREREG = ROOT / "docs" / "LIVE-EVALUATION-PREREG.md"
@@ -191,7 +191,7 @@ def preflight() -> int:
 def make_client() -> Any:
     from anthropic import AsyncAnthropic
 
-    from llmshield_mcp.settings import Settings
+    from toolgate.settings import Settings
 
     return AsyncAnthropic(api_key=Settings().require_anthropic_api_key(), max_retries=4)
 

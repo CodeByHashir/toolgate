@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from llmshield_mcp.corpus.store import (
+from toolgate.corpus.store import (
     CorpusLabel,
     CorpusStore,
     DecontaminationStatus,

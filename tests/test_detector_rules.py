@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from llmshield_mcp.config import REPO_ROOT
-from llmshield_mcp.detectors.base import RawScore
-from llmshield_mcp.detectors.rules import Rule, RuleDetector, load_rules
+from toolgate.config import REPO_ROOT
+from toolgate.detectors.base import RawScore
+from toolgate.detectors.rules import Rule, RuleDetector, load_rules
 
 MINIMAL = """
 version: 1

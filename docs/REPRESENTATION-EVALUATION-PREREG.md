@@ -15,7 +15,7 @@ the literal ones, is run afresh. M16's *frozen frame hashes* (design artefacts,
 not results) are used only to check that this experiment's literal and `[at]`
 conditions show the model exactly what M16's did.
 
-Code: `src/llmshield_mcp/eval_representation.py`, runner
+Code: `src/toolgate/eval_representation.py`, runner
 `scripts/eval_representation.py`, tests `tests/test_eval_representation.py` (50).
 Reused unchanged: `eval_live.py`, `eval_action.py`, `eval_mechanism.py`.
 
@@ -254,11 +254,11 @@ frames_benign_G6_case_sha256:           e90270a38ce2e80b474d135297cf524a144a33c2
 Code at freeze (sha256):
 
 ```
-src/llmshield_mcp/eval_representation.py  229f4428ccd3312abf6d82097d040a80824496e0c6e34993cb375c233e6f99bb
+src/toolgate/eval_representation.py  229f4428ccd3312abf6d82097d040a80824496e0c6e34993cb375c233e6f99bb
 scripts/eval_representation.py            7210a1ec30ecd34344c9c60141a4ebcc0fbe826053f6788cc60a0e1ddaeeb57a
-src/llmshield_mcp/eval_mechanism.py       3cea400f47dd307c77b82c7f5b9310680108e7ae970514121bc77697e2d7400c
-src/llmshield_mcp/eval_live.py            510de16887755dedd12f60c520c7914b44f1cf25dba8132b77f7191aa236a295
-src/llmshield_mcp/eval_action.py          f441b62779abe8a6e4b5e84d4fdf2d743ccecbeaaccc915ce25b08b0465e035c
+src/toolgate/eval_mechanism.py       3cea400f47dd307c77b82c7f5b9310680108e7ae970514121bc77697e2d7400c
+src/toolgate/eval_live.py            510de16887755dedd12f60c520c7914b44f1cf25dba8132b77f7191aa236a295
+src/toolgate/eval_action.py          f441b62779abe8a6e4b5e84d4fdf2d743ccecbeaaccc915ce25b08b0465e035c
 ```
 
 The last three are byte-identical to their M16 freeze; this experiment adds two

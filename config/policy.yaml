@@ -76,7 +76,7 @@
 #
 # `calibrated: false` is load-bearing, not a placeholder. FR-11 requires
 # matched-FPR calibration on THIS surface before Block is safe to use; until
-# this flips to true, PolicyEngine.decide() (src/llmshield_mcp/gating/policy.py)
+# this flips to true, PolicyEngine.decide() (src/toolgate/gating/policy.py)
 # refuses to ever return Decision.BLOCK, downgrading it to Decision.ESCALATE
 # instead. Flip it only after an M7 calibration run has actually produced
 # thresholds for this file -- not by hand, and not to unblock a test.

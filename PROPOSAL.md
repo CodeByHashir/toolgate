@@ -5,6 +5,12 @@ author: "Prepared for: Hashir Ahmed"
 date: "September 2026"
 ---
 
+> **Historical document.** This is the original project proposal, kept as
+> written. "LLMShield-MCP" was the working title; the project now ships as
+> **toolgate** (Python package `toolgate`). Scope and findings have moved on
+> since; see [README.md](README.md) and [docs/REPORT.md](docs/REPORT.md) for
+> the current state.
+
 # Document Control
 
 | Field | Detail |

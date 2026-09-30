@@ -17,7 +17,7 @@ import random
 import pytest
 from sklearn.metrics import roc_auc_score
 
-from llmshield_mcp.gauge.stats import (
+from toolgate.gauge.stats import (
     auroc_delong,
     clopper_pearson_ci,
     mcnemar_test,

@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from llmshield_mcp.corpus import sources as sources_module
-from llmshield_mcp.corpus.sources import (
+from toolgate.corpus import sources as sources_module
+from toolgate.corpus.sources import (
     SOURCES,
     CorpusIntegrityError,
     digest,

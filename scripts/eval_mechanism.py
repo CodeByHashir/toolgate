@@ -35,14 +35,14 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union
 import eval_action as act  # sibling runner: build_inputs, benign_flags (scripts/ is sys.path[0])
 import eval_live as live
 
-from llmshield_mcp.eval_action import BenignItem, setup_by_id
-from llmshield_mcp.eval_live import (
+from toolgate.eval_action import BenignItem, setup_by_id
+from toolgate.eval_live import (
     MODEL,
     SampleItem,
     load_results,
     results_to_json,
 )
-from llmshield_mcp.eval_mechanism import (
+from toolgate.eval_mechanism import (
     BENIGN_CONDITIONS,
     COND_A,
     COND_B,
@@ -59,7 +59,7 @@ from llmshield_mcp.eval_mechanism import (
     survival,
     visible_document,
 )
-from llmshield_mcp.gating.policy import PolicyConfig
+from toolgate.gating.policy import PolicyConfig
 
 ROOT = Path(__file__).parent.parent
 PREREG = ROOT / "docs" / "MECHANISM-EVALUATION-PREREG.md"

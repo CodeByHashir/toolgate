@@ -14,12 +14,12 @@ import mcp_types
 import pytest
 from mcp.shared.message import SessionMessage
 
-from llmshield_mcp.detectors.base import Detector, RawScore
-from llmshield_mcp.detectors.pii import PiiDetector
-from llmshield_mcp.gating.audit import Decision, DecisionLog, Outcome
-from llmshield_mcp.gating.content import BLOCK_MESSAGE
-from llmshield_mcp.gating.policy import PolicyConfig, PolicyEngine
-from llmshield_mcp.gating.transport import (
+from toolgate.detectors.base import Detector, RawScore
+from toolgate.detectors.pii import PiiDetector
+from toolgate.gating.audit import Decision, DecisionLog, Outcome
+from toolgate.gating.content import BLOCK_MESSAGE
+from toolgate.gating.policy import PolicyConfig, PolicyEngine
+from toolgate.gating.transport import (
     Gate,
     GateConfig,
     _ObservedReadStream,
@@ -528,8 +528,8 @@ def test_an_incomplete_redaction_is_recorded_in_the_note(
     log: DecisionLog, light_detectors: dict[str, Detector]
 ) -> None:
     """If a span cannot be masked, the row must not claim otherwise silently."""
-    from llmshield_mcp.detectors.base import DetectorResult, Span
-    from llmshield_mcp.gating.policy import PolicyEngine, load_policy_config
+    from toolgate.detectors.base import DetectorResult, Span
+    from toolgate.gating.policy import PolicyEngine, load_policy_config
 
     class _OutOfRangePii:
         name = "pii"
@@ -567,8 +567,8 @@ def test_an_incomplete_redaction_is_recorded_in_the_note(
 def _gate_with_tool_policy(log: DecisionLog, detectors: dict[str, Detector], raw: dict) -> Gate:
     import dataclasses as _dc
 
-    from llmshield_mcp.gating.policy import PolicyEngine, load_policy_config
-    from llmshield_mcp.gating.tool_calls import load_tool_call_policy
+    from toolgate.gating.policy import PolicyEngine, load_policy_config
+    from toolgate.gating.tool_calls import load_tool_call_policy
 
     base = load_policy_config()
     config = _dc.replace(base, tool_calls=load_tool_call_policy(raw))
@@ -589,7 +589,7 @@ def _call(request_id: int, tool: str, **arguments: Any) -> SessionMessage:
 def test_a_blocked_tool_call_raises_and_is_never_tracked(
     log: DecisionLog, light_detectors: dict[str, Detector]
 ) -> None:
-    from llmshield_mcp.gating.tool_calls import ToolCallBlocked
+    from toolgate.gating.tool_calls import ToolCallBlocked
 
     gate = _gate_with_tool_policy(
         log, light_detectors, {"rules": {"filesystem.read_text_file": {"paths": ["workspace/**"]}}}
@@ -607,7 +607,7 @@ def test_a_blocked_tool_call_raises_and_is_never_tracked(
 def test_a_blocked_call_is_logged_under_its_own_outcome(
     log: DecisionLog, light_detectors: dict[str, Detector]
 ) -> None:
-    from llmshield_mcp.gating.tool_calls import ToolCallBlocked
+    from toolgate.gating.tool_calls import ToolCallBlocked
 
     gate = _gate_with_tool_policy(
         log, light_detectors, {"rules": {"github.delete_repo": {"action": "block"}}}
@@ -629,7 +629,7 @@ def test_a_blocked_call_logs_the_rule_but_no_argument_value(
     log: DecisionLog, light_detectors: dict[str, Detector]
 ) -> None:
     """SEC-3: a path argument can carry exactly what this log must not hold."""
-    from llmshield_mcp.gating.tool_calls import ToolCallBlocked
+    from toolgate.gating.tool_calls import ToolCallBlocked
 
     gate = _gate_with_tool_policy(
         log, light_detectors, {"rules": {"filesystem.read_text_file": {"paths": ["workspace/**"]}}}
@@ -683,8 +683,8 @@ def test_capability_block_is_not_downgraded_by_the_calibration_ceiling(
     error -- and would silently disable the one control that does not depend on
     the detection this project measured as not working.
     """
-    from llmshield_mcp.gating.policy import load_policy_config
-    from llmshield_mcp.gating.tool_calls import ToolCallBlocked
+    from toolgate.gating.policy import load_policy_config
+    from toolgate.gating.tool_calls import ToolCallBlocked
 
     assert load_policy_config().calibrated is False
 
