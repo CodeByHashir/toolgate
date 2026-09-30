@@ -20,6 +20,7 @@ whats_has_been_done.md
 prd.md
 code_summary.md
 CLAUDE.md
+AGENTS.md
 
 # Reused LLMShield model artifacts. Never committed: the trained weights are
 # not publishable (see docs/PINNING.md and README "Reproducibility" section).
