@@ -94,18 +94,22 @@ tool_calls:
   default: allow
 
   rules:
-    # Sandbox confinement. `../` traversal is normalised before matching, and a
-    # path that climbs above its own root is refused outright.
+    # Sandbox confinement. `{sandbox}` is replaced with the absolute sandbox
+    # directory from config/servers.yaml when run-agent starts: the filesystem
+    # server reports that absolute path to the model, so real calls use it.
+    # `sandbox/**` also covers repository-relative paths. `../` traversal is
+    # normalised before matching, and a path that climbs above its own root is
+    # refused outright.
     filesystem.read_text_file:
-      paths: ["sandbox/**"]
+      paths: ["{sandbox}", "{sandbox}/**", "sandbox/**"]
     filesystem.read_media_file:
-      paths: ["sandbox/**"]
+      paths: ["{sandbox}", "{sandbox}/**", "sandbox/**"]
     filesystem.write_file:
-      paths: ["sandbox/**"]
+      paths: ["{sandbox}", "{sandbox}/**", "sandbox/**"]
     filesystem.list_directory:
-      paths: ["sandbox/**"]
+      paths: ["{sandbox}", "{sandbox}/**", "sandbox/**"]
     filesystem.directory_tree:
-      paths: ["sandbox/**"]
+      paths: ["{sandbox}", "{sandbox}/**", "sandbox/**"]
 
     # Egress confinement: the exfiltration objective that appears throughout
     # BIPIA and InjecAgent is "fetch this attacker URL with the data in it".

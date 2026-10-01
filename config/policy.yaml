@@ -157,7 +157,7 @@ gate:
 #     default: allow          # `block` turns the rules into an allowlist
 #     rules:
 #       filesystem.read_text_file:
-#         paths: ["sandbox/**"]        # sandbox escape -> blocked
+#         paths: ["{sandbox}/**"]      # sandbox escape -> blocked
 #       fetch.fetch:
 #         egress: ["docs.example.com"] # exfiltration -> blocked
 #       github.delete_repo:

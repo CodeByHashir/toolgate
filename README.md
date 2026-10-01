@@ -89,7 +89,7 @@ a different one: "is the agent allowed to do this?"
 tool_calls:
   rules:
     filesystem.read_text_file:
-      paths: ["sandbox/**"]        # sandbox escape
+      paths: ["{sandbox}/**"]      # sandbox escape
     fetch.fetch:
       egress: ["example.com"]      # exfiltration
     github.delete_repo:

@@ -198,6 +198,11 @@ def run_agent(
             # read and validated once, so a typo fails before any server starts
             # rather than on whichever server happens to be built first.
             config_obj = load_policy_config(policy_path)
+            # Capability globs may name `{sandbox}`; resolve it to the same
+            # directory the filesystem server was started on.
+            config_obj = dataclasses.replace(
+                config_obj, tool_calls=config_obj.tool_calls.with_sandbox(config.sandbox)
+            )
             policy = PolicyEngine(config_obj)
             gate_factory = lambda spec: Gate(  # noqa: E731 -- a def here would read worse
                 spec.name, log, gate_config, policy=policy

@@ -452,10 +452,16 @@ def test_local_part_at_the_64_char_limit_is_not_affected() -> None:
 # --- performance / regression ----------------------------------------------
 
 
-def _time_ms(pattern: re.Pattern[str], text: str) -> float:
-    start = time.perf_counter()
-    pattern.findall(text)
-    return (time.perf_counter() - start) * 1000.0
+def _time_ms(pattern: re.Pattern[str], text: str, repeats: int = 5) -> float:
+    # Fastest of a few runs: a single wall-clock sample sat ~90ms against the
+    # 100ms target and failed whenever the machine was busy. The minimum
+    # filters out scheduler noise; a real (quadratic) regression is seconds.
+    best = float("inf")
+    for _ in range(repeats):
+        start = time.perf_counter()
+        pattern.findall(text)
+        best = min(best, (time.perf_counter() - start) * 1000.0)
+    return best
 
 
 @pytest.mark.parametrize(

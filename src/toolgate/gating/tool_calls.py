@@ -65,10 +65,13 @@ fired -- not the string that triggered it.
 from __future__ import annotations
 
 import fnmatch
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+
+from toolgate.config import SANDBOX_PLACEHOLDER
 
 #: Argument names treated as filesystem paths. Drawn from the reference
 #: servers' own schemas (`@modelcontextprotocol/server-filesystem`) rather than
@@ -139,6 +142,28 @@ class ToolCallPolicy:
         so a project that never opts in pays nothing.
         """
         return bool(self.rules) or self.default is not ToolDecision.ALLOW
+
+    def with_sandbox(self, sandbox: Path) -> ToolCallPolicy:
+        """Expand `{sandbox}` in every `paths` glob to the sandbox's real path.
+
+        The filesystem server is rooted at an absolute directory and tells the
+        model so, so real calls carry absolute paths. A relative glob such as
+        `sandbox/**` never matches those, and refused every legitimate read in
+        a live run. `{sandbox}/**` is the form that does. An unexpanded
+        placeholder matches nothing, so a policy used without this call stays
+        fail-closed.
+        """
+        root = _normalise_path(str(sandbox))[0]
+        rules = {
+            key: replace(
+                rule,
+                paths=tuple(p.replace(SANDBOX_PLACEHOLDER, root) for p in rule.paths),
+            )
+            if rule.paths is not None
+            else rule
+            for key, rule in self.rules.items()
+        }
+        return replace(self, rules=rules)
 
 
 @dataclass(frozen=True, slots=True)

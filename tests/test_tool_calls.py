@@ -238,3 +238,81 @@ def test_shipped_default_policy_does_not_enable_capability_gating(tmp_path: Path
     from toolgate.gating.policy import load_policy_config
 
     assert not load_policy_config().tool_calls.enabled
+
+
+class TestSandboxPlaceholder:
+    """`{sandbox}` globs, resolved against the filesystem server's real root.
+
+    The server reports its absolute root to the model, so a live agent sends
+    absolute paths. Before `with_sandbox` existed the shipped agent profile
+    only had `sandbox/**`, and a Haiku smoke run had every legitimate read
+    refused.
+    """
+
+    ROOTS = (Path("/srv/repo/sandbox"), Path(r"D:\repo\sandbox"))
+
+    @staticmethod
+    def _policy(root: Path) -> ToolCallPolicy:
+        return load_tool_call_policy(
+            {"rules": {"filesystem.read_text_file": {"paths": ["{sandbox}", "{sandbox}/**"]}}}
+        ).with_sandbox(root)
+
+    @pytest.mark.parametrize("root", ROOTS)
+    def test_absolute_paths_inside_the_sandbox_are_allowed(self, root: Path) -> None:
+        policy = self._policy(root)
+        base = str(root)
+        for path in (base, f"{base}/README.md", base + r"\notes\meeting-notes.md"):
+            verdict = evaluate_tool_call(policy, "filesystem", "read_text_file", {"path": path})
+            assert verdict.decision is ToolDecision.ALLOW, path
+
+    @pytest.mark.parametrize("root", ROOTS)
+    def test_escapes_from_an_absolute_sandbox_are_blocked(self, root: Path) -> None:
+        policy = self._policy(root)
+        base = str(root)
+        for path in (
+            f"{base}/../secrets.env",
+            f"{base}-evil/README.md",
+            f"{base}/a/../../../etc/passwd",
+            "/etc/passwd",
+            "README.md",
+        ):
+            verdict = evaluate_tool_call(policy, "filesystem", "read_text_file", {"path": path})
+            assert verdict.decision is ToolDecision.BLOCK, path
+
+    def test_an_unexpanded_placeholder_matches_nothing(self) -> None:
+        policy = load_tool_call_policy(
+            {"rules": {"filesystem.read_text_file": {"paths": ["{sandbox}/**"]}}}
+        )
+        verdict = evaluate_tool_call(
+            policy, "filesystem", "read_text_file", {"path": "/srv/repo/sandbox/README.md"}
+        )
+        assert verdict.decision is ToolDecision.BLOCK
+
+    def test_rules_without_paths_are_left_alone(self) -> None:
+        policy = load_tool_call_policy(
+            {
+                "rules": {
+                    "github.delete_repo": {"action": "block"},
+                    "fetch.fetch": {"egress": ["a.test"]},
+                }
+            }
+        )
+        assert policy.with_sandbox(Path("/srv/repo/sandbox")) == policy
+
+    def test_shipped_agent_profile_allows_an_absolute_sandbox_read(self) -> None:
+        from toolgate.gating.policy import load_policy_config
+        from toolgate.servers import load_servers_config
+
+        sandbox = load_servers_config().sandbox
+        policy = load_policy_config(
+            Path(__file__).resolve().parent.parent / "config" / "policy.agent.yaml"
+        ).tool_calls.with_sandbox(sandbox)
+
+        inside = evaluate_tool_call(
+            policy, "filesystem", "read_text_file", {"path": str(sandbox / "README.md")}
+        )
+        outside = evaluate_tool_call(
+            policy, "filesystem", "read_text_file", {"path": str(sandbox.parent / "README.md")}
+        )
+        assert inside.decision is ToolDecision.ALLOW
+        assert outside.decision is ToolDecision.BLOCK
