@@ -171,7 +171,7 @@ class ReferenceAgent:
         qualified: str,
         arguments: dict[str, Any],
         sandbox_root: str,
-    ) -> tuple[ToolCallRecord, bool]:
+    ) -> tuple[ToolCallRecord, str, bool]:
         server_name, tool_name = split_tool_name(qualified)
         started = time.perf_counter()
         try:
@@ -189,6 +189,8 @@ class ReferenceAgent:
         # The tool actually ran against the real path; only the *stored* form
         # is normalised, so the fixture stays portable and does not disclose
         # the host's directory layout. Restored on read via with_sandbox().
+        # The raw text is returned separately for the model: handing it the
+        # placeholder made it call `{sandbox}/...`, a path that does not exist.
         record = ToolCallRecord(
             index=index,
             correlation_id=uuid.uuid4().hex,
@@ -200,7 +202,7 @@ class ReferenceAgent:
             is_error=is_error,
             duration_ms=(time.perf_counter() - started) * 1000.0,
         )
-        return record, is_error
+        return record, text, is_error
 
     async def run(
         self,
@@ -243,7 +245,7 @@ class ReferenceAgent:
             for block in response.content:
                 if block.type != "tool_use":
                     continue
-                record, is_error = await self._call_tool(
+                record, text, is_error = await self._call_tool(
                     servers, len(calls), block.name, dict(block.input), sandbox
                 )
                 calls.append(record)
@@ -251,7 +253,7 @@ class ReferenceAgent:
                     ToolResultBlockParam(
                         type="tool_result",
                         tool_use_id=block.id,
-                        content=record.result_text or "(empty result)",
+                        content=text or "(empty result)",
                         is_error=is_error,
                     )
                 )

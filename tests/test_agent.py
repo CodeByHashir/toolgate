@@ -285,3 +285,39 @@ async def test_max_iterations_bounds_the_loop() -> None:
     chain = await agent.run("loop", _servers(FakeSession(), "read_text_file"))
 
     assert len(chain.calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_model_sees_the_real_sandbox_path_while_the_record_stays_portable() -> None:
+    # Regression: the model used to receive the normalised text, so it was told
+    # "Allowed directories: {sandbox}" and then asked for `{sandbox}/README.md`,
+    # a path that exists nowhere.
+    root = "/srv/work/sandbox"
+    session = FakeSession(
+        {
+            "list_allowed_directories": mcp_types.CallToolResult(
+                content=[mcp_types.TextContent(type="text", text=f"Allowed directories:\n{root}")]
+            )
+        }
+    )
+    client = FakeAnthropic(
+        [
+            FakeResponse(
+                [FakeToolUse("t1", "filesystem__list_allowed_directories", {})], "tool_use"
+            ),
+            FakeResponse([FakeText("done")], "end_turn"),
+        ]
+    )
+    agent = ReferenceAgent(client)  # type: ignore[arg-type]
+
+    chain = await agent.run("where?", _servers(session, "list_allowed_directories"), root)
+
+    (tool_results,) = [
+        m["content"]
+        for m in client.messages.requests[1]["messages"]
+        if m["role"] == "user" and isinstance(m["content"], list)
+    ]
+    sent = tool_results[0]["content"]
+    assert root in sent
+    assert "{sandbox}" not in sent
+    assert chain.calls[0].result_text == "Allowed directories:\n{sandbox}"
