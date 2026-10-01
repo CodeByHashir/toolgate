@@ -9,6 +9,13 @@
 > per policy then and are 59 now (`chains/latency_chain.json` was removed for
 > licensing); none was flagged in either run. The figures below are the
 > original run; re-run with `scripts/eval_e2e.py` at no cost.
+>
+> **Current pinned digest (re-run 2026-10-01, commit `4ec9a2c`).** Without
+> that chain the harness makes 2,982 gate calls rather than 3,014, so the
+> pinned digest in section 4.6 no longer matches a re-run. It is now
+> `0c0282162db53782548ce90f66f6c8383a9ec4dde745422099a3715d18117015`, with
+> 0 contract violations, and is the same on `b7cd017`, before the package
+> rename.
 
 > **These are measured numbers for these detectors, this policy, and these three
 > static corpora, delivered as synthetic tool results in an offline harness.

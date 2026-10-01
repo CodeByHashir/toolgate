@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from toolgate.config import REPO_ROOT
 from toolgate.corpus import sources as sources_module
 from toolgate.corpus.sources import (
     SOURCES,
@@ -109,3 +110,23 @@ def test_load_benign_picks_up_known_trigger_word_content() -> None:
     lines = load_benign()
 
     assert any("ignore all previous" in line.lower() for line in lines)
+
+
+def test_load_benign_skips_files_git_does_not_track(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Only the sandbox config loader is "tracked": every other globbed file --
+    # including any untracked local note in a working copy -- must be skipped.
+    monkeypatch.setattr(
+        sources_module, "_tracked_files", lambda: frozenset({"sandbox/src/config_loader.py"})
+    )
+
+    lines = load_benign()
+    expected = (REPO_ROOT / "sandbox" / "src" / "config_loader.py").read_text(encoding="utf-8")
+
+    assert lines
+    assert all(line in expected for line in lines)
+
+
+def test_load_benign_falls_back_to_every_file_without_git(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sources_module, "_tracked_files", lambda: None)
+
+    assert len(load_benign()) > 100

@@ -32,6 +32,7 @@ from __future__ import annotations
 import hashlib
 import json
 import random
+import subprocess
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -291,8 +292,34 @@ def load_llmail_inject() -> list[tuple[str, str, str]]:
     return cases
 
 
+def _tracked_files() -> frozenset[str] | None:
+    """Repository-relative POSIX paths git tracks, or None if git can't say.
+
+    Without this filter the globs below also read untracked, gitignored files
+    sitting in a working copy -- local notes, scratch files -- so a local run
+    built a different benign pool from a fresh clone and could pull private
+    text into the exported corpus. None (no git, or not a checkout) keeps the
+    unfiltered behaviour rather than failing.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "ls-files", "-z"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return frozenset(path for path in out.decode("utf-8").split("\0") if path)
+
+
 def load_benign() -> list[str]:
-    """Benign lines from real technical content this repo contains."""
+    """Benign lines from real technical content this repo contains.
+
+    Only files git tracks are read when git is available, so the pool is the
+    same in every checkout of a given commit.
+    """
+    tracked = _tracked_files()
     lines: list[str] = []
     globs = (
         "*.md",
@@ -305,7 +332,10 @@ def load_benign() -> list[str]:
     )
     for pattern in globs:
         for path in REPO_ROOT.glob(pattern):
-            if path.is_file():
-                text = path.read_text(encoding="utf-8", errors="replace")
-                lines += [ln.strip() for ln in text.splitlines() if len(ln.strip()) >= 20]
+            if not path.is_file():
+                continue
+            if tracked is not None and path.relative_to(REPO_ROOT).as_posix() not in tracked:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            lines += [ln.strip() for ln in text.splitlines() if len(ln.strip()) >= 20]
     return lines
