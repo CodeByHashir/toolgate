@@ -24,8 +24,9 @@ This repository does two things:
 > adapters, a fusion/policy engine, a decontaminated 337-item corpus from three
 > independent attack sources, matched-FPR calibration, leave-one-source-out,
 > latency and dilution benchmarks, capability gating of outbound tool calls,
-> and integrity gating of inbound tool declarations. 970 tests, CI green. The
-> full evidence is in [`docs/REPORT.md`](docs/REPORT.md) and
+> and integrity gating of inbound tool declarations. 1,004 tests: 980 run in
+> CI, and 24 more need the unpublished weights. CI is green. The full evidence
+> is in [`docs/REPORT.md`](docs/REPORT.md) and
 > [`docs/DECLARATION-CHURN.md`](docs/DECLARATION-CHURN.md); a short version
 > follows.
 >
