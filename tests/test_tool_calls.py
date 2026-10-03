@@ -867,3 +867,156 @@ class TestArgumentNameConfig:
 
     def test_an_empty_ignore_list_is_fine(self) -> None:
         load_tool_call_policy({"rules": {"srv.tool": {"paths": ["w/**"], "ignore_args": []}}})
+
+
+# --- T3: placeholder expansion for `wrap` (design F1 / D3) ------------------------
+#
+# `{sandbox}`, `~` and `${ENV}` in `paths` globs are expanded once, when `wrap`
+# loads its config. Anything that cannot be expanded is a config error (wrap
+# exits 1 before the child starts), never a glob that silently matches nothing
+# -- or, worse, everything.
+
+HOME = Path("/home/dev")
+ENV = {"PROJECT": "/srv/project", "WIN": r"D:\work\repo", "EMPTY": "", "STAR": "/srv/*"}
+
+
+def _expand(*globs: str, sandbox: Path | None = None, env: dict[str, str] | None = None) -> Any:
+    from toolgate.gating.tool_calls import expand_placeholders
+
+    policy = load_tool_call_policy(
+        {
+            "rules": {
+                "fs.read": {"paths": list(globs)},
+                "fetch.fetch": {"egress": ["docs.example.com"]},
+                "gh.delete": {"action": "block"},
+            }
+        }
+    )
+    return expand_placeholders(
+        policy, sandbox=sandbox, environ=ENV if env is None else env, home=HOME
+    )
+
+
+class TestPlaceholderExpansion:
+    @pytest.mark.parametrize(
+        ("glob", "expected"),
+        [
+            ("{sandbox}/**", "/srv/box/**"),
+            ("{sandbox}", "/srv/box"),
+            ("~/projects/**", "/home/dev/projects/**"),
+            ("~", "/home/dev"),
+            ("${PROJECT}/src/**", "/srv/project/src/**"),
+            ("${WIN}/**", "D:/work/repo/**"),
+            ("/tmp/a~b/**", "/tmp/a~b/**"),  # `~` only expands at the start
+            ("/plain/**", "/plain/**"),
+        ],
+    )
+    def test_each_placeholder_expands(self, glob: str, expected: str) -> None:
+        policy = _expand(glob, sandbox=Path("/srv/box"))
+        assert policy.rules["fs.read"].paths == (expected,)
+
+    def test_a_windows_sandbox_is_normalised_like_with_sandbox(self) -> None:
+        policy = _expand("{sandbox}/**", sandbox=Path(r"D:\repo\sandbox"))
+        assert policy.rules["fs.read"].paths == ("D:/repo/sandbox/**",)
+
+    def test_other_rules_and_fields_are_untouched(self) -> None:
+        policy = _expand("{sandbox}/**", sandbox=Path("/srv/box"))
+        assert policy.rules["fetch.fetch"].egress == ("docs.example.com",)
+        assert policy.rules["gh.delete"].action is ToolDecision.BLOCK
+
+    def test_expanded_globs_confine_absolute_paths(self) -> None:
+        policy = _expand("{sandbox}/**", "~/notes/**", sandbox=Path("/srv/box"))
+        for path, expected in (
+            ("/srv/box/README.md", ToolDecision.ALLOW),
+            ("/home/dev/notes/a.md", ToolDecision.ALLOW),
+            ("/srv/box/../secret", ToolDecision.BLOCK),
+            ("/home/dev/.ssh/id_rsa", ToolDecision.BLOCK),
+        ):
+            verdict = evaluate_tool_call(policy, "fs", "read", {"path": path})
+            assert verdict.decision is expected, path
+
+    def test_argument_values_are_never_expanded(self) -> None:
+        """Expansion is config-time only; an agent cannot say `~` and mean home."""
+        policy = _expand("~/notes/**")
+        for path in ("~/notes/a.md", "{sandbox}/x", "${PROJECT}/x"):
+            assert evaluate_tool_call(policy, "fs", "read", {"path": path}).decision is (
+                ToolDecision.BLOCK
+            ), path
+
+
+class TestPlaceholderErrors:
+    @pytest.mark.parametrize(
+        ("glob", "kwargs", "message"),
+        [
+            ("{sandbox}/**", {}, r"\{sandbox\}.*no `sandbox:`"),
+            ("{sandboxx}/**", {"sandbox": Path("/s")}, r"unknown placeholder '\{sandboxx\}'"),
+            ("{home}/**", {}, r"unknown placeholder '\{home\}'"),
+            ("/a/{b/**", {}, "unknown placeholder"),
+            ("/a/b}/**", {}, "unknown placeholder"),
+            ("${UNSET}/**", {}, r"\$\{UNSET\} is not set"),
+            ("${EMPTY}/**", {}, r"\$\{EMPTY\} is empty"),
+            ("${STAR}/**", {}, "glob characters"),
+            ("$PROJECT/**", {}, r"write \$\{NAME\}"),
+            ("${}/**", {}, "not a valid variable name"),
+            ("${1X}/**", {}, "not a valid variable name"),
+            ("${PROJECT/**", {}, "unterminated"),
+            ("~other/**", {}, r"only `~` and `~/`"),
+        ],
+    )
+    def test_unexpandable_globs_are_config_errors(
+        self, glob: str, kwargs: dict[str, Any], message: str
+    ) -> None:
+        from toolgate.gating.tool_calls import PlaceholderError
+
+        with pytest.raises(PlaceholderError, match=message) as excinfo:
+            _expand(glob, **kwargs)
+        assert "fs.read" in str(excinfo.value)
+        assert isinstance(excinfo.value, ValueError)
+
+
+class TestSandboxKey:
+    def test_policy_config_reads_the_sandbox_key(self, tmp_path: Path) -> None:
+        from toolgate.gating.policy import load_policy_config
+
+        path = tmp_path / "p.yaml"
+        path.write_text('sandbox: "~/box"\n', encoding="utf-8")
+        assert load_policy_config(path).sandbox == "~/box"
+
+    def test_shipped_policies_have_no_sandbox_key(self) -> None:
+        from toolgate.gating.policy import load_policy_config
+
+        assert load_policy_config().sandbox is None
+
+    @pytest.mark.parametrize("value", ["", "  ", 3, ["a"]])
+    def test_a_bad_sandbox_key_is_rejected(self, tmp_path: Path, value: Any) -> None:
+        import yaml
+
+        from toolgate.gating.policy import load_policy_config
+
+        path = tmp_path / "p.yaml"
+        path.write_text(yaml.safe_dump({"sandbox": value}), encoding="utf-8")
+        with pytest.raises(ValueError, match="sandbox"):
+            load_policy_config(path)
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("/abs/box", Path("/abs/box")),
+            ("box", Path("/cfg/dir/box")),  # relative to the config file, not the cwd
+            ("./box/../box2", Path("/cfg/dir/box2")),
+            ("~/box", Path("/home/dev/box")),
+            ("${PROJECT}/box", Path("/srv/project/box")),
+        ],
+    )
+    def test_resolve_sandbox(self, raw: str, expected: Path) -> None:
+        from toolgate.gating.tool_calls import resolve_sandbox
+
+        got = resolve_sandbox(raw, base_dir=Path("/cfg/dir"), environ=ENV, home=HOME)
+        assert got.as_posix().endswith(expected.as_posix().lstrip("/")) and got.is_absolute()
+
+    @pytest.mark.parametrize("raw", ["{sandbox}/x", "${UNSET}", "~x/box", "{other}"])
+    def test_resolve_sandbox_errors(self, raw: str) -> None:
+        from toolgate.gating.tool_calls import PlaceholderError, resolve_sandbox
+
+        with pytest.raises(PlaceholderError, match="sandbox"):
+            resolve_sandbox(raw, base_dir=Path("/cfg"), environ=ENV, home=HOME)

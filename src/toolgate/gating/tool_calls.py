@@ -71,6 +71,7 @@ import fnmatch
 import functools
 import ipaddress
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
@@ -224,6 +225,146 @@ class ToolCallPolicy:
             for key, rule in self.rules.items()
         }
         return replace(self, rules=rules)
+
+
+class PlaceholderError(ValueError):
+    """A `paths` glob or `sandbox:` value that cannot be expanded.
+
+    A ValueError so existing config-error handling catches it; its own type so
+    `wrap` can say precisely why it refused to start (exit 1, child never
+    started, design D3).
+    """
+
+
+_PLACEHOLDER_RE = re.compile(r"\$\{([^}]*)\}|\$\{|\$|\{sandbox\}|\{[^}]*\}|\{|\}")
+_ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+_GLOB_CHARS = frozenset("*?[]")
+
+
+def _expand_text(
+    text: str,
+    *,
+    sandbox: Path | None,
+    environ: Mapping[str, str],
+    home: Path,
+    allow_sandbox: bool = True,
+) -> str:
+    """Expand `~`, `${NAME}` and `{sandbox}` in one string, or raise.
+
+    Each substituted value is normalised the way `with_sandbox` normalises
+    the sandbox root (separators to `/`, `.`/`..` resolved textually), so a
+    Windows path from the environment matches the paths a server sends.
+
+    Refused, each with a message naming the problem:
+
+    * `{sandbox}` with no `sandbox:` key, and any other `{...}` or a stray
+      brace: a typo such as `{sandboxx}` must not become a glob that matches
+      nothing and blocks every call with no explanation;
+    * `${NAME}` unset, or set to the empty string: `${PROJECT}/**` with an
+      empty PROJECT would become `/**`, which allows everything;
+    * a variable whose value contains glob characters, for the same reason;
+    * bare `$NAME`, an invalid name, an unterminated `${`;
+    * `~user`, which would need a password-database lookup to mean anything.
+    """
+    if text.startswith("~"):
+        if text == "~" or text[1] in "/\\":
+            text = _normalise_path(str(home))[0] + text[1:]
+        else:
+            raise PlaceholderError("only `~` and `~/` are supported at the start of a path")
+
+    out: list[str] = []
+    position = 0
+    for match in _PLACEHOLDER_RE.finditer(text):
+        out.append(text[position : match.start()])
+        position = match.end()
+        token = match.group(0)
+        if token == "{sandbox}":
+            if not allow_sandbox:
+                raise PlaceholderError("a `sandbox:` value cannot itself use {sandbox}")
+            if sandbox is None:
+                raise PlaceholderError(
+                    "uses {sandbox} but the config has no `sandbox:` key to expand it from"
+                )
+            out.append(_normalise_path(str(sandbox))[0])
+        elif token.startswith("${") and token.endswith("}"):
+            name = match.group(1)
+            if not _ENV_NAME_RE.match(name):
+                raise PlaceholderError(f"${{{name}}} is not a valid variable name")
+            value = environ.get(name)
+            if value is None:
+                raise PlaceholderError(f"${{{name}}} is not set in the environment")
+            if not value:
+                raise PlaceholderError(f"${{{name}}} is empty")
+            if _GLOB_CHARS & set(value):
+                raise PlaceholderError(
+                    f"${{{name}}} expands to a value containing glob characters (*?[])"
+                )
+            normalised, escaped = _normalise_path(value)
+            if escaped or not normalised:
+                raise PlaceholderError(f"${{{name}}} does not expand to a usable path")
+            out.append(normalised)
+        elif token == "${":
+            raise PlaceholderError("unterminated `${`")
+        elif token == "$":
+            raise PlaceholderError("a bare `$` is not expanded; write ${NAME}")
+        else:
+            raise PlaceholderError(
+                f"unknown placeholder {token!r}; only {{sandbox}}, `~` and ${{NAME}} expand"
+            )
+    out.append(text[position:])
+    return "".join(out)
+
+
+def expand_placeholders(
+    policy: ToolCallPolicy,
+    *,
+    sandbox: Path | None,
+    environ: Mapping[str, str],
+    home: Path,
+) -> ToolCallPolicy:
+    """Expand `{sandbox}`, `~` and `${NAME}` in every `paths` glob, once.
+
+    Used by `toolgate wrap` at config load (design D3). Unlike `with_sandbox`,
+    which leaves an unknown placeholder in place to match nothing, this raises
+    `PlaceholderError` for anything it cannot expand, and `wrap` exits 1
+    before the child starts: a policy that silently blocks every call looks
+    like a broken tool, and one that silently allows everything is worse.
+
+    Only `paths` globs expand. Egress entries never contain placeholders (the
+    entry parser refuses them), and argument values are never expanded at
+    call time: an agent writing `~/x` gets `~/x` compared literally.
+    """
+    rules: dict[str, ToolRule] = {}
+    for key, rule in policy.rules.items():
+        if rule.paths is None:
+            rules[key] = rule
+            continue
+        expanded: list[str] = []
+        for glob in rule.paths:
+            try:
+                expanded.append(_expand_text(glob, sandbox=sandbox, environ=environ, home=home))
+            except PlaceholderError as exc:
+                raise PlaceholderError(f"tool_calls.rules.{key}.paths: {exc}") from exc
+        rules[key] = replace(rule, paths=tuple(expanded))
+    return replace(policy, rules=rules)
+
+
+def resolve_sandbox(raw: str, *, base_dir: Path, environ: Mapping[str, str], home: Path) -> Path:
+    """Turn a policy file's `sandbox:` value into an absolute path.
+
+    `~` and `${NAME}` expand as in globs. A relative result is taken relative
+    to `base_dir`, the directory holding the config file, never the working
+    directory: hosts start servers from directories the user does not choose.
+    The directory is not required to exist; globs only compare strings.
+    """
+    try:
+        text = _expand_text(raw, sandbox=None, environ=environ, home=home, allow_sandbox=False)
+    except PlaceholderError as exc:
+        raise PlaceholderError(f"sandbox: {exc}") from exc
+    path = Path(text)
+    if not path.is_absolute():
+        path = base_dir / path
+    return path.resolve()
 
 
 @dataclass(frozen=True, slots=True)
@@ -908,14 +1049,17 @@ __all__ = [
     "URL_ARGUMENT_NAMES",
     "Destination",
     "EgressEntry",
+    "PlaceholderError",
     "ToolCallBlocked",
     "ToolCallPolicy",
     "ToolDecision",
     "ToolRule",
     "ToolVerdict",
     "evaluate_tool_call",
+    "expand_placeholders",
     "load_tool_call_policy",
     "parse_destination",
     "parse_egress_entry",
+    "resolve_sandbox",
     "unclassified_arguments",
 ]
