@@ -82,6 +82,11 @@ evaluating this for anything load-bearing, check the commit history first.
 - Resource exhaustion from deliberately oversized tool results beyond
   `gate.max_result_chars`, which exists to bound exactly that and is
   configurable.
+- For `toolgate wrap`, the cases the README lists as not covered: servers or
+  tools without a rule, redirects a server follows on its own, exfiltration
+  through an allowlisted host, traffic a server originates itself, and
+  content returned through anything other than a `tools/call` result
+  (`resources/read`, `prompts/get`, notifications) being unredacted.
 
 ## Issues we consider in scope
 
@@ -101,6 +106,17 @@ evaluating this for anything load-bearing, check the commit history first.
   Either direction is a verification bypass and does not need local access.
 - A declaration pin reported as `unchanged` for a declaration whose bytes
   differ, including a difference expressible only in non-rendering characters.
+- For `toolgate wrap`: any `tools/call` that reaches a wrapped server although
+  its URL argument names a host or port outside the tool's egress allowlist,
+  or its path argument falls outside the tool's `paths` globs. That includes
+  URL spellings two parsers read differently, client lines a lenient server
+  parser would read as a tool call that the proxy did not gate (duplicate
+  keys, concatenated objects, a byte-order mark), id collisions that let a
+  result skip inspection, and arguments under names the policy never
+  classified.
+- For `toolgate wrap`: an argument value, URL, path or result text reaching
+  the audit log or stderr, or anything other than the server's own lines and
+  the proxy's replies reaching the host on stdout.
 
 ## The trust boundary runs at the process, not the tool
 

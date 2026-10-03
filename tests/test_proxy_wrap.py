@@ -299,3 +299,38 @@ class TestStartupFailures:
         )
         completed = self._run(tmp_path, config=_write_policy(tmp_path, text))
         assert completed.returncode == 0, completed.stderr.decode()
+
+
+EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
+
+
+@pytest.mark.parametrize("name", ["internal-api.yaml", "docs-and-github.yaml"])
+def test_example_policies_load_through_the_wrap_loader(name: str, tmp_path: Path) -> None:
+    """C1: the README's example policies are valid `wrap` configs as shipped."""
+    from toolgate.proxy.wrap import load_wrap_config
+
+    config = load_wrap_config("fetch", EXAMPLES / name, environ={}, home=tmp_path)
+    rule = config.policy.tool_calls.rules["fetch.fetch"]
+    assert rule.egress
+    assert config.audit_path.name == "fetch.sqlite"
+
+
+def test_example_internal_api_policy_means_what_its_comments_say(tmp_path: Path) -> None:
+    from toolgate.gating.tool_calls import ToolDecision, evaluate_tool_call
+    from toolgate.proxy.wrap import load_wrap_config
+
+    policy = load_wrap_config(
+        "fetch", EXAMPLES / "internal-api.yaml", environ={}, home=tmp_path
+    ).policy.tool_calls
+    schema = {"type": "object", "properties": {"url": {"type": "string"}}}
+
+    def verdict(url: str) -> ToolDecision:
+        return evaluate_tool_call(policy, "fetch", "fetch", {"url": url}, schema=schema).decision
+
+    assert verdict("https://api.internal.example:8443/v1/x") is ToolDecision.ALLOW
+    assert verdict("https://api.internal.example/v1/x") is ToolDecision.BLOCK
+    assert verdict("https://billing.svc.internal.example/") is ToolDecision.ALLOW
+    assert verdict("https://billing.svc.internal.example:8080/") is ToolDecision.BLOCK
+    assert verdict("https://evil.test/") is ToolDecision.BLOCK
+    other = evaluate_tool_call(policy, "fetch", "other_tool", {}, schema=schema)
+    assert other.decision is ToolDecision.BLOCK  # default: block
