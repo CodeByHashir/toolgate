@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+import sqlite3
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 
+import pytest
+
 from toolgate.gating.audit import (
+    AuditFailure,
+    AuditWriter,
     Decision,
     DecisionLog,
     DecisionRecord,
     Outcome,
     decision_log,
+    default_audit_path,
 )
 
 
@@ -134,3 +143,121 @@ def test_the_log_exposes_no_mutation_api() -> None:
         and any(verb in name for verb in ("update", "delete", "remove", "set_", "edit"))
     ]
     assert mutators == []
+
+
+# --- T7: per-server audit files, WAL, and the failure rule (design D9, D10, D17) ---
+
+
+def test_file_backed_logs_use_wal_and_normal_sync(tmp_path: Path) -> None:
+    """D17: no fsync per commit, so the audit write stays off the tool call's path."""
+    log = DecisionLog(tmp_path / "d.sqlite")
+    try:
+        mode = log._connection.execute("PRAGMA journal_mode").fetchone()[0]
+        sync = log._connection.execute("PRAGMA synchronous").fetchone()[0]
+        timeout = log._connection.execute("PRAGMA busy_timeout").fetchone()[0]
+    finally:
+        log.close()
+    assert mode == "wal"
+    assert sync == 1  # NORMAL
+    assert timeout == 2000
+
+
+def test_in_memory_logs_are_unaffected() -> None:
+    with decision_log(None) as log:
+        log.append(_record())
+        assert log.count() == 1
+
+
+def test_default_audit_path_is_one_file_per_server(tmp_path: Path) -> None:
+    """D9: separate files remove cross-process lock contention by default."""
+    assert default_audit_path(tmp_path, "fetch") == tmp_path / "audit" / "fetch.sqlite"
+    assert default_audit_path(tmp_path, "fetch") != default_audit_path(tmp_path, "filesystem")
+
+
+_WRITER = textwrap.dedent(
+    """
+    import sys
+    from pathlib import Path
+    from toolgate.gating.audit import Decision, DecisionLog, DecisionRecord
+    log = DecisionLog(Path(sys.argv[1]))
+    name = sys.argv[2]
+    for i in range(int(sys.argv[3])):
+        log.append(DecisionRecord(correlation_id=f"{name}-{i}", mcp_server_id=name,
+                                  raw_result_hash="", fused_decision=Decision.ALLOW,
+                                  latency_ms=0.0))
+    log.close()
+    """
+)
+
+
+def test_two_processes_can_write_one_shared_path(tmp_path: Path) -> None:
+    """D9: a shared path is allowed; WAL plus a bounded busy timeout lets both write."""
+    path = tmp_path / "shared.sqlite"
+    rows = 200
+    writers = [
+        subprocess.Popen([sys.executable, "-c", _WRITER, str(path), name, str(rows)])
+        for name in ("fetch", "filesystem")
+    ]
+    assert [w.wait(timeout=120) for w in writers] == [0, 0]
+    log = DecisionLog(path)
+    try:
+        assert log.count() == 2 * rows
+        servers = {row["mcp_server_id"] for row in log.rows()}
+    finally:
+        log.close()
+    assert servers == {"fetch", "filesystem"}
+
+
+class _BrokenLog:
+    """A DecisionLog stand-in whose writes fail until told otherwise."""
+
+    def __init__(self) -> None:
+        self.failing = True
+        self.written: list[DecisionRecord] = []
+
+    def append(self, record: DecisionRecord) -> None:
+        if self.failing:
+            raise sqlite3.OperationalError("database is locked")
+        self.written.append(record)
+
+
+class TestAuditWriter:
+    """D10: a failed write never changes a decision; persistent failure is loud."""
+
+    def test_a_failure_is_reported_and_counted_not_raised(self) -> None:
+        messages: list[str] = []
+        writer = AuditWriter(_BrokenLog(), report=messages.append)  # type: ignore[arg-type]
+        assert writer.append(_record()) is False
+        assert writer.consecutive_failures == 1
+        assert len(messages) == 1 and "database is locked" in messages[0]
+
+    def test_success_resets_the_counter(self) -> None:
+        log = _BrokenLog()
+        writer = AuditWriter(log, report=lambda _m: None)  # type: ignore[arg-type]
+        for _ in range(9):
+            writer.append(_record())
+        log.failing = False
+        assert writer.append(_record()) is True
+        assert writer.consecutive_failures == 0
+        log.failing = True
+        for _ in range(9):
+            writer.append(_record())  # nine more: still under the limit
+
+    def test_the_tenth_consecutive_failure_raises(self) -> None:
+        writer = AuditWriter(_BrokenLog(), report=lambda _m: None)  # type: ignore[arg-type]
+        for _ in range(9):
+            assert writer.append(_record()) is False
+        with pytest.raises(AuditFailure, match="10 consecutive"):
+            writer.append(_record())
+
+    def test_the_limit_is_configurable(self) -> None:
+        writer = AuditWriter(_BrokenLog(), report=lambda _m: None, max_consecutive_failures=2)  # type: ignore[arg-type]
+        writer.append(_record())
+        with pytest.raises(AuditFailure):
+            writer.append(_record())
+
+    def test_the_report_never_contains_record_content(self) -> None:
+        messages: list[str] = []
+        writer = AuditWriter(_BrokenLog(), report=messages.append)  # type: ignore[arg-type]
+        writer.append(_record(note="rule fetch.fetch.egress", tool_name="secret_tool_xyz"))
+        assert "secret_tool_xyz" not in messages[0]

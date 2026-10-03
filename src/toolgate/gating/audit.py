@@ -1,6 +1,9 @@
 """Structured audit log of every gating decision (FR-8, PROPOSAL.md section 12).
 
-SQLite, single operator, no concurrency beyond the reference agent.
+SQLite. File-backed logs run in WAL mode with `synchronous=NORMAL` and a 2 s
+busy timeout, so several `toolgate wrap` processes can share one file if the
+operator chooses to; by default each wrapped server writes its own
+(`default_audit_path`). `AuditWriter` is the proxy's failure rule around it.
 
 The full decision vocabulary and the whole column set are defined here in M2
 even though M2 only ever emits `allow` and records no detector scores. Fixing
@@ -16,12 +19,19 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterator
-from contextlib import closing, contextmanager
+import sys
+import time
+from collections.abc import Callable, Iterator
+from contextlib import closing, contextmanager, suppress
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
+from typing import Protocol
+
+#: How long a writer waits for another process's lock before the write fails
+#: and counts toward `AuditWriter`'s failure rule (design D9).
+BUSY_TIMEOUT_MS = 2000
 
 
 class Decision(StrEnum):
@@ -152,9 +162,43 @@ class DecisionLog:
             self._connection = sqlite3.connect(":memory:", check_same_thread=False)
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
-            self._connection = sqlite3.connect(path, check_same_thread=False)
+            self._connection = sqlite3.connect(
+                path, check_same_thread=False, timeout=BUSY_TIMEOUT_MS / 1000
+            )
+            # WAL with synchronous=NORMAL drops the fsync per commit (design
+            # D17): each `toolgate wrap` writes its row inline, in front of the
+            # tool call, and a disk flush per call would dominate the proxy's
+            # added latency. The cost, stated: a power loss can lose the last
+            # few committed rows. WAL also lets several `wrap` processes share
+            # one file (D9); the busy timeout bounds how long a writer waits
+            # for another's lock before the write counts as failed.
+            self._connection.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
+            self._enable_wal()
+            self._connection.execute("PRAGMA synchronous=NORMAL")
         self._connection.executescript(SCHEMA)
         self._connection.commit()
+
+    def _enable_wal(self) -> None:
+        """Switch to WAL, retrying within the busy timeout.
+
+        Changing the journal mode needs an exclusive lock, and SQLite can
+        report "database is locked" for it at once rather than through the
+        busy handler. Two `wrap` processes opening a fresh shared file at the
+        same moment hit exactly that (caught by the two-process test). Retrying
+        within the same 2 s bound gives the other opener time to finish; past
+        it the error is real and propagates.
+        """
+        deadline = time.monotonic() + BUSY_TIMEOUT_MS / 1000
+        while True:
+            try:
+                self._connection.execute("PRAGMA journal_mode=WAL")
+                return
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc) and "busy" not in str(exc):
+                    raise
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.02)
 
     @property
     def persistent(self) -> bool:
@@ -240,3 +284,83 @@ def decision_log(path: Path | None) -> Iterator[DecisionLog]:
         yield log
     finally:
         log.close()
+
+
+def default_audit_path(state_dir: Path, server: str) -> Path:
+    """Where `toolgate wrap --name <server>` writes its log by default.
+
+    One file per server (design D9): each wrapped server is its own process,
+    and separate files mean no two of them ever contend for a write lock. A
+    shared path is still allowed by configuration; WAL handles that case.
+    """
+    return state_dir / "audit" / f"{server}.sqlite"
+
+
+class AuditFailure(RuntimeError):
+    """The audit log failed too many times in a row to keep running."""
+
+
+class _Appendable(Protocol):
+    def append(self, record: DecisionRecord) -> None: ...
+
+
+def _report_to_stderr(message: str) -> None:
+    with suppress(OSError, ValueError, AttributeError):
+        sys.stderr.write(f"toolgate: {message}\n")
+        sys.stderr.flush()
+
+
+class AuditWriter:
+    """Writes decision rows for the proxy without letting a write failure decide.
+
+    Design D10, stated as a rule: **an audit write failure never changes the
+    decision.** A blocked call stays blocked and an allowed call is still
+    forwarded, because the security property is the block, not the row, and
+    refusing allowed traffic over a locked or full disk would turn a disk
+    problem into an outage that looks like a policy bug.
+
+    What a failure does instead: it is reported (stderr, which the host keeps
+    as the server log) and counted. A success resets the count. After
+    `max_consecutive_failures` failures in a row the next one raises
+    `AuditFailure`, which ends the session as an internal error (`wrap` exits
+    3), so a broken log stops the proxy loudly before a long unaudited run.
+    The cost, accepted in D10: up to nine calls in a failure burst have no row.
+
+    Callers append *after* acting on the decision, so the raise can only ever
+    stop the proxy, never undo or alter a decision already made.
+
+    Reports name the error, never the record: a row can carry a tool name or
+    a note that has no business in a log line about disk trouble.
+    """
+
+    def __init__(
+        self,
+        log: _Appendable,
+        *,
+        max_consecutive_failures: int = 10,
+        report: Callable[[str], None] = _report_to_stderr,
+    ) -> None:
+        if max_consecutive_failures < 1:
+            raise ValueError("max_consecutive_failures must be at least 1")
+        self.log = log
+        self.max_consecutive_failures = max_consecutive_failures
+        self.consecutive_failures = 0
+        self._report = report
+
+    def append(self, record: DecisionRecord) -> bool:
+        """Write one row. True on success; False after a reported failure."""
+        try:
+            self.log.append(record)
+        except (sqlite3.Error, OSError) as exc:
+            self.consecutive_failures += 1
+            self._report(
+                f"audit write failed ({type(exc).__name__}: {exc}); "
+                f"{self.consecutive_failures} consecutive failure(s)"
+            )
+            if self.consecutive_failures >= self.max_consecutive_failures:
+                raise AuditFailure(
+                    f"audit log failed {self.consecutive_failures} consecutive times; stopping"
+                ) from exc
+            return False
+        self.consecutive_failures = 0
+        return True
