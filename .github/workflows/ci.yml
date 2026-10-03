@@ -99,6 +99,7 @@ jobs:
           tests/test_gating_pins.py
           tests/test_gating_declarations.py
           tests/test_gating_declaration_policy.py
+          tests/test_demo_fixtures.py
 
       - name: A research subcommand names the extra
         run: |
