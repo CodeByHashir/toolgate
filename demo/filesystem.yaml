@@ -1,0 +1,72 @@
+# toolgate demo policy for the `filesystem` server.
+#
+# Used as:  toolgate wrap --name filesystem --config demo/filesystem.yaml -- \
+#             npx -y @modelcontextprotocol/server-filesystem@2026.8.31 <project dir>
+#
+# Every rule key is "<--name>.<tool>". `default: block` makes this an
+# allowlist: a tool the server adds later is refused until it is named here.
+#
+# The server is already confined to its root by its own realpath check, so the
+# path rules below add little on their own (design, premise 4). They are here
+# so the demo's read is checked the same way a user's would be, and so the
+# tool schemas are classified: every argument that can hold a string is named
+# in `path_args` (checked) or `ignore_args` (deliberately not checked). The
+# argument lists match the server's real `tools/list` at the pinned version;
+# tests/test_demo_fixtures.py fails if a tool gains an argument nobody
+# classified.
+#
+# PII redaction is OFF here (`redaction: []`) so the `.env` read returns the
+# canary verbatim. The canary is a random hex token that no PII detector would
+# mask anyway; turning redaction off removes any doubt that the demo's block
+# came from masking rather than from the egress rule.
+
+# The project the server is confined to. Relative to THIS file's directory.
+sandbox: "../tests/fixtures/demo/project"
+
+calibrated: false
+on_detector_failure: escalate
+detectors:
+  injection: []
+  redaction: []
+  inert: []
+
+tool_calls:
+  default: block
+  rules:
+    filesystem.read_file:
+      paths: ["{sandbox}", "{sandbox}/**"]
+    filesystem.read_text_file:
+      paths: ["{sandbox}", "{sandbox}/**"]
+    filesystem.read_media_file:
+      paths: ["{sandbox}", "{sandbox}/**"]
+    filesystem.read_multiple_files:
+      paths: ["{sandbox}", "{sandbox}/**"]
+    filesystem.write_file:
+      paths: ["{sandbox}", "{sandbox}/**"]
+      path_args: [path]
+      ignore_args: [content]
+    filesystem.edit_file:
+      paths: ["{sandbox}", "{sandbox}/**"]
+      path_args: [path]
+      ignore_args: [edits]
+    filesystem.create_directory:
+      paths: ["{sandbox}", "{sandbox}/**"]
+    filesystem.list_directory:
+      paths: ["{sandbox}", "{sandbox}/**"]
+    filesystem.list_directory_with_sizes:
+      paths: ["{sandbox}", "{sandbox}/**"]
+      path_args: [path]
+      ignore_args: [sortBy]
+    filesystem.directory_tree:
+      paths: ["{sandbox}", "{sandbox}/**"]
+      path_args: [path]
+      ignore_args: [excludePatterns]
+    filesystem.move_file:
+      paths: ["{sandbox}", "{sandbox}/**"]
+    filesystem.search_files:
+      paths: ["{sandbox}", "{sandbox}/**"]
+      path_args: [path]
+      ignore_args: [pattern, excludePatterns]
+    filesystem.get_file_info:
+      paths: ["{sandbox}", "{sandbox}/**"]
+    filesystem.list_allowed_directories: {}

@@ -1,0 +1,41 @@
+# toolgate demo policy for the `fetch` server.
+#
+# Used as:  toolgate wrap --name fetch --config demo/fetch.yaml -- \
+#             uvx mcp-server-fetch==2026.8.18
+#
+# The one rule that carries the v0.1 guarantee: `fetch.fetch` may reach
+# `localhost` on port 8765 (the demo page) and nothing else. Ports are part of
+# the check (design D6), so the attacker listener on the same machine is
+# refused on its own port, and `127.0.0.1` is a different name from
+# `localhost` to this check (names are compared, not resolved).
+#
+# 8765 is the port to use when running the demo by hand. The automated tests
+# pick free ports at random and write a copy of this file with the real page
+# port, because egress entries do not expand placeholders.
+#
+# Not covered, and shown by the demo rather than hidden: the fetch server
+# follows redirects itself (probed 2026-10-03), so an allowed page that
+# answers 302 to another host leaks through the allowed URL. Containment
+# (an OS sandbox or Docker MCP Gateway) covers that; toolgate does not.
+#
+# PII redaction is ON for this server's results (`redaction: [pii]`): it
+# masks personal data in what the page returns. It applies to tools/call
+# results only (design D11).
+
+calibrated: false
+on_detector_failure: escalate
+detectors:
+  injection: []
+  redaction:
+    - pii
+  inert: []
+thresholds:
+  pii:
+    redact: 0.7
+
+tool_calls:
+  default: block
+  rules:
+    fetch.fetch:
+      egress:
+        - "localhost:8765"
