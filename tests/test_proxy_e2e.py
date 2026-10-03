@@ -23,6 +23,8 @@ changed that the documentation must reflect.
 
 from __future__ import annotations
 
+import json
+import os
 import shutil
 import sqlite3
 import sys
@@ -42,13 +44,31 @@ from tests.fixtures.demo.scenario import run_scenario
 
 DEMO = Path(__file__).resolve().parent.parent / "demo"
 
+#: Set by the release workflow's smoke job: run the demo against the
+#: published package rather than this source tree, e.g.
+#: '["uvx", "--from", "toolgate==0.1.0a1", "toolgate"]'.
+WRAP_COMMAND_ENV = "TOOLGATE_WRAP_COMMAND"
+#: Set by the smoke job so missing npx/uvx fails instead of skipping: a
+#: release must not be announced on a demo that silently did not run.
+REQUIRE_LIVE_ENV = "TOOLGATE_REQUIRE_LIVE"
+
 pytestmark = [
     pytest.mark.live_servers,
     pytest.mark.skipif(
-        shutil.which("npx") is None or shutil.which("uvx") is None,
+        (shutil.which("npx") is None or shutil.which("uvx") is None)
+        and not os.environ.get(REQUIRE_LIVE_ENV),
         reason="npx and uvx are needed to start the pinned reference servers",
     ),
 ]
+
+
+def _toolgate_command() -> list[str]:
+    configured = os.environ.get(WRAP_COMMAND_ENV)
+    if configured:
+        command = json.loads(configured)
+        assert isinstance(command, list) and all(isinstance(part, str) for part in command)
+        return command
+    return [sys.executable, "-m", "toolgate"]
 
 
 def _configs(tmp_path: Path, page_port: int) -> tuple[Path, Path]:
@@ -68,8 +88,7 @@ def _configs(tmp_path: Path, page_port: int) -> tuple[Path, Path]:
 
 
 def _wrapped(name: str, config: Path, command: tuple[str, ...]) -> list[str]:
-    return [sys.executable, "-m", "toolgate", "wrap", "--name", name, "--config", str(config),
-            "--", *command]  # fmt: skip
+    return [*_toolgate_command(), "wrap", "--name", name, "--config", str(config), "--", *command]
 
 
 def test_toolgate_on_refuses_every_covered_variant(tmp_path: Path) -> None:
