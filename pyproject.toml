@@ -86,6 +86,7 @@ addopts = "-q --strict-markers"
 asyncio_mode = "auto"
 markers = [
     "models: requires the reused LLMShield V0/V3 artifacts on disk (slow, skipped in CI)",
+    "live_servers: starts the pinned reference MCP servers via npx/uvx (skipped if absent; runs in CI)",
 ]
 
 [tool.ruff]

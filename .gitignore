@@ -13,6 +13,9 @@ dist/
 
 # Secrets
 .env
+# ...except the demo's canary file, which is a fixture: a random hex token that
+# grants nothing (tests/fixtures/demo/project/README.md).
+!tests/fixtures/demo/project/.env
 
 # Local-only dev artefacts — untracked from public repo, kept locally
 plan.md
