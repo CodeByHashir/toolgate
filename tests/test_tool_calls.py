@@ -571,3 +571,299 @@ class TestEgressEntryValidation:
             ).decision
             is ToolDecision.BLOCK
         )
+
+
+# --- T2: fail-closed argument classification (design "Calls the proxy cannot
+# classify", R3-8, R3-17) ---------------------------------------------------------
+#
+# The proxy passes the tool's declared `inputSchema` as `schema=`. A rule that
+# checks paths or URLs then refuses to guess: every property that could hold a
+# string has to be named in `path_args`, `url_args` or `ignore_args`, and an
+# argument the schema does not declare is refused. Callers that pass no
+# `schema` (the in-process research path) keep the pre-T2 behaviour.
+
+
+def _s(**properties: Any) -> dict[str, Any]:
+    """A closed object schema with the given properties."""
+    return {"type": "object", "properties": properties, "additionalProperties": False}
+
+
+STR = {"type": "string"}
+INT = {"type": "integer"}
+
+FETCH_SCHEMA = {  # mcp-server-fetch==2026.8.18, as probed on 2026-10-03
+    "type": "object",
+    "properties": {
+        "url": {"type": "string", "format": "uri", "minLength": 1},
+        "max_length": {"type": "integer", "default": 5000},
+        "start_index": {"type": "integer", "default": 0, "minimum": 0},
+        "raw": {"type": "boolean", "default": False},
+    },
+    "required": ["url"],
+}
+
+WRITE_FILE_SCHEMA = _s(path=STR, content=STR)
+
+
+def _rule_policy(**rule: Any) -> ToolCallPolicy:
+    return load_tool_call_policy({"rules": {"srv.tool": rule}})
+
+
+def _unclassified(schema: Any, **rule: Any) -> tuple[str, ...]:
+    from toolgate.gating.tool_calls import unclassified_arguments
+
+    return unclassified_arguments(_rule_policy(**rule).rules["srv.tool"], schema)
+
+
+class TestSchemaClassification:
+    """One row per schema shape (R3-17)."""
+
+    EGRESS = {"egress": ["example.com"]}
+
+    @pytest.mark.parametrize(
+        "prop",
+        [
+            {"type": "integer"},
+            {"type": "number", "minimum": 0},
+            {"type": "boolean", "default": False},
+            {"type": "null"},
+        ],
+    )
+    def test_exact_non_string_scalars_need_no_classification(self, prop: Any) -> None:
+        assert _unclassified(_s(x=prop), **self.EGRESS) == ()
+
+    @pytest.mark.parametrize(
+        ("label", "prop"),
+        [
+            ("string", {"type": "string"}),
+            ("untyped", {}),
+            ("untyped with description", {"description": "anything"}),
+            ("type array with string", {"type": ["string", "null"]}),
+            ("type array without string", {"type": ["integer", "null"]}),
+            ("anyOf", {"anyOf": [{"type": "integer"}, {"type": "string"}]}),
+            ("anyOf of scalars", {"anyOf": [{"type": "integer"}, {"type": "boolean"}]}),
+            ("oneOf", {"oneOf": [{"type": "integer"}]}),
+            ("allOf", {"allOf": [{"type": "integer"}]}),
+            ("integer with anyOf beside it", {"type": "integer", "anyOf": [{"type": "string"}]}),
+            ("$ref", {"$ref": "#/$defs/Target"}),
+            ("enum", {"enum": ["a", "b"]}),
+            ("const", {"const": "a"}),
+            ("open object", {"type": "object", "properties": {"n": INT}}),
+            (
+                "object with additionalProperties true",
+                {"type": "object", "additionalProperties": True},
+            ),
+            ("array without items", {"type": "array"}),
+            ("array of strings", {"type": "array", "items": STR}),
+            ("non-dict schema", True),
+        ],
+    )
+    def test_everything_else_counts_as_a_possible_string(self, label: str, prop: Any) -> None:
+        assert _unclassified(_s(x=prop), **self.EGRESS) == ("x",), label
+
+    def test_listing_a_name_classifies_it_whatever_its_shape(self) -> None:
+        schema = _s(x={"anyOf": [STR, INT]}, y=STR, z={"$ref": "#/x"})
+        assert (
+            _unclassified(schema, egress=["example.com"], url_args=["x"], ignore_args=["y", "z"])
+            == ()
+        )
+
+    def test_closed_objects_are_walked(self) -> None:
+        schema = _s(options=_s(depth=INT, target=STR, url=STR))
+        assert _unclassified(schema, **self.EGRESS) == ("options.target",)
+
+    def test_arrays_are_walked_through_their_items(self) -> None:
+        schema = _s(items={"type": "array", "items": _s(n=INT, note=STR)})
+        assert _unclassified(schema, **self.EGRESS) == ("items[].note",)
+        assert _unclassified(_s(ns={"type": "array", "items": INT}), **self.EGRESS) == ()
+
+    def test_default_names_cover_the_reference_servers(self) -> None:
+        assert _unclassified(FETCH_SCHEMA, egress=["example.com"]) == ()
+        assert (
+            _unclassified(_s(path=STR, paths={"type": "array", "items": STR}), paths=["w/**"]) == ()
+        )
+        assert _unclassified(_s(href=STR, uri=STR), **self.EGRESS) == ()
+
+    def test_names_count_only_for_the_checks_the_rule_makes(self) -> None:
+        """An egress-only rule does not treat `path` as checked, so it must be listed."""
+        assert _unclassified(_s(url=STR, path=STR), egress=["example.com"]) == ("path",)
+        assert _unclassified(_s(url=STR, path=STR), paths=["w/**"]) == ("url",)
+
+    def test_explicit_args_replace_the_defaults(self) -> None:
+        assert _unclassified(_s(path=STR, file=STR), paths=["w/**"], path_args=["file"]) == (
+            "path",
+        )
+
+    def test_a_write_file_tool_with_content_needs_ignore_args(self) -> None:
+        assert _unclassified(WRITE_FILE_SCHEMA, paths=["w/**"]) == ("content",)
+        assert _unclassified(WRITE_FILE_SCHEMA, paths=["w/**"], ignore_args=["content"]) == ()
+
+    @pytest.mark.parametrize("schema", [None, "x", [], {"type": "object", "properties": "no"}])
+    def test_an_unreadable_schema_is_unclassified_as_a_whole(self, schema: Any) -> None:
+        assert _unclassified(schema, **self.EGRESS) == ("*",)
+
+    def test_a_rule_without_paths_or_egress_needs_no_classification(self) -> None:
+        assert _unclassified(_s(x=STR), action="allow") == ()
+
+
+class TestCallsWithASchema:
+    FETCH = load_tool_call_policy({"rules": {"fetch.fetch": {"egress": ["docs.example.com"]}}})
+    FS = load_tool_call_policy(
+        {
+            "rules": {
+                "fs.write_file": {
+                    "paths": ["workspace/**"],
+                    "path_args": ["path"],
+                    "ignore_args": ["content"],
+                },
+                "fs.nested": {"paths": ["workspace/**"]},
+            }
+        }
+    )
+
+    def test_an_allowed_fetch_passes(self) -> None:
+        verdict = evaluate_tool_call(
+            self.FETCH,
+            "fetch",
+            "fetch",
+            {"url": "https://docs.example.com/x", "raw": True},
+            schema=FETCH_SCHEMA,
+        )
+        assert verdict.decision is ToolDecision.ALLOW
+
+    def test_a_call_before_any_declaration_is_refused(self) -> None:
+        verdict = evaluate_tool_call(
+            self.FETCH, "fetch", "fetch", {"url": "https://docs.example.com/x"}, schema=None
+        )
+        assert verdict.decision is ToolDecision.BLOCK
+        assert verdict.rule == "fetch.fetch.args"
+        assert "no tool declaration seen yet" in verdict.reason
+
+    def test_a_tool_without_a_rule_needs_no_declaration(self) -> None:
+        assert evaluate_tool_call(self.FETCH, "fetch", "other", {"q": 1}, schema=None).decision is (
+            ToolDecision.ALLOW
+        )
+
+    def test_an_argument_the_schema_does_not_declare_is_refused(self) -> None:
+        verdict = evaluate_tool_call(
+            self.FETCH,
+            "fetch",
+            "fetch",
+            {"url": "https://docs.example.com/x", "target": "https://evil.test/"},
+            schema=FETCH_SCHEMA,
+        )
+        assert verdict.decision is ToolDecision.BLOCK
+        assert verdict.rule == "fetch.fetch.args"
+
+    def test_an_undeclared_key_inside_a_closed_object_is_refused(self) -> None:
+        schema = _s(opts=_s(path=STR))
+        ok = evaluate_tool_call(
+            self.FS, "fs", "nested", {"opts": {"path": "workspace/a"}}, schema=schema
+        )
+        bad = evaluate_tool_call(
+            self.FS,
+            "fs",
+            "nested",
+            {"opts": {"path": "workspace/a", "file": "/etc/x"}},
+            schema=schema,
+        )
+        assert ok.decision is ToolDecision.ALLOW
+        assert bad.decision is ToolDecision.BLOCK
+        assert bad.rule == "fs.nested.args"
+
+    def test_an_unclassified_tool_is_refused_even_with_safe_values(self) -> None:
+        verdict = evaluate_tool_call(
+            self.FS,
+            "fs",
+            "nested",
+            {"path": "workspace/a", "note": "hi"},
+            schema=_s(path=STR, note=STR),
+        )
+        assert verdict.decision is ToolDecision.BLOCK
+        assert verdict.rule == "fs.nested.args"
+
+    @pytest.mark.parametrize("arguments", [None, [], "x", 3])
+    def test_non_object_arguments_are_refused(self, arguments: Any) -> None:
+        verdict = evaluate_tool_call(self.FETCH, "fetch", "fetch", arguments, schema=FETCH_SCHEMA)
+        assert verdict.decision is ToolDecision.BLOCK
+        assert verdict.rule == "fetch.fetch.args"
+
+    def test_ignored_arguments_are_not_inspected(self) -> None:
+        verdict = evaluate_tool_call(
+            self.FS,
+            "fs",
+            "write_file",
+            {"path": "workspace/out.txt", "content": "/etc/passwd"},
+            schema=WRITE_FILE_SCHEMA,
+        )
+        assert verdict.decision is ToolDecision.ALLOW
+
+    def test_paths_are_still_confined(self) -> None:
+        verdict = evaluate_tool_call(
+            self.FS,
+            "fs",
+            "write_file",
+            {"path": "/etc/cron.d/x", "content": ""},
+            schema=WRITE_FILE_SCHEMA,
+        )
+        assert verdict.decision is ToolDecision.BLOCK
+        assert verdict.rule == "fs.write_file.paths"
+
+    def test_flat_actions_come_before_classification(self) -> None:
+        policy = load_tool_call_policy({"rules": {"gh.delete": {"action": "block"}}})
+        assert (
+            evaluate_tool_call(policy, "gh", "delete", {}, schema=None).rule == "gh.delete.action"
+        )
+
+
+class TestRecursiveValueWalk:
+    """Values under a classified name are found at any depth (design R1-8)."""
+
+    POLICY = load_tool_call_policy(
+        {"rules": {"srv.tool": {"paths": ["workspace/**"], "egress": ["docs.example.com"]}}}
+    )
+
+    @pytest.mark.parametrize(
+        ("arguments", "expected", "check"),
+        [
+            ({"opts": {"path": "workspace/a"}}, ToolDecision.ALLOW, ""),
+            ({"opts": {"path": "/etc/passwd"}}, ToolDecision.BLOCK, "paths"),
+            ({"jobs": [{"path": "workspace/a"}, {"path": "../x"}]}, ToolDecision.BLOCK, "paths"),
+            ({"a": {"b": [{"url": "https://evil.test/"}]}}, ToolDecision.BLOCK, "egress"),
+            ({"a": {"b": [{"url": "https://docs.example.com/"}]}}, ToolDecision.ALLOW, ""),
+            ({"path": 7}, ToolDecision.BLOCK, "paths"),  # a non-string path is refused
+            ({"paths": ["workspace/a", None]}, ToolDecision.BLOCK, "paths"),
+            ({"path": {"nested": "workspace/a"}}, ToolDecision.BLOCK, "paths"),
+        ],
+    )
+    def test_nested_values(self, arguments: Any, expected: ToolDecision, check: str) -> None:
+        verdict = evaluate_tool_call(self.POLICY, "srv", "tool", arguments)
+        assert verdict.decision is expected, arguments
+        if check:
+            assert verdict.rule == f"srv.tool.{check}"
+
+
+class TestArgumentNameConfig:
+    @pytest.mark.parametrize(
+        ("rule", "message"),
+        [
+            ({"paths": ["w/**"], "path_args": "path"}, "path_args must be a list"),
+            ({"paths": ["w/**"], "path_args": [1]}, "path_args must be a list"),
+            ({"egress": ["a.test"], "path_args": ["file"]}, "path_args.*without `paths`"),
+            ({"paths": ["w/**"], "url_args": ["u"]}, "url_args.*without `egress`"),
+            ({"ignore_args": ["x"]}, "ignore_args.*without `paths` or `egress`"),
+            (
+                {"paths": ["w/**"], "egress": ["a.test"], "path_args": ["x"], "url_args": ["x"]},
+                "more than one",
+            ),
+            ({"paths": ["w/**"], "path_args": ["x"], "ignore_args": ["x"]}, "more than one"),
+            ({"paths": ["w/**"], "path_args": []}, "path_args is empty"),
+            ({"paths": ["w/**"], "pathargs": ["x"]}, "unknown key"),
+        ],
+    )
+    def test_misconfiguration_is_a_load_error(self, rule: dict[str, Any], message: str) -> None:
+        with pytest.raises(ValueError, match=message):
+            load_tool_call_policy({"rules": {"srv.tool": rule}})
+
+    def test_an_empty_ignore_list_is_fine(self) -> None:
+        load_tool_call_policy({"rules": {"srv.tool": {"paths": ["w/**"], "ignore_args": []}}})

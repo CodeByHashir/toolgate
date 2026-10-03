@@ -78,14 +78,38 @@ from typing import Any, Final
 
 from toolgate.config import SANDBOX_PLACEHOLDER
 
-#: Argument names treated as filesystem paths. Drawn from the reference
-#: servers' own schemas (`@modelcontextprotocol/server-filesystem`) rather than
-#: guessed; an unknown server using a different name is simply not path-checked,
-#: which is a visible gap rather than a silent mismatch.
+#: Default argument names treated as filesystem paths, for a rule with `paths`
+#: and no `path_args`. Drawn from the reference servers' own schemas
+#: (`@modelcontextprotocol/server-filesystem`) rather than guessed. When the
+#: caller supplies the tool's declared schema (`evaluate_tool_call(schema=...)`,
+#: the proxy), a string-capable argument under any *other* name makes the tool
+#: unclassified and refused, so a server using `file` or `target` fails closed
+#: instead of going unchecked.
 PATH_ARGUMENT_NAMES: frozenset[str] = frozenset({"path", "paths", "source", "destination"})
 
-#: Argument names treated as URLs, from `mcp-server-fetch`.
-URL_ARGUMENT_NAMES: frozenset[str] = frozenset({"url", "uri"})
+#: Default argument names treated as URLs, for a rule with `egress` and no
+#: `url_args`. `url` is `mcp-server-fetch`'s.
+URL_ARGUMENT_NAMES: frozenset[str] = frozenset({"url", "uri", "href"})
+
+#: JSON Schema types that cannot carry a string. A property whose schema is
+#: exactly one of these needs no classification; everything else might.
+_NON_STRING_TYPES: frozenset[str] = frozenset({"integer", "number", "boolean", "null"})
+
+#: Keywords that make a schema something other than "exactly one plain type".
+#: Their presence means the value could be a string, so it is unclassified.
+_COMPOSITE_KEYWORDS: frozenset[str] = frozenset(
+    {"anyOf", "oneOf", "allOf", "not", "if", "then", "else", "$ref", "$dynamicRef", "enum", "const"}
+)
+
+#: Keys a rule may carry. Anything else is a typo, and a typo in a capability
+#: rule is a silently weaker posture, so it is a load error.
+_RULE_KEYS: frozenset[str] = frozenset(
+    {"action", "paths", "egress", "path_args", "url_args", "ignore_args"}
+)
+
+#: Marks "the caller did not pass a schema at all" (the in-process path), as
+#: distinct from `schema=None`, "the proxy has not seen this tool declared".
+_NO_SCHEMA: Final = object()
 
 
 class ToolDecision(StrEnum):
@@ -128,6 +152,37 @@ class ToolRule:
     paths: tuple[str, ...] | None = None
     #: Host allowlist for URL-like arguments. None means "not egress-checked".
     egress: tuple[str, ...] | None = None
+    #: Argument names whose values are paths. None means `PATH_ARGUMENT_NAMES`.
+    path_args: tuple[str, ...] | None = None
+    #: Argument names whose values are URLs. None means `URL_ARGUMENT_NAMES`.
+    url_args: tuple[str, ...] | None = None
+    #: Argument names that may hold strings but are deliberately not checked,
+    #: e.g. `content` on `write_file`. Writing a name here is the explicit,
+    #: reviewable statement that the value cannot name a path or a host.
+    ignore_args: tuple[str, ...] = ()
+
+    @property
+    def checks_arguments(self) -> bool:
+        """True when the rule inspects argument values (it has paths or egress)."""
+        return self.paths is not None or self.egress is not None
+
+    @property
+    def path_names(self) -> frozenset[str]:
+        """Names checked against `paths`; empty when the rule has no `paths`."""
+        if self.paths is None:
+            return frozenset()
+        return PATH_ARGUMENT_NAMES if self.path_args is None else frozenset(self.path_args)
+
+    @property
+    def url_names(self) -> frozenset[str]:
+        """Names checked against `egress`; empty when the rule has no `egress`."""
+        if self.egress is None:
+            return frozenset()
+        return URL_ARGUMENT_NAMES if self.url_args is None else frozenset(self.url_args)
+
+    @property
+    def classified_names(self) -> frozenset[str]:
+        return self.path_names | self.url_names | frozenset(self.ignore_args)
 
 
 @dataclass(frozen=True, slots=True)
@@ -501,54 +556,153 @@ def _host_allowed(value: Any, entries: tuple[str, ...]) -> bool:
     return False
 
 
-def _url_values(arguments: Any, names: frozenset[str]) -> list[Any]:
-    """Collect every value under a URL argument name, whatever its type.
+def _named_values(arguments: Any, names: frozenset[str]) -> list[Any]:
+    """Every value under a key in `names`, found at any depth.
 
-    Unlike `_string_values`, non-strings are kept: a URL argument holding a
-    number, an object or `null` is refused by `parse_destination` rather than
-    skipped, because skipping it is how an unexpected shape would pass an
-    egress rule unchecked (design R2-4).
+    Objects and arrays are walked recursively, so `{"opts": {"path": ...}}`
+    and `{"jobs": [{"url": ...}]}` are checked like a top-level argument (an
+    earlier version looked at top-level keys only, design R1-8). A value under
+    a matching key is returned as-is, not walked further; a list under it is
+    flattened one level, because `paths: [...]` is how the filesystem server
+    passes several paths.
+
+    Non-strings are returned too, so the caller can refuse them. Skipping a
+    value whose type was not expected is how an odd shape would pass a check
+    unexamined (design R2-4).
     """
-    if not isinstance(arguments, dict):
-        return []
     out: list[Any] = []
-    for key, value in arguments.items():
-        if key not in names:
-            continue
-        if isinstance(value, list):
-            out.extend(value)
-        else:
-            out.append(value)
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key in names:
+                    if isinstance(value, list):
+                        out.extend(value)
+                    else:
+                        out.append(value)
+                else:
+                    walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(arguments)
     return out
 
 
-def _string_values(arguments: Any, names: frozenset[str]) -> list[str]:
-    """Collect string argument values whose key is in `names`.
+def _is_exact_non_string(schema: Any) -> bool:
+    kind = schema.get("type") if isinstance(schema, dict) else None
+    return (
+        isinstance(schema, dict)
+        and isinstance(kind, str)
+        and kind in _NON_STRING_TYPES
+        and not (_COMPOSITE_KEYWORDS & schema.keys())
+    )
 
-    Handles a list value (`paths: [...]`) as well as a scalar, because the
-    filesystem server's own schema uses both.
+
+def unclassified_arguments(rule: ToolRule, schema: Any) -> tuple[str, ...]:
+    """Name every declared argument this rule cannot vouch for.
+
+    The proxy calls this on each `tools/list` response for every tool whose
+    rule has `paths` or `egress`. A non-empty result means the tool is
+    withheld from the host and calls to it are refused, because the policy
+    cannot say whether one of its arguments names a path or a host.
+
+    The rule (design "Schema shapes", which supersedes the earlier "string
+    properties" wording, R3-8): a property is safe without classification only
+    if its schema is exactly `integer`, `number`, `boolean` or `null`. Every
+    other property must be listed in `path_args`, `url_args` or `ignore_args`
+    -- `string`, no `type`, a type array, `anyOf`/`oneOf`/`allOf`, `$ref`,
+    `enum`/`const`, and objects or arrays that cannot be walked. A closed
+    object (`additionalProperties: false`) is walked property by property; an
+    array is walked through its `items`. Listing a name classifies the whole
+    value under it, whatever its shape.
+
+    Returned names are dotted paths (`options.target`, `items[].note`) for the
+    stderr hint; `"*"` means the schema itself could not be read. They come
+    from the server's declaration, never from a call's argument values.
     """
-    if not isinstance(arguments, dict):
-        return []
-    out: list[str] = []
-    for key, value in arguments.items():
-        if key not in names:
-            continue
-        if isinstance(value, str):
-            out.append(value)
-        elif isinstance(value, list):
-            out.extend(item for item in value if isinstance(item, str))
-    return out
+    if not rule.checks_arguments:
+        return ()
+    names = rule.classified_names
+    found: list[str] = []
+
+    def visit(name: str, prop: Any) -> None:
+        leaf = name.rsplit(".", 1)[-1].removesuffix("[]")
+        if leaf in names or _is_exact_non_string(prop):
+            return
+        if isinstance(prop, dict) and not (_COMPOSITE_KEYWORDS & prop.keys()):
+            if prop.get("type") == "object" and prop.get("additionalProperties") is False:
+                properties = prop.get("properties", {})
+                if isinstance(properties, dict):
+                    for child, child_schema in properties.items():
+                        visit(f"{name}.{child}", child_schema)
+                    return
+            if prop.get("type") == "array" and isinstance(prop.get("items"), dict):
+                visit(f"{name}[]", prop["items"])
+                return
+        # `x[]` reads as "the elements of x"; for the hint, name the array.
+        found.append(name.removesuffix("[]"))
+
+    if not isinstance(schema, dict):
+        return ("*",)
+    properties = schema.get("properties", {})
+    if not isinstance(properties, dict):
+        return ("*",)
+    for name, prop in properties.items():
+        visit(str(name), prop)
+    return tuple(found)
+
+
+def _undeclared_argument(arguments: dict[str, Any], schema: dict[str, Any]) -> bool:
+    """True when the call carries a key its schema does not declare.
+
+    Checked at the top level and inside every closed object the schema
+    describes, following `properties` and array `items`. A key the schema does
+    not name has no classification, so it cannot be vouched for (design
+    "Arguments not in the schema"). Top-level keys are refused whatever the
+    root's `additionalProperties` says: an open root would otherwise be a
+    door for any argument name the policy never saw.
+    """
+
+    def check(value: Any, prop: Any, *, root: bool = False) -> bool:
+        if not isinstance(prop, dict):
+            return False
+        if isinstance(value, dict) and (root or prop.get("additionalProperties") is False):
+            properties = prop.get("properties")
+            declared = properties if isinstance(properties, dict) else {}
+            for key, child in value.items():
+                if key not in declared or check(child, declared[key]):
+                    return True
+        elif isinstance(value, list) and isinstance(prop.get("items"), dict):
+            return any(check(item, prop["items"]) for item in value)
+        return False
+
+    return check(arguments, schema, root=True)
 
 
 def evaluate_tool_call(
-    policy: ToolCallPolicy, server: str, tool: str, arguments: Any
+    policy: ToolCallPolicy,
+    server: str,
+    tool: str,
+    arguments: Any,
+    *,
+    schema: Any = _NO_SCHEMA,
 ) -> ToolVerdict:
     """Decide whether one `tools/call` may proceed.
 
     Pure: no I/O, no clock, no state. The same call always gets the same
     verdict, which is what makes this layer's guarantee checkable by reading
     the policy file rather than by running a benchmark.
+
+    `schema` is the tool's declared `inputSchema`, passed by the proxy, which
+    sees `tools/list`. With it, a rule that checks paths or URLs also fails
+    closed on what it cannot classify (rule id `<server>.<tool>.args`):
+    `schema=None` means the tool has not been declared yet; a schema with an
+    unclassified argument, a call with an argument the schema does not
+    declare, and arguments that are not an object are all refused. Leaving
+    `schema` out is the in-process path's contract, unchanged: values are
+    checked, names are not.
     """
     key = f"{server}.{tool}"
     rule = policy.rules.get(key)
@@ -569,9 +723,32 @@ def evaluate_tool_call(
             reason=f"tool is configured {rule.action.value}",
         )
 
+    if schema is not _NO_SCHEMA and rule.checks_arguments:
+        args_rule = f"{key}.args"
+        if schema is None:
+            return ToolVerdict(
+                ToolDecision.BLOCK, rule=args_rule, reason="no tool declaration seen yet"
+            )
+        if not isinstance(arguments, dict):
+            return ToolVerdict(
+                ToolDecision.BLOCK, rule=args_rule, reason="tool arguments are not an object"
+            )
+        if unclassified_arguments(rule, schema):
+            return ToolVerdict(
+                ToolDecision.BLOCK,
+                rule=args_rule,
+                reason="the tool declares arguments the policy does not classify",
+            )
+        if _undeclared_argument(arguments, schema):
+            return ToolVerdict(
+                ToolDecision.BLOCK,
+                rule=args_rule,
+                reason="an argument is not declared in the tool's inputSchema",
+            )
+
     if rule.paths is not None:
-        for value in _string_values(arguments, PATH_ARGUMENT_NAMES):
-            if not _path_allowed(value, rule.paths):
+        for value in _named_values(arguments, rule.path_names):
+            if not isinstance(value, str) or not _path_allowed(value, rule.paths):
                 return ToolVerdict(
                     ToolDecision.BLOCK,
                     rule=f"{key}.paths",
@@ -582,7 +759,7 @@ def evaluate_tool_call(
                 )
 
     if rule.egress is not None:
-        for value in _url_values(arguments, URL_ARGUMENT_NAMES):
+        for value in _named_values(arguments, rule.url_names):
             if not _host_allowed(value, rule.egress):
                 return ToolVerdict(
                     ToolDecision.BLOCK,
@@ -591,6 +768,30 @@ def evaluate_tool_call(
                 )
 
     return ToolVerdict(ToolDecision.ALLOW, rule=key, reason="all configured checks passed")
+
+
+def _names(
+    entry: dict[str, Any],
+    name: str,
+    where: str,
+    *,
+    requires: tuple[str, ...] | None,
+    check: str,
+    allow_empty: bool = False,
+) -> tuple[str, ...] | None:
+    """Read one of `path_args` / `url_args` / `ignore_args` from a rule."""
+    value = entry.get(name)
+    if value is None:
+        return None
+    if not isinstance(value, list) or not all(isinstance(v, str) and v for v in value):
+        raise ValueError(f"{where}.{name} must be a list of argument names")
+    if requires is None:
+        # Naming arguments for a check the rule does not make would classify
+        # them without checking them: a quiet hole, so a load error.
+        raise ValueError(f"{where}.{name} is set without {check}, so nothing would check it")
+    if not value and not allow_empty:
+        raise ValueError(f"{where}.{name} is empty; omit it to use the default names")
+    return tuple(value)
 
 
 def load_tool_call_policy(raw: Any) -> ToolCallPolicy:
@@ -627,6 +828,9 @@ def load_tool_call_policy(raw: Any) -> ToolCallPolicy:
             raise ValueError(
                 f"{where}: rule keys are '<server>.<tool>', e.g. 'filesystem.read_text_file'"
             )
+        unknown = sorted(str(k) for k in entry if k not in _RULE_KEYS)
+        if unknown:
+            raise ValueError(f"{where}: unknown key(s) {unknown}; expected {sorted(_RULE_KEYS)}")
         action_raw = entry.get("action", "allow")
         try:
             action = ToolDecision(action_raw)
@@ -653,14 +857,46 @@ def load_tool_call_policy(raw: Any) -> ToolCallPolicy:
                 )
             return tuple(str(v) for v in value)
 
+        paths = _globs("paths")
         egress = _globs("egress")
-        for entry in egress or ():
+        for item in egress or ():
             try:
-                parse_egress_entry(entry)
+                parse_egress_entry(item)
             except ValueError as exc:
                 raise ValueError(f"{where}.egress: {exc}") from exc
 
-        rules[str(key)] = ToolRule(action=action, paths=_globs("paths"), egress=egress)
+        path_args = _names(entry, "path_args", where, requires=paths, check="`paths`")
+        url_args = _names(entry, "url_args", where, requires=egress, check="`egress`")
+        ignore_args = _names(
+            entry,
+            "ignore_args",
+            where,
+            requires=paths or egress,
+            check="`paths` or `egress`",
+            allow_empty=True,
+        )
+        seen: dict[str, str] = {}
+        for field_name, names in (
+            ("path_args", path_args),
+            ("url_args", url_args),
+            ("ignore_args", ignore_args),
+        ):
+            for name in names or ():
+                if name in seen:
+                    raise ValueError(
+                        f"{where}: argument {name!r} is listed in more than one of "
+                        f"{seen[name]} and {field_name}"
+                    )
+                seen[name] = field_name
+
+        rules[str(key)] = ToolRule(
+            action=action,
+            paths=paths,
+            egress=egress,
+            path_args=path_args,
+            url_args=url_args,
+            ignore_args=ignore_args or (),
+        )
 
     return ToolCallPolicy(default=default, rules=rules)
 
@@ -681,4 +917,5 @@ __all__ = [
     "load_tool_call_policy",
     "parse_destination",
     "parse_egress_entry",
+    "unclassified_arguments",
 ]
