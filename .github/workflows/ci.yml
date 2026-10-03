@@ -105,6 +105,7 @@ jobs:
           tests/test_proxy_pump.py
           tests/test_proxy_wrap.py
           tests/test_proxy_e2e.py
+          tests/test_proxy_transparency.py
 
       - name: A research subcommand names the extra
         run: |
@@ -115,3 +116,36 @@ jobs:
           cat stderr.txt
           test "$status" -eq 2
           grep -q "toolgate\[research\]" stderr.txt
+
+  # The proxy is used on Windows hosts, and the parts most likely to differ
+  # there are exactly the proxy's: binary stdio with no newline translation,
+  # the kill-on-close job object, `.cmd` launchers such as npx, and loopback
+  # resolving `localhost` to ::1. Same slim install and the same proxy-path
+  # tests as `slim`, on windows-latest (design T11).
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.11"
+          enable-cache: true
+
+      - name: Install project without the research extra
+        run: uv sync --extra dev --frozen
+
+      - name: Test the proxy path
+        run: >-
+          uv run --no-sync pytest -m "not models"
+          tests/test_slim_imports.py
+          tests/test_tool_calls.py
+          tests/test_gating_audit.py
+          tests/test_demo_fixtures.py
+          tests/test_proxy_process.py
+          tests/test_proxy_lines.py
+          tests/test_proxy_pump.py
+          tests/test_proxy_wrap.py
+          tests/test_proxy_e2e.py
+          tests/test_proxy_transparency.py
