@@ -202,6 +202,7 @@ repository).
 ## 8. Reproduce
 
 ```
+uv sync --extra dev --extra research   # once: the research dependencies (README, Install)
 uv run python scripts/eval_mechanism.py preflight   # no API; verifies the frozen hashes
 uv run python scripts/eval_mechanism.py run         # one fixed batch; refuses to overwrite
 uv run python scripts/eval_mechanism.py analyse

@@ -105,6 +105,7 @@ on live content, not a synthetic probe.
 ## Reproduce
 
 ```
+uv sync --extra dev --extra research   # once: the research dependencies (README, Install)
 uv run python scripts/benchmark_latency.py
 
 toolgate run-agent --task "..." --model claude-haiku-4-5 \

@@ -132,6 +132,7 @@ The stop rule was mine; the requested design was four arms. Options:
 ## 8. Reproduce
 
 ```
+uv sync --extra dev --extra research   # once: the research dependencies (README, Install)
 uv run python scripts/eval_live.py preflight     # no API
 uv run python scripts/eval_live.py smoke         # ~7 trials, out-of-sample
 uv run python scripts/eval_live.py stage1        # arm A, 64 trials; applies the stop rule

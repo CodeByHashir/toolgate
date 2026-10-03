@@ -321,6 +321,8 @@ it is not a live-attack result.
 ## 8. Reproduce
 
 ```
+uv sync --extra dev --extra research   # once: the research dependencies (README, Install)
+
 # once: fetch the corpus cache (downloads BIPIA, InjecAgent, sampled LLMail-Inject)
 uv run python -c "from toolgate.corpus.sources import fetch, fetch_llmail_inject; fetch(); fetch_llmail_inject()"
 
