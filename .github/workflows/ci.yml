@@ -104,6 +104,7 @@ jobs:
           tests/test_proxy_lines.py
           tests/test_proxy_pump.py
           tests/test_proxy_wrap.py
+          tests/test_proxy_e2e.py
 
       - name: A research subcommand names the extra
         run: |

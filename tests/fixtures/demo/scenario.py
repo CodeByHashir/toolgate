@@ -117,10 +117,17 @@ def run_scenario(
     filesystem_command: Sequence[str] = FILESYSTEM_COMMAND,
     fetch_command: Sequence[str] = FETCH_COMMAND,
     variants: Sequence[str] = VARIANTS,
+    *,
+    page_port: int | None = None,
+    attacker_port: int | None = None,
 ) -> ScenarioResult:
-    """Start the fixtures, replay the calls, and return what was observed."""
-    page_port = free_port()
-    attacker_port = free_port()
+    """Start the fixtures, replay the calls, and return what was observed.
+
+    Ports default to free ephemeral ones. Pass them in when something must
+    know them beforehand, e.g. a fetch policy that allowlists the page port.
+    """
+    page_port = page_port or free_port()
+    attacker_port = attacker_port or free_port()
     with (
         AttackerListener(attacker_port) as listener,
         PageServer(page_port, attacker_port),
