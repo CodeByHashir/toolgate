@@ -275,12 +275,13 @@ arguments or results:
 sqlite3 "<state_dir>/audit/fetch.sqlite" "SELECT timestamp, tool_name, note FROM decision_log WHERE fused_decision = 'block' ORDER BY id DESC LIMIT 20"
 ```
 
-Each direction is processed one line at a time, in order. The default
-detectors measured 0.02 ms (`rules_mcp`) and 0.03 ms (`pii`) per result
-in-process
-([`docs/LATENCY-BENCHMARK.md`](docs/LATENCY-BENCHMARK.md)); the latency the
-proxy itself adds has not been benchmarked yet. Opting into the transformer
-detectors adds their cost (around 170 ms each) to every line behind a result.
+Each direction is processed one line at a time, in order. Measured on the
+Windows dev machine with the egress rule, `rules_mcp` and `pii` enabled
+([`docs/PROXY-LATENCY.md`](docs/PROXY-LATENCY.md)): the proxy adds 1.7 ms at
+p99 to a call with a 1 KB result, and about 52 ms at p99 with a 100 KB result.
+Almost all of the second figure is the two detectors scanning 100 KB; a
+policy without redaction or injection detectors does not pay it. The
+transformer detectors, if you opt in, add around 170 ms each.
 
 ### The demo: cross-server exfiltration, toolgate off and on
 

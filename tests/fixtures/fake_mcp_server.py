@@ -11,7 +11,9 @@ Options (argv):
 * `--exit-after N` exit with status 7 after answering N requests, so a test
   can make the server go first;
 * `--env NAME`     include the value of environment variable NAME in every
-  echo result.
+  echo result;
+* `--payload N`    answer every tools/call with N bytes of plain filler text
+  instead of the echo (for the latency benchmark).
 """
 
 from __future__ import annotations
@@ -39,6 +41,8 @@ def main(argv: list[str]) -> int:
     marker = argv[argv.index("--marker") + 1] if "--marker" in argv else None
     exit_after = int(argv[argv.index("--exit-after") + 1]) if "--exit-after" in argv else None
     env_name = argv[argv.index("--env") + 1] if "--env" in argv else None
+    payload_bytes = int(argv[argv.index("--payload") + 1]) if "--payload" in argv else None
+    filler = ("the quick brown fox jumps over the lazy dog " * 4096)[: payload_bytes or 0]
     if marker:
         Path(marker).write_text("started", encoding="utf-8")
 
@@ -57,6 +61,8 @@ def main(argv: list[str]) -> int:
             }
         elif method == "tools/list":
             result = {"tools": TOOLS}
+        elif method == "tools/call" and payload_bytes is not None:
+            result = {"content": [{"type": "text", "text": filler}]}
         elif method == "tools/call":
             text = json.dumps(message.get("params", {}), sort_keys=True)
             if env_name:
