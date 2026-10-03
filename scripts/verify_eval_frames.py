@@ -19,6 +19,7 @@ hashed it before any model call:
 * M14's reported trials are all arm A, which has no gate, so the gate cannot
   affect them and there is nothing to check.
 
+    uv sync --extra dev --extra research
     uv run python scripts/verify_eval_frames.py
 
 Needs the fetched corpora in `corpus/external/` (the evaluation scripts fetch

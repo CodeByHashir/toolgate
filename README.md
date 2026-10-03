@@ -273,8 +273,16 @@ reports the gap between them as a first-class result.
 Requires Python 3.11 and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-uv sync --extra dev
+uv sync --extra dev --extra research
 ```
+
+The `research` extra holds what reproducing the measurements needs: numpy,
+scipy, scikit-learn, PyTorch, transformers, statsmodels, datasketch and the
+Anthropic SDK. Every command from here on (`verify-models`, `corpus-ingest`,
+`gauge-run`, `gauge-recut`, `run-agent` and the scripts under `scripts/`)
+needs it; the `toolgate` subcommands say so if it is missing. Without it,
+`uv sync --extra dev` installs the gating layer and the dev tools only, which
+is how the slim CI job runs the gating tests.
 
 ## Detector artifacts
 

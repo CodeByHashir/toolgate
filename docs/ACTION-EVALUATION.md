@@ -187,6 +187,7 @@ assumption, not read from the repository).
 ## 9. Reproduce
 
 ```
+uv sync --extra dev --extra research   # once: the research dependencies (README, Install)
 uv run python scripts/eval_action.py preflight   # no API
 uv run python scripts/eval_action.py pilot       # once; selects the setup
 uv run python scripts/eval_action.py stage1      # arm A + gate

@@ -1,8 +1,12 @@
 """Interchangeable detector adapters.
 
-V3 is imported lazily: it pulls in torch and transformers, which cost seconds
-of import time. Nothing that only needs the detector contract or V0 should pay
-that, and CI runs the contract tests without a torch install.
+V0 and V3 are imported lazily. V3 pulls in torch and transformers, which cost
+seconds of import time; V0 pulls in joblib and scikit-learn (and with them
+numpy and scipy). Both live in the `research` extra, so a slim install does not
+have them at all. Importing any submodule -- `toolgate.detectors.base` from the
+proxy path, say -- runs this file first, so an eager import here would put the
+scientific stack on the proxy's import graph, or fail outright without the
+extra. The rules, PII and normalisation detectors need none of it.
 """
 
 from typing import TYPE_CHECKING, Any
@@ -11,9 +15,9 @@ from toolgate.detectors.base import Detector, DetectorResult, RawScore, Span
 from toolgate.detectors.normalise import Normalised, normalise, scan_normalised
 from toolgate.detectors.pii import PiiDetector, redact
 from toolgate.detectors.rules import Rule, RuleDetector, load_rules
-from toolgate.detectors.v0_lexical import V0LexicalDetector
 
 if TYPE_CHECKING:
+    from toolgate.detectors.v0_lexical import V0LexicalDetector
     from toolgate.detectors.v3_transformer import V3TransformerDetector
 
 __all__ = [
@@ -35,6 +39,10 @@ __all__ = [
 
 
 def __getattr__(name: str) -> Any:
+    if name == "V0LexicalDetector":
+        from toolgate.detectors.v0_lexical import V0LexicalDetector
+
+        return V0LexicalDetector
     if name == "V3TransformerDetector":
         from toolgate.detectors.v3_transformer import V3TransformerDetector
 

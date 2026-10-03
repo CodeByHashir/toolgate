@@ -457,6 +457,37 @@ def gauge_recut(scores_csv: Path, output: Path | None) -> int:
     return 0
 
 
+# Top-level modules that only the `research` extra installs. Every subcommand
+# below imports its heavy dependencies inside the function that needs them, so
+# `toolgate --help` (and the proxy path) never touch them; a subcommand run on a
+# slim install fails at that import, and `_missing_research_extra` turns the
+# bare ModuleNotFoundError into an instruction.
+RESEARCH_MODULES = frozenset(
+    {
+        "anthropic",
+        "datasketch",
+        "joblib",
+        "numpy",
+        "pydantic_settings",
+        "scipy",
+        "sentencepiece",
+        "sklearn",
+        "statsmodels",
+        "torch",
+        "transformers",
+    }
+)
+
+
+def _missing_research_extra(error: ModuleNotFoundError) -> bool:
+    """Whether `error` is a research-only dependency that is not installed.
+
+    Matched on the missing module's top-level name, not on the message text,
+    so an unrelated missing module still surfaces as the real traceback.
+    """
+    return (error.name or "").partition(".")[0] in RESEARCH_MODULES
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="toolgate")
     parser.add_argument("--version", action="version", version=f"toolgate {__version__}")
@@ -602,6 +633,22 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     args = parser.parse_args(argv)
+    try:
+        return _dispatch(parser, args)
+    except ModuleNotFoundError as error:
+        if not _missing_research_extra(error):
+            raise
+        print(
+            f"error: `toolgate {args.command}` needs the research dependencies "
+            f"({error.name} is not installed).\n"
+            "  Install them with:  pip install 'toolgate[research]'\n"
+            "  or, from a checkout: uv sync --extra research",
+            file=sys.stderr,
+        )
+        return 2
+
+
+def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     if args.command == "verify-models":
         return verify_models(args.config, args.detector)
     if args.command == "run-agent":

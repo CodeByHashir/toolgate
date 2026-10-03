@@ -251,6 +251,8 @@ Consistent with M7. Adding dilution does not change recall for these detectors.
 ## Reproducibility
 
 ```
+uv sync --extra dev --extra research   # once: the research dependencies (README, Install)
+
 # Fetch adversarial corpus (needed once)
 uv run python scripts/benchmark_rules.py
 
