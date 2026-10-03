@@ -37,6 +37,7 @@ from toolgate.proxy import (
     SessionEnd,
     ShutdownTimeouts,
     run_session,
+    shutdown_child,
     spawn_child,
 )
 
@@ -600,3 +601,22 @@ def test_importing_the_proxy_stays_slim() -> None:
         [sys.executable, "-c", code], capture_output=True, text=True, timeout=60, check=True
     ).stdout.strip()
     assert out == "[]"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="PATHEXT lookup is a Windows concern")
+async def test_a_bare_cmd_launcher_name_is_found_on_windows(tmp_path: Path) -> None:
+    """`npx` is `npx.cmd`; CreateProcess alone does not find it (caught by the T9 demo)."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "fakelauncher.cmd").write_text("@echo launched\r\n", encoding="ascii")
+    env = dict(os.environ)
+    env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
+    child = await spawn_child(["fakelauncher"], env=env)
+    try:
+        output = b""
+        with anyio.fail_after(10):
+            async for chunk in child.stdout:
+                output += chunk
+        assert b"launched" in output
+    finally:
+        await shutdown_child(child)

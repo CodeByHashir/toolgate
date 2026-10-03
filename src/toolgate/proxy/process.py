@@ -138,6 +138,7 @@ from __future__ import annotations
 import contextlib
 import enum
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -485,6 +486,29 @@ def ensure_kill_on_close_job() -> JobStatus:
 # --------------------------------------------------------------------------
 
 
+def _resolve_windows_command(argv: Sequence[str], env: Mapping[str, str] | None) -> Sequence[str]:
+    """Windows: find a bare command name the way a shell would.
+
+    CreateProcess only finds `.exe` files on its own, and the launchers hosts
+    use for MCP servers are not: `npx` is `npx.cmd`. Hosts resolve that
+    themselves before they spawn, so a host config that says `npx` works
+    until `toolgate wrap --` is put in front of it -- caught by the T9 demo,
+    which failed with "cannot find the file specified". The name is looked up
+    with `shutil.which` on the PATH the child will get, honouring PATHEXT.
+    A name with a directory part, or one that is not found, is left as it
+    is, so the start fails with the operating system's own message. POSIX
+    `exec` already searches PATH, so nothing changes there.
+    """
+    if sys.platform != "win32":
+        return argv
+    command = argv[0]
+    if os.path.dirname(command):
+        return argv
+    search_path = (env if env is not None else os.environ).get("PATH")
+    found = shutil.which(command, path=search_path)
+    return [found, *argv[1:]] if found else argv
+
+
 async def spawn_child(argv: Sequence[str], *, env: Mapping[str, str] | None = None) -> ChildProcess:
     """Start the server with byte pipes on stdin/stdout and inherited stderr.
 
@@ -498,6 +522,7 @@ async def spawn_child(argv: Sequence[str], *, env: Mapping[str, str] | None = No
     """
     if not argv:
         raise ChildStartError("no server command given")
+    argv = _resolve_windows_command(argv, env)
     creationflags = 0
     if sys.platform == "win32" and not _kernel32.GetConsoleWindow():
         creationflags = _CREATE_NO_WINDOW
