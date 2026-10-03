@@ -40,6 +40,9 @@ InjecAgent payloads this project already ingests:
 * `paths` -- glob allowlist for path-like arguments (sandbox escape).
 * `egress` -- host allowlist for URL-like arguments (exfiltration: the payload
   tells the agent to fetch an attacker-controlled URL with data in the query).
+  Entries are `host`, `host:port` or `host:*`; a bare host means the scheme's
+  default port only. A URL is read strictly (`parse_destination`) and anything
+  two parsers could read differently is refused rather than interpreted.
 
 Deliberately not included: regex matching on argument *values*. That would
 reintroduce content inspection through the back door, with the same false
@@ -65,11 +68,13 @@ fired -- not the string that triggered it.
 from __future__ import annotations
 
 import fnmatch
+import functools
+import ipaddress
+import re
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
-from urllib.parse import urlparse
+from typing import Any, Final
 
 from toolgate.config import SANDBOX_PLACEHOLDER
 
@@ -228,13 +233,293 @@ def _path_allowed(value: str, patterns: tuple[str, ...]) -> bool:
     return _matches_any(normalised, patterns)
 
 
-def _host_allowed(value: str, patterns: tuple[str, ...]) -> bool:
-    host = (urlparse(value).hostname or "").lower()
-    if not host:
-        # A URL argument we cannot parse a host from is not something to wave
-        # through on an egress-restricted tool.
+#: Ports a bare allowlist entry stands for. Only these two schemes are ever
+#: allowed through an egress rule, so the table is also the scheme allowlist.
+DEFAULT_PORTS: dict[str, int] = {"http": 80, "https": 443}
+
+_SCHEME_AUTHORITY_RE = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*)://([^/?#]*)")
+_LABEL_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
+#: A last label a WHATWG parser would read as the start of an IPv4 number
+#: (decimal, or `0x` hex). See `_normalise_host`.
+_NUMERIC_LABEL_RE = re.compile(r"(?:[0-9]+|0x[0-9a-f]*)\Z")
+_PORT_RE = re.compile(r"[0-9]{1,5}\Z")
+
+
+def _is_plain_ascii(value: str) -> bool:
+    """True when every character is printable ASCII other than space and `\\`.
+
+    That excludes, in one rule, every character the parser-differential
+    bypasses in this module's history depend on: `\\` (which `urlparse` treats
+    as ordinary but WHATWG clients treat as `/`), whitespace and control
+    characters (which WHATWG clients strip or skip), and non-ASCII (which they
+    IDNA-map, so the host connected to is not the host compared). An IDN must
+    reach the allowlist as punycode.
+    """
+    return all("\x21" <= ch <= "\x7e" and ch != "\\" for ch in value)
+
+
+def _normalise_host(text: str) -> str | None:
+    """Return the canonical form of one host, or None when it is not one.
+
+    Canonical means: lowercased, one trailing dot removed (`github.com.` is
+    the same DNS name), IPv6 literals bracketed and compressed (`[::1]`), and
+    IPv4 literals only in their canonical dotted-quad spelling.
+
+    The IPv4 rule is the important one. A WHATWG parser reads any host whose
+    last label is numeric as an IPv4 number, so `2130706433`, `127.1`,
+    `0x7f.0.0.1` and `0177.0.0.1` all connect to 127.0.0.1. Rather than
+    reimplement that parser and hope to agree with it, every such host is
+    refused unless it is already the canonical dotted quad, so no spelling can
+    alias an address the allowlist names differently.
+    """
+    if text.startswith("["):
+        if not text.endswith("]") or "%" in text:
+            # `%` is an IPv6 zone id: link-local, interface-specific, and not
+            # something a policy can meaningfully name.
+            return None
+        try:
+            return f"[{ipaddress.IPv6Address(text[1:-1]).compressed}]"
+        except ValueError:
+            return None
+
+    host = text.lower()
+    if host.endswith("."):
+        host = host[:-1]
+    if not host or len(host) > 253:
+        return None
+    labels = host.split(".")
+    if not all(_LABEL_RE.match(label) for label in labels):
+        return None
+    if _NUMERIC_LABEL_RE.match(labels[-1]):
+        try:
+            canonical = str(ipaddress.IPv4Address(host))
+        except ValueError:
+            return None
+        return host if canonical == host else None
+    return host
+
+
+def _is_ip_literal(host: str) -> bool:
+    return host.startswith("[") or _NUMERIC_LABEL_RE.match(host.rsplit(".", 1)[-1]) is not None
+
+
+def _split_authority(authority: str) -> tuple[str, str | None] | None:
+    """Split `host[:port]`. Returns (host, port text or None), or None if malformed."""
+    if authority.startswith("["):
+        close = authority.find("]")
+        if close < 0:
+            return None
+        host, rest = authority[: close + 1], authority[close + 1 :]
+        if not rest:
+            return host, None
+        if not rest.startswith(":"):
+            return None
+        port = rest[1:]
+    else:
+        if authority.count(":") > 1:
+            # An unbracketed IPv6 literal, or junk. Either way, not a host.
+            return None
+        host, sep, port = authority.partition(":")
+        if not sep:
+            return host, None
+    if not port:
+        # `host:` is a valid URL meaning the default port, and an equally
+        # valid way to make two parsers disagree. Neither direction needs it.
+        return None
+    return host, port
+
+
+def _parse_port(text: str) -> int | None:
+    if not _PORT_RE.match(text):
+        return None
+    port = int(text)
+    return port if 1 <= port <= 65535 else None
+
+
+@dataclass(frozen=True, slots=True)
+class Destination:
+    """Where an HTTP client would connect for one URL argument."""
+
+    scheme: str
+    host: str
+    port: int
+
+
+def parse_destination(value: Any) -> Destination | None:
+    """Read one URL argument strictly. None means "refuse it".
+
+    The guarantee this layer makes is about the host a real client connects
+    to, so the parse is built to agree with a WHATWG client (Node's fetch,
+    `httpx` in `mcp-server-fetch`) on every URL it accepts, and to refuse
+    everything else rather than guess. `urllib.parse.urlparse` is not used:
+    it disagrees with WHATWG clients on `\\`, which is exactly how
+    `http://evil.com\\@github.com/x` passed a `github.com` allowlist while the
+    fetch server, probed on 2026-10-03, connected to `evil.com`.
+
+    Accepted: a string holding an absolute `http` or `https` URL, written
+    `scheme://host[:port]` followed by `/`, `?`, `#` or the end, with no
+    userinfo, no `\\`, nothing outside printable ASCII, a valid hostname or IP
+    literal (`_normalise_host`), and a decimal port from 1 to 65535.
+
+    Refused, among others: no scheme (`evil.test/x`), scheme-relative
+    (`//evil.test`), the slash-repairing forms WHATWG accepts for special
+    schemes (`http:evil.test`, `http:///evil.test`), other schemes (`file:`,
+    `ftp:`, `data:`, `ws:`), empty strings, and non-string values.
+    """
+    if not isinstance(value, str) or not _is_plain_ascii(value):
+        return None
+    match = _SCHEME_AUTHORITY_RE.match(value)
+    if match is None:
+        return None
+    scheme = match.group(1).lower()
+    if scheme not in DEFAULT_PORTS:
+        return None
+    authority = match.group(2)
+    if "@" in authority:
+        # Userinfo is never needed to name a destination and is the classic
+        # way to make a URL read as one host to a person and another to a
+        # parser. Refused outright, whatever host follows it.
+        return None
+    split = _split_authority(authority)
+    if split is None:
+        return None
+    host = _normalise_host(split[0])
+    if host is None:
+        return None
+    port = DEFAULT_PORTS[scheme] if split[1] is None else _parse_port(split[1])
+    if port is None:
+        return None
+    return Destination(scheme=scheme, host=host, port=port)
+
+
+#: Sentinel for a `host:*` entry.
+ANY_PORT: Final = -1
+
+
+@dataclass(frozen=True, slots=True)
+class EgressEntry:
+    """One parsed allowlist entry.
+
+    `host` is `"*"` (any host), `"*.<suffix>"` (any host with at least one
+    label in front of `suffix`, matched on label boundaries) or one canonical
+    host. `port` is None (the URL scheme's default port only), `ANY_PORT`, or
+    one port number.
+    """
+
+    host: str
+    port: int | None
+
+    def matches(self, destination: Destination) -> bool:
+        if self.port is None:
+            if destination.port != DEFAULT_PORTS[destination.scheme]:
+                return False
+        elif self.port != ANY_PORT and self.port != destination.port:
+            return False
+        if self.host == "*":
+            return True
+        if self.host.startswith("*."):
+            suffix = self.host[1:]  # keeps the leading dot: a label boundary
+            return not _is_ip_literal(destination.host) and destination.host.endswith(suffix)
+        return self.host == destination.host
+
+
+def parse_egress_entry(entry: str) -> EgressEntry:
+    """Parse one allowlist entry, or raise ValueError saying what is wrong.
+
+    Forms: `host`, `host:port`, `host:*`, where `host` is a hostname, an IP
+    literal (`127.0.0.1`, `[::1]`), `*.suffix`, or `*`. A bare host means the
+    scheme's default port, so `example.com` allows `https://example.com` and
+    `https://example.com:443` but not `https://example.com:8443` (design D6,
+    D15). A `*` anywhere else is refused: these are host names compared by
+    label, not glob patterns, because `fnmatch`'s `*` also matched `\\` and let
+    `http://evil.com\\.github.com/x` through a `*.github.com` entry.
+    """
+    if not isinstance(entry, str) or not entry:
+        raise ValueError("an egress entry must be a non-empty string")
+    if not _is_plain_ascii(entry) or "/" in entry or "@" in entry:
+        raise ValueError(
+            f"egress entry {entry!r} must be a bare host such as 'example.com', "
+            "'example.com:8080' or '*.example.com' (no scheme, path, userinfo, "
+            "spaces or non-ASCII; write an IDN as punycode)"
+        )
+    split = _split_authority(entry)
+    if split is None:
+        raise ValueError(f"egress entry {entry!r} has a malformed host or port")
+    host_text, port_text = split
+
+    port: int | None
+    if port_text is None:
+        port = None
+    elif port_text == "*":
+        port = ANY_PORT
+    else:
+        port = _parse_port(port_text)
+        if port is None:
+            raise ValueError(f"egress entry {entry!r}: the port must be 1-65535 or '*'")
+
+    if host_text == "*":
+        return EgressEntry(host="*", port=port)
+    if host_text.startswith("*."):
+        suffix = _normalise_host(host_text[2:])
+        if suffix is None or "*" in host_text[2:] or _is_ip_literal(suffix):
+            raise ValueError(f"egress entry {entry!r}: '*.' must be followed by a hostname")
+        return EgressEntry(host=f"*.{suffix}", port=port)
+    if "*" in host_text:
+        raise ValueError(
+            f"egress entry {entry!r}: '*' is only allowed as the whole host or as "
+            "a leading '*.' label"
+        )
+    host = _normalise_host(host_text)
+    if host is None:
+        raise ValueError(f"egress entry {entry!r} is not a valid hostname or IP literal")
+    return EgressEntry(host=host, port=port)
+
+
+@functools.lru_cache(maxsize=1024)
+def _cached_entry(entry: str) -> EgressEntry | None:
+    try:
+        return parse_egress_entry(entry)
+    except ValueError:
+        return None
+
+
+def _host_allowed(value: Any, entries: tuple[str, ...]) -> bool:
+    """True when `value` is a URL whose destination an entry allows.
+
+    Entries are validated when the policy loads; one that is malformed anyway
+    (a `ToolRule` built by hand) matches nothing, so the failure is closed.
+    """
+    destination = parse_destination(value)
+    if destination is None:
+        # A URL argument we cannot read a destination from is not something
+        # to wave through on an egress-restricted tool.
         return False
-    return _matches_any(host, patterns)
+    for entry in entries:
+        parsed = _cached_entry(entry)
+        if parsed is not None and parsed.matches(destination):
+            return True
+    return False
+
+
+def _url_values(arguments: Any, names: frozenset[str]) -> list[Any]:
+    """Collect every value under a URL argument name, whatever its type.
+
+    Unlike `_string_values`, non-strings are kept: a URL argument holding a
+    number, an object or `null` is refused by `parse_destination` rather than
+    skipped, because skipping it is how an unexpected shape would pass an
+    egress rule unchecked (design R2-4).
+    """
+    if not isinstance(arguments, dict):
+        return []
+    out: list[Any] = []
+    for key, value in arguments.items():
+        if key not in names:
+            continue
+        if isinstance(value, list):
+            out.extend(value)
+        else:
+            out.append(value)
+    return out
 
 
 def _string_values(arguments: Any, names: frozenset[str]) -> list[str]:
@@ -297,7 +582,7 @@ def evaluate_tool_call(
                 )
 
     if rule.egress is not None:
-        for value in _string_values(arguments, URL_ARGUMENT_NAMES):
+        for value in _url_values(arguments, URL_ARGUMENT_NAMES):
             if not _host_allowed(value, rule.egress):
                 return ToolVerdict(
                     ToolDecision.BLOCK,
@@ -368,14 +653,25 @@ def load_tool_call_policy(raw: Any) -> ToolCallPolicy:
                 )
             return tuple(str(v) for v in value)
 
-        rules[str(key)] = ToolRule(action=action, paths=_globs("paths"), egress=_globs("egress"))
+        egress = _globs("egress")
+        for entry in egress or ():
+            try:
+                parse_egress_entry(entry)
+            except ValueError as exc:
+                raise ValueError(f"{where}.egress: {exc}") from exc
+
+        rules[str(key)] = ToolRule(action=action, paths=_globs("paths"), egress=egress)
 
     return ToolCallPolicy(default=default, rules=rules)
 
 
 __all__ = [
+    "ANY_PORT",
+    "DEFAULT_PORTS",
     "PATH_ARGUMENT_NAMES",
     "URL_ARGUMENT_NAMES",
+    "Destination",
+    "EgressEntry",
     "ToolCallBlocked",
     "ToolCallPolicy",
     "ToolDecision",
@@ -383,4 +679,6 @@ __all__ = [
     "ToolVerdict",
     "evaluate_tool_call",
     "load_tool_call_policy",
+    "parse_destination",
+    "parse_egress_entry",
 ]

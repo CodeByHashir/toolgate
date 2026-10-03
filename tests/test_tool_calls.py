@@ -316,3 +316,258 @@ class TestSandboxPlaceholder:
         )
         assert inside.decision is ToolDecision.ALLOW
         assert outside.decision is ToolDecision.BLOCK
+
+
+# --- T1: hardened, port-aware egress (design D6, D15, R3-18) ---------------------
+#
+# Everything above this line is the pre-T1 suite and is kept unchanged (REG-1):
+# the port-aware change must pass it as written. The classes below pin the new
+# behaviour. Every URL here is a *value an agent could send*; the question each
+# row asks is "which host would a real HTTP client connect to, and is that host
+# on the list?", not "does the string look suspicious?".
+
+
+def _egress(url: Any, *entries: str) -> ToolDecision:
+    policy = load_tool_call_policy({"rules": {"fetch.fetch": {"egress": list(entries)}}})
+    return evaluate_tool_call(policy, "fetch", "fetch", {"url": url}).decision
+
+
+class TestEgressParserDifferentials:
+    """URLs that Python's `urlparse` and a WHATWG client read differently.
+
+    The two reproduced bypasses come first. `mcp-server-fetch` was probed on
+    2026-10-03 (docs/designs/standalone-gateway.md, Open Question 1): for both
+    it connected to the attacker host, while `urlparse` reported the allowed
+    one. Rejecting the whole class beats chasing each parser's reading.
+    """
+
+    def test_backslash_userinfo_bypass_is_refused(self) -> None:
+        assert _egress("http://evil.com\\@github.com/x", "github.com") is ToolDecision.BLOCK
+
+    def test_backslash_label_bypass_is_refused(self) -> None:
+        assert _egress("http://evil.com\\.github.com/x", "*.github.com") is ToolDecision.BLOCK
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://github.com\\x",  # backslash anywhere
+            "http://github.com/a\\b",
+            "http://user@github.com/",  # userinfo, even with an allowed host after it
+            "http://user:pass@github.com/",
+            "http://evil.com@github.com/",
+            "http://github.com@evil.com/",
+            "http://git hub.com/",  # whitespace
+            "http://github.com/\tx",
+            "http://github.com/\nx",
+            "http://github.com/\x00",
+            " http://github.com/",
+            "http://github.com/\x7f",
+            "http://githüb.com/",  # non-ASCII (IDN must arrive as punycode)
+            "http://github.com/café",
+            "http://github%2ecom/",  # percent-encoded host
+            "http://github.com:/",  # empty port
+            "http://github.com:0/",
+            "http://github.com:65536/",
+            "http://github.com:+443/",
+            "http:github.com/",  # special-scheme forms a WHATWG parser repairs
+            "http:/github.com/",
+            "http:///github.com/",
+            "//github.com/x",  # scheme-relative
+            "http://-github.com/",
+            "http://github_.com/",
+            "http://github..com/",
+        ],
+    )
+    def test_ambiguous_or_malformed_urls_are_refused(self, url: str) -> None:
+        assert _egress(url, "github.com", "*.github.com", "github.com:*") is ToolDecision.BLOCK
+
+    def test_label_wildcards_match_on_label_boundaries_only(self) -> None:
+        assert _egress("https://api.github.com/", "*.github.com") is ToolDecision.ALLOW
+        assert _egress("https://a.b.github.com/", "*.github.com") is ToolDecision.ALLOW
+        assert _egress("https://github.com/", "*.github.com") is ToolDecision.BLOCK
+        assert _egress("https://evilgithub.com/", "*.github.com") is ToolDecision.BLOCK
+        assert _egress("https://github.com.evil.test/", "*.github.com") is ToolDecision.BLOCK
+
+
+class TestEgressHostNormalisation:
+    def test_host_case_is_ignored_on_both_sides(self) -> None:
+        assert _egress("HTTPS://GitHub.COM/x", "github.com") is ToolDecision.ALLOW
+        assert _egress("https://github.com/x", "GitHub.com") is ToolDecision.ALLOW
+
+    def test_one_trailing_dot_names_the_same_host(self) -> None:
+        assert _egress("https://github.com./x", "github.com") is ToolDecision.ALLOW
+        assert _egress("https://evil.test./x", "github.com") is ToolDecision.BLOCK
+
+    def test_punycode_is_an_ordinary_ascii_host(self) -> None:
+        assert _egress("https://xn--gthub-zsa.com/", "xn--gthub-zsa.com") is ToolDecision.ALLOW
+        assert _egress("https://xn--gthub-zsa.com/", "github.com") is ToolDecision.BLOCK
+
+    @pytest.mark.parametrize(
+        ("url", "entry", "expected"),
+        [
+            ("http://127.0.0.1/", "127.0.0.1", ToolDecision.ALLOW),
+            ("http://127.0.0.2/", "127.0.0.1", ToolDecision.BLOCK),
+            ("http://[::1]/", "[::1]", ToolDecision.ALLOW),
+            ("http://[0:0:0:0:0:0:0:1]/", "[::1]", ToolDecision.ALLOW),
+            ("http://[::1]/", "127.0.0.1", ToolDecision.BLOCK),
+            ("http://localhost/", "127.0.0.1", ToolDecision.BLOCK),  # names, not resolution
+            # Numeric forms a WHATWG parser reads as 127.0.0.1; only the
+            # canonical dotted quad is accepted, so none of these can alias.
+            ("http://2130706433/", "127.0.0.1", ToolDecision.BLOCK),
+            ("http://127.1/", "127.0.0.1", ToolDecision.BLOCK),
+            ("http://0x7f.0.0.1/", "127.0.0.1", ToolDecision.BLOCK),
+            ("http://0177.0.0.1/", "127.0.0.1", ToolDecision.BLOCK),
+            ("http://127.000.000.001/", "127.0.0.1", ToolDecision.BLOCK),
+            ("http://example.123/", "*", ToolDecision.BLOCK),
+            ("http://[fe80::1%25eth0]/", "*", ToolDecision.BLOCK),  # zone id
+        ],
+    )
+    def test_ip_literals(self, url: str, entry: str, expected: ToolDecision) -> None:
+        assert _egress(url, entry) is expected
+
+
+class TestEgressPorts:
+    """D6 + D15: a bare host means the scheme's default port, and only that."""
+
+    @pytest.mark.parametrize(
+        ("url", "entry", "expected"),
+        [
+            # D15 contract: same destination, same verdict.
+            ("https://docs.example.com/x", "docs.example.com", ToolDecision.ALLOW),
+            ("https://docs.example.com:443/x", "docs.example.com", ToolDecision.ALLOW),
+            ("http://docs.example.com:80/x", "docs.example.com", ToolDecision.ALLOW),
+            # The intended difference: a bare host refuses other ports.
+            ("https://docs.example.com:8443/x", "docs.example.com", ToolDecision.BLOCK),
+            ("http://docs.example.com:443/x", "docs.example.com", ToolDecision.BLOCK),
+            ("https://docs.example.com:80/x", "docs.example.com", ToolDecision.BLOCK),
+            # host:port is exact.
+            ("http://localhost:8000/", "localhost:8000", ToolDecision.ALLOW),
+            ("http://localhost:8001/", "localhost:8000", ToolDecision.BLOCK),
+            ("http://localhost/", "localhost:8000", ToolDecision.BLOCK),
+            ("https://h.test:443/", "h.test:443", ToolDecision.ALLOW),
+            ("https://h.test/", "h.test:443", ToolDecision.ALLOW),
+            # host:* is any port.
+            ("http://localhost:1/", "localhost:*", ToolDecision.ALLOW),
+            ("http://localhost/", "localhost:*", ToolDecision.ALLOW),
+            ("http://localhost:65535/", "localhost:*", ToolDecision.ALLOW),
+            # Ports combine with wildcards and IP literals.
+            ("https://api.github.com:8443/", "*.github.com:8443", ToolDecision.ALLOW),
+            ("https://api.github.com/", "*.github.com:8443", ToolDecision.BLOCK),
+            ("http://[::1]:9000/", "[::1]:9000", ToolDecision.ALLOW),
+            ("http://[::1]:9001/", "[::1]:9000", ToolDecision.BLOCK),
+            ("http://127.0.0.1:5000/", "127.0.0.1:*", ToolDecision.ALLOW),
+        ],
+    )
+    def test_port_rules(self, url: str, entry: str, expected: ToolDecision) -> None:
+        assert _egress(url, entry) is expected
+
+    def test_the_demo_attacker_port_is_refused_on_the_page_host(self) -> None:
+        """R3-13: the launch demo's separation must rest on the port, not the name."""
+        assert _egress("http://localhost:8123/page", "localhost:8123") is ToolDecision.ALLOW
+        assert _egress("http://localhost:9999/?d=x", "localhost:8123") is ToolDecision.BLOCK
+
+
+class TestEgressUrlValues:
+    """R3-18: anything but an absolute http(s) URL on the list is refused."""
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "github.com/x",  # no scheme
+            "/x",  # relative
+            "x",
+            "",
+            "file:///etc/passwd",
+            "ftp://github.com/",
+            "data:text/plain,hi",
+            "javascript:alert(1)",
+            "ws://github.com/",
+            "mailto:a@github.com",
+            None,
+            42,
+            {"href": "https://github.com/"},
+        ],
+    )
+    def test_non_url_values_are_refused(self, value: Any) -> None:
+        assert _egress(value, "github.com", "*") is ToolDecision.BLOCK
+
+    def test_list_values_are_checked_elementwise_and_must_all_be_strings(self) -> None:
+        assert _egress(["https://github.com/a", "https://github.com/b"], "github.com") is (
+            ToolDecision.ALLOW
+        )
+        assert _egress(["https://github.com/a", "https://evil.test/"], "github.com") is (
+            ToolDecision.BLOCK
+        )
+        assert _egress(["https://github.com/a", 7], "github.com") is ToolDecision.BLOCK
+
+    def test_star_allows_any_well_formed_host_but_not_malformed_urls(self) -> None:
+        assert _egress("https://anything.example/", "*") is ToolDecision.ALLOW
+        assert _egress("http://evil.com\\@github.com/", "*") is ToolDecision.BLOCK
+
+
+class TestEgressEntryValidation:
+    """A malformed allowlist entry is a config error at load, never a silent mismatch."""
+
+    @pytest.mark.parametrize(
+        "entry",
+        [
+            "https://github.com",
+            "github.com/",
+            "git*.com",
+            "*github.com",
+            "api.*.com",
+            "**.github.com",
+            "github.com:http",
+            "github.com:0",
+            "github.com:70000",
+            "github.com:",
+            "user@github.com",
+            "github.com\\",
+            "",
+            " github.com",
+            "::1",
+            "[::1",
+            "githüb.com",
+        ],
+    )
+    def test_bad_entries_are_rejected(self, entry: str) -> None:
+        with pytest.raises(ValueError, match="egress"):
+            load_tool_call_policy({"rules": {"fetch.fetch": {"egress": [entry]}}})
+
+    @pytest.mark.parametrize(
+        "entry",
+        [
+            "github.com",
+            "*.github.com",
+            "github.com:8080",
+            "github.com:*",
+            "*",
+            "*:*",
+            "127.0.0.1",
+            "127.0.0.1:9",
+            "[::1]",
+            "[::1]:*",
+            "localhost",
+            "GitHub.com.",
+        ],
+    )
+    def test_good_entries_load(self, entry: str) -> None:
+        load_tool_call_policy({"rules": {"fetch.fetch": {"egress": [entry]}}})
+
+    def test_shipped_agent_policy_still_loads_and_allows_default_ports(self) -> None:
+        """REG-1: config/policy.agent.yaml's bare-host entries keep working."""
+        from toolgate.gating.policy import load_policy_config
+
+        policy = load_policy_config(
+            Path(__file__).resolve().parent.parent / "config" / "policy.agent.yaml"
+        ).tool_calls
+        for url in ("https://example.com/", "http://www.example.com/x", "https://example.org"):
+            assert evaluate_tool_call(policy, "fetch", "fetch", {"url": url}).decision is (
+                ToolDecision.ALLOW
+            ), url
+        assert (
+            evaluate_tool_call(
+                policy, "fetch", "fetch", {"url": "https://example.com:8443/"}
+            ).decision
+            is ToolDecision.BLOCK
+        )
