@@ -59,7 +59,7 @@ import sys
 import time
 import uuid
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
 from enum import Enum
@@ -67,9 +67,13 @@ from typing import Any, Protocol
 
 import anyio
 
+from toolgate.detectors.base import Detector
+from toolgate.detectors.normalise import scan_normalised
 from toolgate.gating.audit import AuditWriter, Decision, DecisionRecord, Outcome
-from toolgate.gating.policy import PolicyConfig
-from toolgate.gating.tool_calls import ToolDecision, evaluate_tool_call
+from toolgate.gating.content import apply_redaction, build_block_result, extract
+from toolgate.gating.policy import PolicyConfig, PolicyEngine
+from toolgate.gating.tool_calls import ToolDecision, evaluate_tool_call, unclassified_arguments
+from toolgate.gating.transport import build_detectors
 from toolgate.proxy.lines import (
     MAX_LINE_BYTES,
     Eof,
@@ -191,10 +195,22 @@ class _BoundedSet:
 class ProxyCore:
     """The gating decisions for one wrapped server. Synchronous, no I/O."""
 
-    def __init__(self, settings: ProxySettings, *, clock: Callable[[], float] = time.monotonic):
+    def __init__(
+        self,
+        settings: ProxySettings,
+        *,
+        detectors: Mapping[str, Detector] | None = None,
+        clock: Callable[[], float] = time.monotonic,
+    ):
         self.settings = settings
         self.name = settings.name
         self._clock = clock
+        #: Exactly the detectors the policy names, built once (lazily
+        #: imported, so the default profile loads no model).
+        self.detectors: dict[str, Detector] = (
+            dict(detectors) if detectors is not None else build_detectors(settings.policy)
+        )
+        self.engine = PolicyEngine(settings.policy)
         self.pending: dict[IdKey, Pending] = {}
         #: Ids the proxy answered itself (blocked calls), for dropping their
         #: `notifications/cancelled`. Bounded, oldest forgotten first.
@@ -479,47 +495,373 @@ class ProxyCore:
     def server_event(self, event: LineEvent) -> Effects:
         if isinstance(event, Line):
             return self.server_line(event.data)
+        if isinstance(event, Oversize):
+            return self._drop_server_line(
+                [id_from_prefix(event.prefix)],
+                f"line exceeds {self.settings.max_line_bytes} bytes",
+            )
+        if isinstance(event, Tail):
+            return self._drop_server_line(
+                [id_from_prefix(event.data)], "unterminated final line at end of stream"
+            )
         return Effects()
 
     def server_line(self, raw: bytes) -> Effects:
-        """Forward a server line, closing the pending entry it answers.
+        """Gate one server line. Untracked lines pass as original bytes.
 
-        T4 scope: bookkeeping only. Result inspection, declaration checks and
-        dropped-line replies are T5.
+        Decision tree (design D7, D8, D11, D12, R2-5, R2-6, R3-3)::
+
+            line from server
+              |-- strict parse fails ------> names a tracked id? uninspectable reply
+              |                              for it; else forward unchanged, log
+              |-- top-level array ---------> dropped; -32603 for each tracked id in it
+              |-- reply to a closed id ----> dropped, logged (expired or answered)
+              |-- reply to tracked list ---> unreadable: empty tools list;
+              |                              unclassified tool: withheld; re-encoded
+              |                              only if something was withheld
+              |-- reply to tracked call ---> detectors + policy: redact / block, or
+              |                              uninspectable; re-encoded only if changed
+              '-- anything else -----------> forwarded unchanged
+
+        Parsing is strict for every line, not only replies to tracked ids: a
+        line whose lenient reading names an untracked id could still be read
+        as a tracked reply by a host that keeps the *first* duplicate key, so
+        the tracked/untracked decision itself must not depend on Python's
+        last-key-wins reading (R3-3).
         """
-        effects = Effects()
         try:
             message = loads_strict(raw)
-        except StrictJsonError:
-            effects.to_client.append(raw)
-            return effects
-        if isinstance(message, dict) and "method" not in message and "id" in message:
-            key = id_key(message["id"])
-            if key is not None:
-                if key in self.closed:
-                    self.closed.discard(key)
-                    effects.records.append(
-                        self._record(
-                            decision=Decision.BLOCK,
-                            outcome=Outcome.PROTOCOL_ERROR,
-                            note="reply to an expired or closed request dropped",
-                            request_id=message["id"],
+        except StrictJsonError as exc:
+            candidates: list[Any] = list(top_level_ids(raw) or [])
+            candidates.append(id_from_prefix(raw))
+            for candidate in candidates:
+                key = id_key(candidate)
+                if key is not None and key in self.pending:
+                    entry = self.pending.pop(key)
+                    reason = f"reply failed strict parsing ({exc})"
+                    if entry.kind is Kind.CALL and not self.settings.policy.redaction_detectors:
+                        return self._forward_unscanned(
+                            raw, entry, reason, (self._clock() - entry.started) * 1000.0
                         )
-                    )
-                    return effects
-                entry = self.pending.pop(key, None)
-                if entry is not None and entry.kind is Kind.LIST:
-                    self._remember_schemas(message.get("result"))
-        effects.to_client.append(raw)
+                    self.closed.add(key)
+                    return self._uninspectable(entry, reason)
+            effects = Effects(to_client=[raw])
+            effects.messages.append(
+                f"toolgate[{self.name}]: forwarded a server line that is not strict JSON ({exc})"
+            )
+            return effects
+
+        if isinstance(message, list):
+            ids = [item.get("id") for item in message if isinstance(item, dict)]
+            return self._drop_server_line(ids, "batch replies are not supported by toolgate")
+
+        if not (isinstance(message, dict) and "method" not in message and "id" in message):
+            return Effects(to_client=[raw])
+
+        key = id_key(message["id"])
+        if key is None:
+            return Effects(to_client=[raw])
+        if key in self.closed:
+            self.closed.discard(key)
+            effects = Effects()
+            effects.records.append(
+                self._record(
+                    decision=Decision.BLOCK,
+                    outcome=Outcome.PROTOCOL_ERROR,
+                    note="reply to an expired or already-answered request dropped",
+                    request_id=message["id"],
+                )
+            )
+            return effects
+        if key not in self.pending:
+            return Effects(to_client=[raw])
+        entry = self.pending.pop(key)
+        if entry.kind is Kind.LIST:
+            return self._tools_list_reply(raw, message, entry)
+        return self._tools_call_reply(raw, message, entry)
+
+    # -- dropped server lines (D8) ------------------------------------------
+
+    def _drop_server_line(self, ids: list[Any], reason: str) -> Effects:
+        """Drop a server line; answer every tracked request it was replying to."""
+        effects = Effects()
+        answered = False
+        for candidate in ids:
+            key = id_key(candidate)
+            if key is None or key not in self.pending:
+                continue
+            entry = self.pending.pop(key)
+            self.closed.add(key)
+            answered = True
+            effects.to_client.append(
+                error_reply(
+                    entry.request_id, INTERNAL_ERROR, f"response dropped by toolgate: {reason}"
+                )
+            )
+            effects.records.append(
+                self._record(
+                    decision=Decision.BLOCK,
+                    outcome=Outcome.PROTOCOL_ERROR,
+                    note=f"server reply dropped: {reason}",
+                    tool=entry.tool,
+                    request_id=entry.request_id,
+                    correlation_id=entry.correlation_id,
+                    started=entry.started,
+                )
+            )
+        if not answered:
+            effects.records.append(
+                self._record(
+                    decision=Decision.BLOCK,
+                    outcome=Outcome.PROTOCOL_ERROR,
+                    note=f"server line dropped: {reason}; no tracked request to answer",
+                )
+            )
+        effects.messages.append(f"toolgate[{self.name}]: dropped a server line ({reason})")
         return effects
 
-    def _remember_schemas(self, result: Any) -> None:
+    # -- tools/list replies -------------------------------------------------
+
+    def _tools_list_reply(self, raw: bytes, message: dict[str, Any], entry: Pending) -> Effects:
+        """Classify every declared tool; withhold the ones the policy cannot vouch for.
+
+        Pagination needs nothing special (R2-10): classification is a property
+        of each declaration, so each page is handled on its own. Declaration
+        pinning is not done here in v0.1 (eng review D1; TODOS.md).
+        """
+        effects = Effects()
+        if "error" in message and "result" not in message:
+            effects.to_client.append(raw)
+            return effects
+
+        result = message.get("result")
         tools = result.get("tools") if isinstance(result, dict) else None
-        if not isinstance(tools, list):
-            return
+        readable = isinstance(tools, list) and all(
+            isinstance(tool, dict) and isinstance(tool.get("name"), str) for tool in tools
+        )
+        if not readable:
+            return self._unreadable_tools_list(entry, "tools/list result could not be read")
+        assert isinstance(result, dict) and isinstance(tools, list)
+
+        policy = self.settings.policy.tool_calls
+        kept: list[Any] = []
         for tool in tools:
-            if isinstance(tool, dict) and isinstance(tool.get("name"), str):
-                self.schemas[tool["name"]] = tool.get("inputSchema")
+            name = tool["name"]
+            schema = tool.get("inputSchema")
+            self.schemas[name] = schema
+            rule = policy.rules.get(f"{self.name}.{name}")
+            unclassified = unclassified_arguments(rule, schema) if rule is not None else ()
+            if not unclassified:
+                kept.append(tool)
+                continue
+            rule_id = f"{self.name}.{name}.args"
+            listed = ", ".join(unclassified)
+            effects.messages.append(
+                f"toolgate[{self.name}]: withheld tool {name!r}: argument(s) {listed} not "
+                f"classified; add them to path_args, url_args or ignore_args under "
+                f"tool_calls.rules.{self.name}.{name}"
+            )
+            effects.records.append(
+                self._record(
+                    decision=Decision.BLOCK,
+                    outcome=Outcome.TOOL_DECLARATION,
+                    note=f"rule {rule_id}: tool withheld, unclassified argument(s) {listed}",
+                    tool=name,
+                    request_id=entry.request_id,
+                    correlation_id=entry.correlation_id,
+                )
+            )
+
+        if len(kept) == len(tools):
+            effects.to_client.append(raw)
+        else:
+            # Re-encoded from the parsed JSON, not from SDK models, so fields
+            # the pinned SDK does not know survive (R2-6).
+            effects.to_client.append(encode({**message, "result": {**result, "tools": kept}}))
+        return effects
+
+    def _unreadable_tools_list(self, entry: Pending, reason: str) -> Effects:
+        """R2-5 / D7: an unreadable declaration list becomes an empty one."""
+        rule_id = f"{self.name}.*.declarations"
+        effects = Effects()
+        effects.to_client.append(
+            encode({"jsonrpc": "2.0", "id": entry.request_id, "result": {"tools": []}})
+        )
+        effects.records.append(
+            self._record(
+                decision=Decision.BLOCK,
+                outcome=Outcome.TOOL_DECLARATION,
+                note=f"rule {rule_id}: {reason}; replaced with an empty list",
+                request_id=entry.request_id,
+                correlation_id=entry.correlation_id,
+            )
+        )
+        effects.messages.append(
+            f"toolgate[{self.name}]: {reason}; sent an empty tool list (rule {rule_id})"
+        )
+        return effects
+
+    # -- tools/call replies -------------------------------------------------
+
+    def _uninspectable(self, entry: Pending, reason: str) -> Effects:
+        """A tracked reply the proxy could not read safely.
+
+        For a `tools/list`, an empty list (D7). For a `tools/call`, an isError
+        result. Callers use this for a call only when the server has
+        redaction configured, because forwarding would then forward content
+        that was never checked for personal data; with no redaction there is
+        nothing the proxy would have changed, so callers forward and log
+        instead (`_forward_unscanned`, D7).
+        """
+        if entry.kind is Kind.LIST:
+            return self._unreadable_tools_list(entry, reason)
+        effects = Effects()
+        effects.to_client.append(
+            encode(
+                {
+                    "jsonrpc": "2.0",
+                    "id": entry.request_id,
+                    "result": {
+                        "content": [
+                            {"type": "text", "text": "result could not be inspected by toolgate"}
+                        ],
+                        "isError": True,
+                    },
+                }
+            )
+        )
+        effects.records.append(
+            self._record(
+                decision=Decision.BLOCK,
+                outcome=Outcome.RESULT,
+                note=f"result replaced: {reason}",
+                tool=entry.tool,
+                request_id=entry.request_id,
+                correlation_id=entry.correlation_id,
+                started=entry.started,
+            )
+        )
+        effects.messages.append(
+            f"toolgate[{self.name}]: replaced the result of {entry.tool} ({reason})"
+        )
+        return effects
+
+    def _tools_call_reply(self, raw: bytes, message: dict[str, Any], entry: Pending) -> Effects:
+        """Inspect one tool result: detectors, policy, redaction (as the in-process Gate).
+
+        A late reply to a cancelled call is inspected exactly like any other
+        before it is forwarded (D12). Redaction covers `tools/call` results
+        only; resources/read, prompts/get and notifications pass unredacted
+        (D11, stated in the README).
+        """
+        started = self._clock()
+        roundtrip_ms = (started - entry.started) * 1000.0
+        if "error" in message and "result" not in message:
+            effects = Effects(to_client=[raw])
+            error = message.get("error")
+            code = error.get("code") if isinstance(error, dict) else None
+            effects.records.append(
+                DecisionRecord(
+                    correlation_id=entry.correlation_id,
+                    mcp_server_id=self.name,
+                    tool_name=entry.tool,
+                    request_id=str(entry.request_id),
+                    raw_result_hash="",
+                    fused_decision=Decision.ALLOW,
+                    latency_ms=0.0,
+                    roundtrip_ms=roundtrip_ms,
+                    outcome=Outcome.PROTOCOL_ERROR,
+                    note=f"jsonrpc error {code}",
+                )
+            )
+            return effects
+
+        result = message.get("result")
+        try:
+            content = extract(result, self.settings.policy.max_result_chars)
+            if content.malformed is not None:
+                if not self.settings.policy.redaction_detectors:
+                    return self._forward_unscanned(raw, entry, content.malformed, roundtrip_ms)
+                return self._uninspectable(entry, content.malformed)
+            assert isinstance(result, dict)
+            scores = {
+                key: scan_normalised(detector, content.text)
+                for key, detector in self.detectors.items()
+            }
+            fusion = self.engine.decide(scores)
+            result_out: Any = result
+            note = fusion.note
+            if fusion.decision is Decision.BLOCK:
+                result_out = build_block_result(is_error=True)
+            elif fusion.redacted:
+                result_out, unapplied = apply_redaction(result, fusion.redact_spans)
+                if unapplied:
+                    labels = ", ".join(sorted({span.label for span in unapplied}))
+                    shortfall = (
+                        f"redaction incomplete: {len(unapplied)} span(s) unmasked ({labels})"
+                    )
+                    note = f"{note}; {shortfall}" if note else shortfall
+        except Exception as exc:  # noqa: BLE001 -- an inspection bug must not leak content
+            if not self.settings.policy.redaction_detectors:
+                return self._forward_unscanned(
+                    raw, entry, f"inspection error ({type(exc).__name__})", roundtrip_ms
+                )
+            return self._uninspectable(entry, f"inspection error ({type(exc).__name__})")
+
+        if entry.cancelled:
+            late = "late reply to a cancelled call, inspected before forwarding"
+            note = f"{note}; {late}" if note else late
+        effects = Effects()
+        if result_out is result:
+            effects.to_client.append(raw)
+        else:
+            effects.to_client.append(encode({**message, "result": result_out}))
+        if fusion.decision is Decision.ESCALATE:
+            effects.messages.append(f"toolgate[{self.name}]: escalate result of {entry.tool}")
+        effects.records.append(
+            DecisionRecord(
+                correlation_id=entry.correlation_id,
+                mcp_server_id=self.name,
+                tool_name=entry.tool,
+                request_id=str(entry.request_id),
+                raw_result_hash=content.sha256,
+                fused_decision=fusion.decision,
+                detector_scores={key: score.score for key, score in scores.items()},
+                redacted=fusion.redacted,
+                latency_ms=(self._clock() - started) * 1000.0,
+                roundtrip_ms=roundtrip_ms,
+                outcome=fusion.outcome,
+                tool_is_error=content.is_error,
+                content_chars=content.original_chars,
+                truncated=content.truncated,
+                block_types=content.block_types,
+                malformed=content.malformed,
+                note=note,
+            )
+        )
+        return effects
+
+    def _forward_unscanned(
+        self, raw: bytes, entry: Pending, reason: str, roundtrip_ms: float
+    ) -> Effects:
+        """No redaction configured: nothing to protect, so forward and log (D7)."""
+        effects = Effects(to_client=[raw])
+        effects.records.append(
+            DecisionRecord(
+                correlation_id=entry.correlation_id,
+                mcp_server_id=self.name,
+                tool_name=entry.tool,
+                request_id=str(entry.request_id),
+                raw_result_hash="",
+                fused_decision=Decision.ALLOW,
+                latency_ms=0.0,
+                roundtrip_ms=roundtrip_ms,
+                outcome=Outcome.RESULT,
+                malformed=reason,
+                note=f"result forwarded unscanned: {reason}",
+            )
+        )
+        return effects
 
     # -- timers -----------------------------------------------------------
 
