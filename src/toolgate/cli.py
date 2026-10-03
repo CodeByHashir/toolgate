@@ -632,7 +632,36 @@ def main(argv: list[str] | None = None) -> int:
         help="optional JSON output path; prints to stdout regardless",
     )
 
+    wrap = subparsers.add_parser(
+        "wrap",
+        help="run one stdio MCP server behind toolgate's capability rules",
+        description=(
+            "Proxy one stdio MCP server: `toolgate wrap --name N --config C -- <command>`. "
+            "tools/call requests are checked against the policy's capability rules "
+            "before they reach the server; tools/call results get PII redaction when "
+            "the policy enables it. Only tools/call results are redacted: "
+            "resources/read, prompts/get and notifications pass unredacted."
+        ),
+    )
+    wrap.add_argument(
+        "--name",
+        required=True,
+        help="server name, [A-Za-z0-9_-]+; the <server> part of rule ids like <server>.<tool>",
+    )
+    wrap.add_argument(
+        "--config",
+        default=None,
+        help="policy file; defaults to $TOOLGATE_CONFIG (no other fallback)",
+    )
+    wrap.add_argument(
+        "server_command",
+        nargs=argparse.REMAINDER,
+        help="the server command and its arguments, after --",
+    )
+
     args = parser.parse_args(argv)
+    if args.command == "wrap":
+        return _wrap(args)
     try:
         return _dispatch(parser, args)
     except ModuleNotFoundError as error:
@@ -646,6 +675,28 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+
+
+def _wrap(args: argparse.Namespace) -> int:
+    """Run the proxy, then leave with `os._exit`.
+
+    The host-stdin reader thread can still be blocked in a read when the
+    session ends, and a normal interpreter exit would wait for it. Every
+    stream is flushed first, so nothing is lost by exiting directly.
+    """
+    import contextlib
+    import os
+
+    from toolgate.proxy.wrap import run_wrap
+
+    command = list(args.server_command)
+    if command and command[0] == "--":
+        command = command[1:]
+    code = run_wrap(args.name, args.config, command)
+    for stream in (sys.stdout, sys.stderr):
+        with contextlib.suppress(OSError, ValueError):
+            stream.flush()
+    os._exit(code)
 
 
 def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:

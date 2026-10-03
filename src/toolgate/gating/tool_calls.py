@@ -349,18 +349,27 @@ def expand_placeholders(
     return replace(policy, rules=rules)
 
 
-def resolve_sandbox(raw: str, *, base_dir: Path, environ: Mapping[str, str], home: Path) -> Path:
-    """Turn a policy file's `sandbox:` value into an absolute path.
+def resolve_sandbox(
+    raw: str,
+    *,
+    base_dir: Path,
+    environ: Mapping[str, str],
+    home: Path,
+    key: str = "sandbox",
+) -> Path:
+    """Turn a policy file's `sandbox:` value (or another path key) into an absolute path.
 
     `~` and `${NAME}` expand as in globs. A relative result is taken relative
     to `base_dir`, the directory holding the config file, never the working
     directory: hosts start servers from directories the user does not choose.
     The directory is not required to exist; globs only compare strings.
+    `key` only names the setting in error messages: `wrap` resolves
+    `state_dir` and `audit_path` the same way.
     """
     try:
         text = _expand_text(raw, sandbox=None, environ=environ, home=home, allow_sandbox=False)
     except PlaceholderError as exc:
-        raise PlaceholderError(f"sandbox: {exc}") from exc
+        raise PlaceholderError(f"{key}: {exc}") from exc
     path = Path(text)
     if not path.is_absolute():
         path = base_dir / path

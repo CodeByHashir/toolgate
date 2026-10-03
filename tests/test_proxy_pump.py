@@ -910,3 +910,31 @@ class TestDroppedServerLines:
         effects = proxy.server_event(Tail(b'{"jsonrpc":"2.0","id":3,"result":{"cont'))
         assert replies(effects)[0]["error"]["code"] == -32603
         assert "unterminated" in replies(effects)[0]["error"]["message"]
+
+
+class TestCoverageLine:
+    """C2 / CEO-2: say how much of the server the policy covers, when it changes."""
+
+    def test_printed_after_the_first_list_and_again_only_when_counts_change(self) -> None:
+        proxy = core()
+        proxy.client_line(list_request(1))
+        first = proxy.server_line(
+            tools_reply(1, [{"name": "fetch", "inputSchema": FETCH_SCHEMA}, {"name": "a"}])
+        )
+        assert "toolgate[fetch]: 1 of 2 tools constrained (default: allow)" in first.messages[-1]
+
+        proxy.client_line(list_request(2))
+        same = proxy.server_line(
+            tools_reply(2, [{"name": "fetch", "inputSchema": FETCH_SCHEMA}, {"name": "a"}])
+        )
+        assert not any("constrained" in m for m in same.messages)
+
+        proxy.client_line(list_request(3))
+        grown = proxy.server_line(tools_reply(3, [{"name": "b"}, {"name": "c"}]))
+        assert "1 of 4 tools constrained" in grown.messages[-1]
+
+    def test_default_block_counts_every_unnamed_tool(self) -> None:
+        proxy = core({"default": "block", "rules": {"fetch.ok": {}}})
+        proxy.client_line(list_request(1))
+        effects = proxy.server_line(tools_reply(1, [{"name": "ok"}, {"name": "x"}, {"name": "y"}]))
+        assert "2 of 3 tools constrained (default: block)" in effects.messages[-1]

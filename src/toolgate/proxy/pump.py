@@ -119,6 +119,8 @@ class ProxySettings:
     #: How long, after the host closes stdin, to keep forwarding the server's
     #: remaining replies before ending the session anyway.
     drain_after_host_eof_s: float = 5.0
+    #: Where audit rows go, for the coverage line on stderr (C2).
+    audit_label: str = "in memory (not persisted)"
 
 
 class Kind(Enum):
@@ -220,6 +222,7 @@ class ProxyCore:
         self.closed = _BoundedSet(settings.max_pending * 4)
         #: Declared `inputSchema` per tool name, from `tools/list` replies.
         self.schemas: dict[str, Any] = {}
+        self._last_coverage: tuple[int, int] | None = None
 
     # -- helpers ----------------------------------------------------------
 
@@ -678,7 +681,39 @@ class ProxyCore:
             # Re-encoded from the parsed JSON, not from SDK models, so fields
             # the pinned SDK does not know survive (R2-6).
             effects.to_client.append(encode({**message, "result": {**result, "tools": kept}}))
+        coverage = self.coverage()
+        if coverage != self._last_coverage:
+            self._last_coverage = coverage
+            effects.messages.append(self.coverage_line())
         return effects
+
+    def _constrained(self, tool: str) -> bool:
+        """Whether a call to `tool` is checked or refused, not just passed through."""
+        policy = self.settings.policy.tool_calls
+        rule = policy.rules.get(f"{self.name}.{tool}")
+        if rule is None:
+            return policy.default is not ToolDecision.ALLOW
+        return rule.action is not ToolDecision.ALLOW or rule.checks_arguments
+
+    def coverage(self) -> tuple[int, int]:
+        """(constrained, declared) over every tool this process has seen declared."""
+        return sum(1 for tool in self.schemas if self._constrained(tool)), len(self.schemas)
+
+    def coverage_line(self) -> str:
+        """CEO-2 / C2: how much of this server the policy actually covers.
+
+        A policy that constrains one tool out of fourteen protects much less
+        than its author may think, and nothing else says so. Printed after a
+        `tools/list` whenever the counts change (the first listing, and a
+        re-list after `notifications/tools/list_changed` that adds tools), so
+        it lands in the host's server log at every start.
+        """
+        constrained, declared = self.coverage()
+        default = self.settings.policy.tool_calls.default.value
+        return (
+            f"toolgate[{self.name}]: {constrained} of {declared} tools constrained "
+            f"(default: {default}); audit: {self.settings.audit_label}"
+        )
 
     def _unreadable_tools_list(self, entry: Pending, reason: str) -> Effects:
         """R2-5 / D7: an unreadable declaration list becomes an empty one."""
