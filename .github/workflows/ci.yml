@@ -101,6 +101,8 @@ jobs:
           tests/test_gating_declaration_policy.py
           tests/test_demo_fixtures.py
           tests/test_proxy_process.py
+          tests/test_proxy_lines.py
+          tests/test_proxy_pump.py
 
       - name: A research subcommand names the extra
         run: |

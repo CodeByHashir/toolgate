@@ -58,6 +58,8 @@ PROXY_PATH_MODULES = (
     "toolgate.detectors.pii",
     "toolgate.detectors.normalise",
     "toolgate.cli",
+    "toolgate.proxy.lines",
+    "toolgate.proxy.pump",
 )
 
 # Distribution names the base install may pull in directly. Anything else
