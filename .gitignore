@@ -106,6 +106,21 @@ results/representation/*
 !results/mechanism/*.json
 !results/representation/*.json
 
+# ...and the real-agent demo recordings behind docs/AGENT-DEMO.md (design C5).
+# Audited before committing: home, repository and temp paths and the account
+# name are replaced by placeholders; the only "secret" is the demo's fake
+# canary token.
+!results/proxy-demo/
+results/proxy-demo/*
+!results/proxy-demo/off/
+!results/proxy-demo/on/
+results/proxy-demo/off/*
+results/proxy-demo/on/*
+!results/proxy-demo/off/*.json
+!results/proxy-demo/off/*.jsonl
+!results/proxy-demo/on/*.json
+!results/proxy-demo/on/*.jsonl
+
 # Tool-declaration pins (plan.md 2.29). Runtime state, so gitignored by the
 # same default as everything else here -- a pin file is a record of what one
 # machine happened to connect to, and a commit should not pick that up unasked.

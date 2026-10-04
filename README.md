@@ -257,10 +257,11 @@ replace `toolgate@0.1.0a1` below with
    relative values are resolved against the config file.
 
 To remove toolgate, delete everything up to and including the `--` from the
-args. The snippet is written for Claude Code, the host the demo targets. It
-has not yet been run end to end in Claude Code by hand; that happens with the
-planned real-agent recording. Claude Desktop and Cursor snippets will be
-added once each has been run, and are not listed until then.
+args. The snippet is written for Claude Code, the host the demo targets, and
+Claude Code has run through `toolgate wrap` end to end in the recorded demo
+below (headless, with an MCP config file of this shape and the source-tree
+toolgate rather than the PyPI package). Claude Desktop and Cursor snippets
+will be added once each has been run, and are not listed until then.
 
 **Exit codes**: `0` the host closed the session; `1` config missing or
 invalid, server never started (the reason is on stderr); `2` the server
@@ -306,7 +307,12 @@ session through `@modelcontextprotocol/server-everything`, covering sampling,
 elicitation, roots, resources, prompts, logging and progress, is compared as
 raw bytes in both directions
 ([`tests/test_proxy_transparency.py`](tests/test_proxy_transparency.py)).
-A real-agent recording is planned; it is not in this README until it exists.
+**A real agent, once each way** ([`docs/AGENT-DEMO.md`](docs/AGENT-DEMO.md)):
+Claude Code with Sonnet 5.5, given only the two servers and the task
+"summarise the page", recognised the injection and declined it in both the
+toolgate-off and the toolgate-on run. So that recording does not show toolgate
+stopping anything; the model never made the call. It does show a real host
+session working through `toolgate wrap`. Two single runs, not a rate.
 
 ## The third channel: tool declarations
 
