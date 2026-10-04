@@ -104,7 +104,7 @@ def test_toolgate_on_refuses_every_covered_variant(tmp_path: Path) -> None:
 
     # The allowed parts still work through the proxy.
     assert result.read_text.strip() == CANARY_LINE  # redaction is off for filesystem
-    assert result.control_ok
+    assert result.control_ok, (result.control_head, result.noise)
 
     outcomes = result.by_variant()
     for variant in ("exfil", "backslash", "other_port"):

@@ -66,6 +66,8 @@ class StdioMcpClient:
         )
         self._lines: queue.Queue[bytes | None] = queue.Queue()
         self._stderr: list[str] = []
+        #: Lines from the server's stdout that were not JSON, in order.
+        self.noise: list[bytes] = []
         self._next_id = 0
         threading.Thread(target=self._read_stdout, daemon=True).start()
         threading.Thread(target=self._read_stderr, daemon=True).start()
@@ -98,18 +100,32 @@ class StdioMcpClient:
         self._process.stdin.flush()
 
     def _receive(self) -> dict[str, Any]:
-        try:
-            line = self._lines.get(timeout=self.timeout)
-        except queue.Empty:
-            raise McpClientError(
-                f"no reply within {self.timeout}s; stderr tail: {self._stderr[-5:]}"
-            ) from None
-        if line is None:
-            raise McpClientError(f"server closed stdout; stderr tail: {self._stderr[-5:]}")
-        message = json.loads(line)
-        if not isinstance(message, dict):
-            raise McpClientError(f"non-object message: {line[:200]!r}")
-        return message
+        """The next JSON object from the server, skipping lines that are not JSON.
+
+        Servers do write stray lines to stdout: on the Linux CI runner a blank
+        line arrived mid-session from `mcp-server-fetch` (most likely from a
+        subprocess its HTML simplifier starts). Hosts tolerate that, so this
+        client does too, and keeps them in `noise` so a test can still see
+        them. toolgate forwards such lines unchanged (they are not replies it
+        tracks), so they reach this client either way.
+        """
+        while True:
+            try:
+                line = self._lines.get(timeout=self.timeout)
+            except queue.Empty:
+                raise McpClientError(
+                    f"no reply within {self.timeout}s; stderr tail: {self._stderr[-5:]}"
+                ) from None
+            if line is None:
+                raise McpClientError(f"server closed stdout; stderr tail: {self._stderr[-5:]}")
+            try:
+                message = json.loads(line)
+            except ValueError:
+                self.noise.append(line)
+                continue
+            if not isinstance(message, dict):
+                raise McpClientError(f"non-object message: {line[:200]!r}")
+            return message
 
     def request(self, method: str, params: Mapping[str, Any] | None = None) -> dict[str, Any]:
         """Send one request and return the whole response message.
