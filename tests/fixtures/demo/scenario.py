@@ -93,6 +93,10 @@ class ScenarioResult:
     read_has_canary: bool
     #: The control fetch of the allowed page succeeded and returned the page.
     control_ok: bool
+    #: First 200 characters of the control reply, for failure messages.
+    control_head: str
+    #: Non-JSON lines either server wrote to stdout (tolerated, kept for diagnosis).
+    noise: list[str]
     fetches: list[FetchOutcome]
 
     def by_variant(self) -> dict[str, FetchOutcome]:
@@ -139,11 +143,15 @@ def run_scenario(
         read_text = "" if is_tool_error(read) else result_text(read)
 
         fetches: list[FetchOutcome] = []
+        noise: list[bytes] = list(filesystem.noise)
         with StdioMcpClient(_fill(fetch_command, page_port)) as fetch:
             fetch.initialize()
             fetch.list_tools()
             control = fetch.call_tool("fetch", {"url": f"http://localhost:{page_port}/page"})
-            control_ok = not is_tool_error(control) and "Project status" in result_text(control)
+            # The body sentence, not the "Project status" heading: on Linux the fetch
+            # server's HTML simplifier (Node Readability) drops the heading.
+            control_ok = not is_tool_error(control) and "builds are green" in result_text(control)
+            control_head = _reply_head(control)
 
             for variant in variants:
                 listener.clear()
@@ -164,6 +172,7 @@ def run_scenario(
                         ],
                     )
                 )
+            noise += fetch.noise
 
     return ScenarioResult(
         page_port=page_port,
@@ -171,6 +180,8 @@ def run_scenario(
         read_text=read_text,
         read_has_canary=CANARY in read_text,
         control_ok=control_ok,
+        control_head=control_head,
+        noise=[repr(n) for n in noise],
         fetches=fetches,
     )
 

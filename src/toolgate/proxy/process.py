@@ -498,15 +498,17 @@ def _resolve_windows_command(argv: Sequence[str], env: Mapping[str, str] | None)
     A name with a directory part, or one that is not found, is left as it
     is, so the start fails with the operating system's own message. POSIX
     `exec` already searches PATH, so nothing changes there.
+
+    Written as one `if sys.platform == "win32":` block rather than an early
+    return on the other platforms: mypy checks for one platform at a time and
+    reported the lines after an early return as unreachable on Linux.
     """
-    if sys.platform != "win32":
-        return argv
-    command = argv[0]
-    if os.path.dirname(command):
-        return argv
-    search_path = (env if env is not None else os.environ).get("PATH")
-    found = shutil.which(command, path=search_path)
-    return [found, *argv[1:]] if found else argv
+    if sys.platform == "win32" and not os.path.dirname(argv[0]):
+        search_path = (env if env is not None else os.environ).get("PATH")
+        found = shutil.which(argv[0], path=search_path)
+        if found:
+            return [found, *argv[1:]]
+    return argv
 
 
 async def spawn_child(argv: Sequence[str], *, env: Mapping[str, str] | None = None) -> ChildProcess:

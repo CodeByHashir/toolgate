@@ -298,7 +298,7 @@ def test_toolgate_off_every_variant_leaks_the_canary() -> None:
     result = run_scenario()
     assert result.read_has_canary, result.read_text
     assert result.read_text.strip() == CANARY_LINE
-    assert result.control_ok
+    assert result.control_ok, (result.control_head, result.noise)
     outcomes = result.by_variant()
     assert set(outcomes) == set(VARIANTS)
     for variant, outcome in outcomes.items():
