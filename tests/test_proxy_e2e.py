@@ -46,7 +46,7 @@ DEMO = Path(__file__).resolve().parent.parent / "demo"
 
 #: Set by the release workflow's smoke job: run the demo against the
 #: published package rather than this source tree, e.g.
-#: '["uvx", "--from", "toolgate==0.1.0a1", "toolgate"]'.
+#: '["uvx", "--from", "toolgate-mcp==0.1.0a1", "toolgate"]'.
 WRAP_COMMAND_ENV = "TOOLGATE_WRAP_COMMAND"
 #: Set by the smoke job so missing npx/uvx fails instead of skipping: a
 #: release must not be announced on a demo that silently did not run.

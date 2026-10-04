@@ -132,7 +132,7 @@ def test_base_install_pulls_in_no_research_distribution_transitively() -> None:
         deps = graph.setdefault(package["name"], set())
         deps.update(d["name"] for d in package.get("dependencies", []))
     reachable: set[str] = set()
-    frontier = list(graph["toolgate"])
+    frontier = list(graph["toolgate-mcp"])
     while frontier:
         name = frontier.pop()
         if name in reachable:
@@ -160,7 +160,7 @@ def test_research_subcommand_without_the_extra_names_the_extra() -> None:
         check=False,
     )
     assert completed.returncode == 2, completed.stderr
-    assert "toolgate[research]" in completed.stderr
+    assert "toolgate-mcp[research]" in completed.stderr
     assert "numpy is not installed" in completed.stderr
     assert "Traceback" not in completed.stderr
 

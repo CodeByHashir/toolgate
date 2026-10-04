@@ -4,7 +4,7 @@ The release workflow (.github/workflows/release.yml) checks that the tag names
 the version in pyproject.toml, which is what PyPI receives. `toolgate
 --version` prints `toolgate.__version__`, a separate literal, so nothing there
 stops a release whose CLI reports the previous version: a user pinning
-`toolgate@0.1.0a1` and running `--version` would be told something else.
+`toolgate-mcp==0.1.0a1` and running `--version` would be told something else.
 These tests tie the three together: pyproject.toml, `__version__` and the
 installed distribution's metadata (which `uv sync` builds from pyproject.toml).
 """
@@ -32,7 +32,7 @@ def test_dunder_version_matches_pyproject() -> None:
 
 
 def test_installed_metadata_matches_pyproject() -> None:
-    assert importlib.metadata.version("toolgate") == _pyproject_version()
+    assert importlib.metadata.version("toolgate-mcp") == _pyproject_version()
 
 
 def test_cli_reports_the_package_version() -> None:

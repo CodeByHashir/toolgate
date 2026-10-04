@@ -116,7 +116,7 @@ jobs:
           set -e
           cat stderr.txt
           test "$status" -eq 2
-          grep -q "toolgate\[research\]" stderr.txt
+          grep -q "toolgate-mcp\[research\]" stderr.txt
 
   # The proxy is used on Windows hosts, and the parts most likely to differ
   # there are exactly the proxy's: binary stdio with no newline translation,

@@ -670,7 +670,7 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"error: `toolgate {args.command}` needs the research dependencies "
             f"({error.name} is not installed).\n"
-            "  Install them with:  pip install 'toolgate[research]'\n"
+            "  Install them with:  pip install 'toolgate-mcp[research]'\n"
             "  or, from a checkout: uv sync --extra research",
             file=sys.stderr,
         )

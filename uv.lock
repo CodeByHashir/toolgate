@@ -1182,7 +1182,7 @@ wheels = [
 ]
 
 [[package]]
-name = "toolgate"
+name = "toolgate-mcp"
 version = "0.1.0a1"
 source = { editable = "." }
 dependencies = [
