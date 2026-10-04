@@ -10,12 +10,36 @@ authors = [{ name = "Hashir Ahmed" }]
 # Pins are exact and deliberate. See docs/PINNING.md for the reasoning behind
 # scikit-learn and transformers in particular -- both must match the versions
 # that serialised the reused LLMShield V0/V3 artifacts.
+#
+# The base install is what the proxy path imports and nothing more: the MCP SDK
+# (and its own dependencies), pydantic, pyyaml, anyio and platformdirs. The
+# scientific stack, the model runtimes and the Anthropic SDK are only needed to
+# reproduce the research (detectors, corpus, gauge, reference agent) and live in
+# the `research` extra below. tests/test_slim_imports.py holds that line.
 dependencies = [
     "mcp==2.1.1",
-    "anthropic==0.86.0",
     "pydantic==2.12.5",
-    "pydantic-settings==2.13.1",
     "pyyaml==6.0.3",
+    # Already a dependency of mcp; pinned directly because the proxy uses it
+    # directly rather than only through the SDK.
+    "anyio==4.15.0",
+    # The proxy's default state directory (pins, decision log).
+    "platformdirs==4.12.2",
+]
+
+[project.scripts]
+toolgate = "toolgate.cli:main"
+
+[project.optional-dependencies]
+# Everything needed to reproduce the measurements: `uv sync --extra research`.
+# The exact pins are unchanged from when these were base dependencies, so the
+# recorded digests and published figures were produced under exactly these
+# versions (docs/PINNING.md).
+research = [
+    "anthropic==0.86.0",
+    # Only settings.py (the reference agent's API key) uses it; the proxy reads
+    # its configuration from YAML and argv, and mcp does not depend on it.
+    "pydantic-settings==2.13.1",
     "numpy==2.4.3",
     "scipy==1.17.1",
     "scikit-learn==1.9.0",
@@ -28,11 +52,6 @@ dependencies = [
     "datasketch==2.0.0",
     "statsmodels==0.15.0",
 ]
-
-[project.scripts]
-toolgate = "toolgate.cli:main"
-
-[project.optional-dependencies]
 dev = [
     "pytest==8.4.2",
     "pytest-asyncio==1.3.0",
@@ -67,6 +86,7 @@ addopts = "-q --strict-markers"
 asyncio_mode = "auto"
 markers = [
     "models: requires the reused LLMShield V0/V3 artifacts on disk (slow, skipped in CI)",
+    "live_servers: starts the pinned reference MCP servers via npx/uvx (skipped if absent; runs in CI)",
 ]
 
 [tool.ruff]

@@ -70,6 +70,10 @@ class PolicyConfig:
     #: file defines a `tool_declarations` block, in which case the caller builds
     #: a `DeclarationGate` (`gating/declaration_gate.py`).
     tool_declarations: DeclarationPolicy = DeclarationPolicy()
+    #: The raw `sandbox:` value, unexpanded. `toolgate wrap` resolves it
+    #: (`tool_calls.resolve_sandbox`) and expands `{sandbox}` in `paths` globs
+    #: from it. None when the file has no `sandbox:` key.
+    sandbox: str | None = None
 
     def threshold(self, detector_key: str, action: str, default: float = 1.0) -> float:
         return self.thresholds.get(detector_key, {}).get(action, default)
@@ -147,6 +151,10 @@ def load_policy_config(path: Path | None = None) -> PolicyConfig:
     if max_result_chars < 1:
         raise ValueError(f"{policy_path}: gate.max_result_chars must be at least 1")
 
+    sandbox = raw.get("sandbox")
+    if sandbox is not None and not (isinstance(sandbox, str) and sandbox.strip()):
+        raise ValueError(f"{policy_path}: sandbox must be a non-empty path string")
+
     return PolicyConfig(
         calibrated=bool(raw.get("calibrated", False)),
         on_detector_failure=on_failure,
@@ -157,6 +165,7 @@ def load_policy_config(path: Path | None = None) -> PolicyConfig:
         max_result_chars=max_result_chars,
         tool_calls=load_tool_call_policy(raw.get("tool_calls")),
         tool_declarations=load_declaration_policy(raw.get("tool_declarations")),
+        sandbox=sandbox,
     )
 
 

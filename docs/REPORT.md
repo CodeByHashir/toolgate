@@ -336,6 +336,13 @@ directly from the numbers above, not from caution for its own sake:
 
 ## Reproduce
 
+Every command below needs the `research` extra (the scientific stack, the
+model runtimes and the Anthropic SDK), which a plain install leaves out:
+
+```bash
+uv sync --extra dev --extra research
+```
+
 **Without any model weights**, from the committed run alone:
 
 ```bash

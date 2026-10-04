@@ -24,8 +24,13 @@ jobs:
       # "No system Python installation found for Python 3.11": setup-uv
       # provisions a uv-managed interpreter, not a system one, so --system has
       # no target. Every check below therefore runs through `uv run`.
+      #
+      # The `research` extra holds the scientific stack, the model runtimes and
+      # the Anthropic SDK. The research code, its tests and mypy's view of it
+      # all need them, so this job installs it; the `slim` job below checks the
+      # install without it.
       - name: Install project
-        run: uv sync --extra dev --frozen
+        run: uv sync --extra dev --extra research --frozen
 
       - name: Lint
         run: uv run ruff check src tests
@@ -40,3 +45,107 @@ jobs:
       # artifacts, which are not publishable and so are absent in CI.
       - name: Test
         run: uv run pytest -m "not models"
+
+  # The proxy is meant to install in seconds, so its import graph must not
+  # reach the research stack. This job installs without the `research` extra,
+  # proves the heavy packages are genuinely absent, and runs the tests for the
+  # modules the proxy path imports. The test selection is explicit rather than
+  # "everything that happens to import": a new test of research code should not
+  # silently join this job and fail it, and a gating test should not silently
+  # leave it.
+  slim:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.11"
+          enable-cache: true
+
+      - name: Install project without the research extra
+        run: uv sync --extra dev --frozen
+
+      # Fails if any research package is present, so the slim-import tests
+      # below cannot pass merely because the job installed too much.
+      - name: Research packages are absent
+        run: |
+          uv run --no-sync python - <<'EOF'
+          import importlib.util
+          heavy = ["numpy", "scipy", "sklearn", "joblib", "torch", "transformers",
+                   "statsmodels", "datasketch", "anthropic", "sentencepiece",
+                   "pydantic_settings"]
+          present = [m for m in heavy if importlib.util.find_spec(m) is not None]
+          if present:
+              raise SystemExit(f"slim install contains research packages: {present}")
+          print("no research packages installed")
+          EOF
+
+      - name: Test the proxy path
+        run: >-
+          uv run --no-sync pytest -m "not models"
+          tests/test_slim_imports.py
+          tests/test_tool_calls.py
+          tests/test_config.py
+          tests/test_detector_base.py
+          tests/test_detector_normalise.py
+          tests/test_detector_pii.py
+          tests/test_detector_rules.py
+          tests/test_gating_audit.py
+          tests/test_gating_content.py
+          tests/test_gating_policy.py
+          tests/test_gating_transport.py
+          tests/test_gating_pins.py
+          tests/test_gating_declarations.py
+          tests/test_gating_declaration_policy.py
+          tests/test_demo_fixtures.py
+          tests/test_proxy_process.py
+          tests/test_proxy_lines.py
+          tests/test_proxy_pump.py
+          tests/test_proxy_wrap.py
+          tests/test_proxy_e2e.py
+          tests/test_proxy_transparency.py
+
+      - name: A research subcommand names the extra
+        run: |
+          set +e
+          uv run --no-sync toolgate gauge-recut 2> stderr.txt
+          status=$?
+          set -e
+          cat stderr.txt
+          test "$status" -eq 2
+          grep -q "toolgate\[research\]" stderr.txt
+
+  # The proxy is used on Windows hosts, and the parts most likely to differ
+  # there are exactly the proxy's: binary stdio with no newline translation,
+  # the kill-on-close job object, `.cmd` launchers such as npx, and loopback
+  # resolving `localhost` to ::1. Same slim install and the same proxy-path
+  # tests as `slim`, on windows-latest (design T11).
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.11"
+          enable-cache: true
+
+      - name: Install project without the research extra
+        run: uv sync --extra dev --frozen
+
+      - name: Test the proxy path
+        run: >-
+          uv run --no-sync pytest -m "not models"
+          tests/test_slim_imports.py
+          tests/test_tool_calls.py
+          tests/test_gating_audit.py
+          tests/test_demo_fixtures.py
+          tests/test_proxy_process.py
+          tests/test_proxy_lines.py
+          tests/test_proxy_pump.py
+          tests/test_proxy_wrap.py
+          tests/test_proxy_e2e.py
+          tests/test_proxy_transparency.py

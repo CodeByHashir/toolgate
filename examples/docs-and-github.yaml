@@ -1,0 +1,35 @@
+# Example: a coding agent that reads a fixed set of docs sites and GitHub.
+#
+#   toolgate wrap --name fetch --config /abs/path/docs-and-github.yaml -- \
+#     uvx mcp-server-fetch==2026.8.18
+#
+# The allowlist names the sites the agent legitimately needs. A prompt
+# injection on any of them that tells the agent to send data elsewhere is
+# refused at the proxy, whatever the injected text says.
+#
+# What this does NOT stop, stated plainly: GitHub is on the list, so data
+# posted to a gist or an issue through an allowed URL is not blocked. That is
+# exfiltration *through* an allowlisted host, the gap the planned session-taint
+# rule is for (TODOS.md). If your agent can write to GitHub through the fetch
+# tool's URL alone, keep that in mind. An agent that must browse arbitrary
+# sites does not fit an allowlist at all: do not loosen this to "*" and
+# expect protection.
+
+calibrated: false
+on_detector_failure: escalate
+detectors:
+  injection: []
+  redaction: []
+  inert: []
+
+tool_calls:
+  default: block
+  rules:
+    fetch.fetch:
+      egress:
+        - "docs.python.org"
+        - "docs.astral.sh"
+        - "developer.mozilla.org"
+        - "github.com"
+        - "raw.githubusercontent.com"
+        - "api.github.com"

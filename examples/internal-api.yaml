@@ -1,0 +1,38 @@
+# Example: an agent that should only ever talk to your own API.
+#
+#   toolgate wrap --name fetch --config /abs/path/internal-api.yaml -- \
+#     uvx mcp-server-fetch==2026.8.18
+#
+# The workflow v0.1 is built for: the destinations are known and few, so an
+# allowlist can name all of them and the egress guarantee holds. Replace the
+# hosts below with yours. Ports are part of each entry: a bare host means the
+# scheme's default port only (80 for http, 443 for https); write host:port or
+# host:* for anything else.
+#
+# `default: block` makes the policy an allowlist of tools as well: a tool the
+# server adds in a later version is refused until it is named here, and the
+# startup line in the host's server log says how many tools are covered.
+#
+# Not covered here (see the README): redirects the fetch server follows on
+# its own, and data sent *through* an allowed host.
+
+calibrated: false
+on_detector_failure: escalate
+detectors:
+  injection: []
+  # Mask personal data in what the API returns before the model sees it.
+  # Applies to tools/call results only.
+  redaction:
+    - pii
+  inert: []
+thresholds:
+  pii:
+    redact: 0.7
+
+tool_calls:
+  default: block
+  rules:
+    fetch.fetch:
+      egress:
+        - "api.internal.example:8443"   # one service, one port
+        - "*.svc.internal.example"      # any service host, port 443 only

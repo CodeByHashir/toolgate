@@ -37,6 +37,17 @@ infrastructure whose environment was not captured. Reconstructing a working
 CPU inference stack for V3 is therefore part of this project rather than
 something inherited, and this file is the record of what was chosen.
 
+## Where the pins live
+
+The scientific stack, the model runtimes and the Anthropic SDK are the
+`research` optional extra, not base dependencies, so that installing the
+proxy does not pull in PyTorch. Moving them changed where they are declared,
+not their versions: every pin above is the same exact pin, `uv.lock` resolves
+them to the same builds (PyTorch's CPU index on Linux included), and
+`scripts/verify_eval_frames.py` reproduced the recorded digests after the
+move. Reproducing anything therefore starts with
+`uv sync --extra dev --extra research`.
+
 ## Reproducibility without weights
 
 The trained V0/V3 weights are not publishable. To keep the statistical claims

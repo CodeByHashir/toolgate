@@ -13,6 +13,9 @@ dist/
 
 # Secrets
 .env
+# ...except the demo's canary file, which is a fixture: a random hex token that
+# grants nothing (tests/fixtures/demo/project/README.md).
+!tests/fixtures/demo/project/.env
 
 # Local-only dev artefacts — untracked from public repo, kept locally
 plan.md
@@ -40,6 +43,8 @@ corpus/payload_corpus.jsonl
 # Runtime state
 *.sqlite
 *.sqlite3
+*.sqlite-wal
+*.sqlite-shm
 logs/
 
 # Fetched benchmark corpora (MIT; re-fetch with scripts/benchmark_rules.py)
@@ -100,6 +105,21 @@ results/representation/*
 !results/live/*.json
 !results/mechanism/*.json
 !results/representation/*.json
+
+# ...and the real-agent demo recordings behind docs/AGENT-DEMO.md (design C5).
+# Audited before committing: home, repository and temp paths and the account
+# name are replaced by placeholders; the only "secret" is the demo's fake
+# canary token.
+!results/proxy-demo/
+results/proxy-demo/*
+!results/proxy-demo/off/
+!results/proxy-demo/on/
+results/proxy-demo/off/*
+results/proxy-demo/on/*
+!results/proxy-demo/off/*.json
+!results/proxy-demo/off/*.jsonl
+!results/proxy-demo/on/*.json
+!results/proxy-demo/on/*.jsonl
 
 # Tool-declaration pins (plan.md 2.29). Runtime state, so gitignored by the
 # same default as everything else here -- a pin file is a record of what one
