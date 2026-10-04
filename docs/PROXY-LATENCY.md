@@ -41,5 +41,24 @@ pays for the PII and rule scan on each, in front of every line behind it
 (each direction is processed in order, design D14). A policy with no
 redaction and no injection detectors skips that cost entirely.
 
-Not measured yet: the same run on the ubuntu CI runner, which the design also
-asks for.
+## Ubuntu CI runner, 2026-10-04
+
+GitHub `ubuntu-latest` (Linux 6.17.0-1022-azure, x86_64; AMD EPYC 7763, 4 vCPUs,
+16 GB), Python 3.11.17, 1,000 calls per mode, slim install. Recorded by the
+[`Proxy latency`](../.github/workflows/benchmark.yml) workflow, run 37228240238
+on pull request #3. One run on one shared runner: a sample, not a property of
+Linux.
+
+| Result size | Mode | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|
+| 1 KB | direct | 0.069 | 0.085 | 0.093 |
+| 1 KB | wrapped | 1.091 | 1.211 | 1.394 |
+| 1 KB | **added** | **1.022** | **1.126** | **1.301** |
+| 100 KB | direct | 0.468 | 0.526 | 0.544 |
+| 100 KB | wrapped | 46.264 | 47.377 | 49.237 |
+| 100 KB | **added** | **45.796** | **46.851** | **48.693** |
+
+**Target met at 1 KB on ubuntu too: p99 added 1.30 ms against a 5 ms budget**,
+within 0.5 ms of the Windows figure. At 100 KB the added p99 (48.7 ms) is close to
+Windows (52.1 ms), consistent with the cost being the detectors' scan, which does
+not depend on the operating system's pipes.
