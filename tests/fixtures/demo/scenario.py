@@ -148,7 +148,9 @@ def run_scenario(
             fetch.initialize()
             fetch.list_tools()
             control = fetch.call_tool("fetch", {"url": f"http://localhost:{page_port}/page"})
-            control_ok = not is_tool_error(control) and "Project status" in result_text(control)
+            # The body sentence, not the "Project status" heading: on Linux the fetch
+            # server's HTML simplifier (Node Readability) drops the heading.
+            control_ok = not is_tool_error(control) and "builds are green" in result_text(control)
             control_head = _reply_head(control)
 
             for variant in variants:
