@@ -1182,8 +1182,8 @@ wheels = [
 ]
 
 [[package]]
-name = "toolgate"
-version = "0.1.0"
+name = "toolgate-mcp"
+version = "0.1.0a1"
 source = { editable = "." }
 dependencies = [
     { name = "anyio" },

@@ -214,9 +214,11 @@ which argument to add; an argument the schema does not declare is refused.
 
 ### Quickstart (Claude Code)
 
-v0.1 is not on PyPI yet. Until `0.1.0a1` is published, install from git and
-replace `toolgate@0.1.0a1` below with
-`--from git+https://github.com/CodeByHashir/toolgate toolgate`.
+The PyPI package is `toolgate-mcp` (the name `toolgate` on PyPI belongs to an
+unrelated project); the command it installs is `toolgate`. v0.1 is not on PyPI
+yet. Until `0.1.0a1` is published, install from git and replace
+`toolgate-mcp==0.1.0a1` below with
+`git+https://github.com/CodeByHashir/toolgate`.
 
 1. Write a policy, e.g. `fetch.yaml`, starting from one of the examples:
 
@@ -237,7 +239,8 @@ replace `toolgate@0.1.0a1` below with
        "fetch": {
          "command": "uvx",
          "args": [
-           "toolgate@0.1.0a1", "wrap", "--name", "fetch",
+           "--from", "toolgate-mcp==0.1.0a1", "toolgate",
+           "wrap", "--name", "fetch",
            "--config", "/absolute/path/to/fetch.yaml",
            "--", "uvx", "mcp-server-fetch==2026.8.18"
          ]

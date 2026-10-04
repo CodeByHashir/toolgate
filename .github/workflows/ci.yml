@@ -86,6 +86,7 @@ jobs:
         run: >-
           uv run --no-sync pytest -m "not models"
           tests/test_slim_imports.py
+          tests/test_version.py
           tests/test_tool_calls.py
           tests/test_config.py
           tests/test_detector_base.py
@@ -115,7 +116,7 @@ jobs:
           set -e
           cat stderr.txt
           test "$status" -eq 2
-          grep -q "toolgate\[research\]" stderr.txt
+          grep -q "toolgate-mcp\[research\]" stderr.txt
 
   # The proxy is used on Windows hosts, and the parts most likely to differ
   # there are exactly the proxy's: binary stdio with no newline translation,
@@ -140,6 +141,7 @@ jobs:
         run: >-
           uv run --no-sync pytest -m "not models"
           tests/test_slim_imports.py
+          tests/test_version.py
           tests/test_tool_calls.py
           tests/test_gating_audit.py
           tests/test_demo_fixtures.py

@@ -1,0 +1,69 @@
+name: Proxy latency
+
+# Runs scripts/benchmark_proxy_latency.py on the ubuntu runner, which the
+# design asks for next to the Windows dev-machine run in
+# docs/PROXY-LATENCY.md. It is a measurement, not a check: nothing here
+# fails on the numbers, and shared runners are noisy, so a single run is
+# recorded as one sample from one runner, not as a property of Linux.
+#
+# It runs on demand (workflow_dispatch, once this file is on main) and on a
+# pull request that changes the benchmark itself, so a change to the method
+# is measured where it is reviewed. It does not run on every pull request:
+# about two minutes of runner time for a number nobody gates on.
+
+on:
+  workflow_dispatch:
+    inputs:
+      calls:
+        description: "tools/call round-trips per mode and size"
+        default: "1000"
+  pull_request:
+    paths:
+      - .github/workflows/benchmark.yml
+      - scripts/benchmark_proxy_latency.py
+
+permissions:
+  contents: read
+
+jobs:
+  ubuntu:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.11"
+          enable-cache: true
+
+      # The slim install: the proxy path is what is measured, and it must not
+      # need the research extra.
+      - name: Install project without the research extra
+        run: uv sync --extra dev --frozen
+
+      # The runner's hardware varies between runs; record what this one was.
+      - name: Describe the runner
+        run: |
+          nproc
+          lscpu | grep -E "^(Model name|CPU\(s\)|Thread\(s\) per core)"
+          free -m
+
+      - name: Run the benchmark
+        env:
+          CALLS: ${{ inputs.calls || '1000' }}
+        run: |
+          uv run --no-sync python scripts/benchmark_proxy_latency.py \
+            --calls "$CALLS" --out proxy-latency.json | tee proxy-latency.txt
+          {
+            echo '```'
+            cat proxy-latency.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: proxy-latency
+          path: |
+            proxy-latency.json
+            proxy-latency.txt

@@ -9,6 +9,9 @@ name: Release
 # Publishing uses PyPI trusted publishing (OIDC). It needs a one-time setup on
 # pypi.org: a trusted publisher for this repository, this workflow file
 # (release.yml) and the `pypi` environment. No API token is stored here.
+#
+# The PyPI project is `toolgate-mcp`: `toolgate` on PyPI is an unrelated
+# project. The command, the import package and the repository stay `toolgate`.
 
 on:
   push:
@@ -92,12 +95,12 @@ jobs:
         shell: bash
         run: |
           for attempt in $(seq 1 30); do
-            if uvx --refresh --from "toolgate==${VERSION}" toolgate --version; then
+            if uvx --refresh --from "toolgate-mcp==${VERSION}" toolgate --version; then
               exit 0
             fi
             sleep 20
           done
-          echo "toolgate==${VERSION} never became installable from PyPI" >&2
+          echo "toolgate-mcp==${VERSION} never became installable from PyPI" >&2
           exit 1
 
       - name: Install the test environment (slim, for the fixtures only)
@@ -108,5 +111,5 @@ jobs:
         env:
           TOOLGATE_REQUIRE_LIVE: "1"
         run: |
-          export TOOLGATE_WRAP_COMMAND="[\"uvx\", \"--from\", \"toolgate==${VERSION}\", \"toolgate\"]"
+          export TOOLGATE_WRAP_COMMAND="[\"uvx\", \"--from\", \"toolgate-mcp==${VERSION}\", \"toolgate\"]"
           uv run --no-sync pytest -m live_servers tests/test_proxy_e2e.py -rA
