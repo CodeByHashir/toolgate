@@ -58,6 +58,8 @@ PROXY_PATH_MODULES = (
     "toolgate.detectors.pii",
     "toolgate.detectors.normalise",
     "toolgate.cli",
+    "toolgate.suggest",
+    "toolgate.log_command",
     "toolgate.proxy.egress",
     "toolgate.proxy.lines",
     "toolgate.proxy.netproxy",

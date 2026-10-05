@@ -659,9 +659,51 @@ def main(argv: list[str] | None = None) -> int:
         help="the server command and its arguments, after --",
     )
 
+    policy = subparsers.add_parser(
+        "policy", help="policy helpers (suggest: draft a policy from a server's tools)"
+    )
+    policy_commands = policy.add_subparsers(dest="policy_command", required=True)
+    suggest = policy_commands.add_parser(
+        "suggest",
+        help="start a server, read its tools/list, print a policy draft to stdout",
+        description=(
+            "Draft a policy from the server's real tools/list: default block, and per "
+            "tool its arguments sorted into url_args, path_args and ignore_args by name "
+            "and schema format. Every guess is marked '# review'; the placeholders allow "
+            "nothing until edited. Prints to stdout and writes no file."
+        ),
+    )
+    suggest.add_argument("--name", required=True, help="server name, as given to `wrap --name`")
+    suggest.add_argument(
+        "--timeout", type=float, default=120.0, help="seconds to wait for the server (default 120)"
+    )
+    suggest.add_argument(
+        "server_command",
+        nargs=argparse.REMAINDER,
+        help="the server command and its arguments, after --",
+    )
+
+    log = subparsers.add_parser(
+        "log",
+        help="show a wrapped server's audit log, newest first (no sqlite3 CLI needed)",
+    )
+    log.add_argument("--name", help="server name, as given to `wrap --name`")
+    log.add_argument(
+        "--config",
+        default=None,
+        help="the server's policy file; defaults to $TOOLGATE_CONFIG",
+    )
+    log.add_argument("--audit", type=Path, default=None, help="read this audit file instead")
+    log.add_argument("--blocked", action="store_true", help="only rows with decision block")
+    log.add_argument("--limit", type=int, default=20, help="rows to show (default 20)")
+
     args = parser.parse_args(argv)
     if args.command == "wrap":
         return _wrap(args)
+    if args.command == "policy":
+        return _policy_suggest(args)
+    if args.command == "log":
+        return _log(args)
     try:
         return _dispatch(parser, args)
     except ModuleNotFoundError as error:
@@ -675,6 +717,49 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+
+
+def _policy_suggest(args: argparse.Namespace) -> int:
+    from toolgate.suggest import SuggestError, draft_policy, list_tools
+
+    command = list(args.server_command)
+    if command and command[0] == "--":
+        command = command[1:]
+    try:
+        tools = list_tools(command, timeout=args.timeout)
+    except SuggestError as exc:
+        print(f"toolgate policy suggest: not drafted: {exc}", file=sys.stderr)
+        return 1
+    sys.stdout.write(draft_policy(args.name, tools))
+    return 0
+
+
+def _log(args: argparse.Namespace) -> int:
+    import os
+
+    from toolgate.log_command import format_rows, read_rows
+
+    audit: Path | None = args.audit
+    if audit is None:
+        from toolgate.proxy.wrap import WrapConfigError, load_wrap_config, resolve_config_path
+
+        if not args.name:
+            print("toolgate log: pass --name (with --config) or --audit", file=sys.stderr)
+            return 1
+        try:
+            config = resolve_config_path(args.config, os.environ)
+            settings = load_wrap_config(args.name, config, environ=os.environ, home=Path.home())
+            audit = settings.audit_path
+        except WrapConfigError as exc:
+            print(f"toolgate log: {exc}", file=sys.stderr)
+            return 1
+    try:
+        rows = read_rows(audit, blocked=args.blocked, limit=args.limit)
+    except FileNotFoundError:
+        print(f"toolgate log: no audit log at {audit}", file=sys.stderr)
+        return 1
+    sys.stdout.write(format_rows(rows))
+    return 0
 
 
 def _wrap(args: argparse.Namespace) -> int:

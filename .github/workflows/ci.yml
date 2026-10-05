@@ -87,6 +87,8 @@ jobs:
           uv run --no-sync pytest -m "not models"
           tests/test_slim_imports.py
           tests/test_version.py
+          tests/test_policy_suggest.py
+          tests/test_log_command.py
           tests/test_tool_calls.py
           tests/test_config.py
           tests/test_detector_base.py
@@ -145,6 +147,8 @@ jobs:
           uv run --no-sync pytest -m "not models"
           tests/test_slim_imports.py
           tests/test_version.py
+          tests/test_policy_suggest.py
+          tests/test_log_command.py
           tests/test_tool_calls.py
           tests/test_gating_audit.py
           tests/test_demo_fixtures.py
