@@ -283,7 +283,22 @@ yet. Until `0.1.0a1` is published, install from git and replace
 `toolgate-mcp==0.1.0a1` below with
 `git+https://github.com/CodeByHashir/toolgate`.
 
-1. Write a policy, e.g. `fetch.yaml`, starting from one of the examples:
+1. Draft a policy from the server's own tool list. `policy suggest` starts the
+   server, reads its `tools/list` and prints a draft to stdout (it writes no
+   file):
+
+   ```bash
+   uvx --from toolgate-mcp==0.1.0a1 toolgate policy suggest --name fetch -- uvx mcp-server-fetch==2026.8.18 > fetch.yaml
+   ```
+
+   In Windows PowerShell 5, `>` writes UTF-16, which toolgate refuses with a
+   message; pipe through `| Out-File -Encoding utf8 fetch.yaml` instead.
+
+   The draft has `default: block` and one rule per tool, with each argument
+   sorted into `url_args`, `path_args` or `ignore_args` by its name and schema
+   format. Every rule is a guess marked `# review`. The placeholders
+   (`example.invalid`, `/replace/with/allowed/dir/**`) allow nothing, so
+   replace them with what the tool may reach, and check each sorted argument:
 
    ```yaml
    tool_calls:
@@ -291,7 +306,10 @@ yet. Until `0.1.0a1` is published, install from git and replace
      rules:
        fetch.fetch:
          egress: ["docs.python.org", "api.internal.example:8443"]
+         url_args: ["url"]
    ```
+
+   [`examples/`](examples) has finished policies to compare against.
 
 2. Put `toolgate wrap` in front of the server, pinned to a version, in
    `.mcp.json`:
@@ -336,11 +354,15 @@ write failures in a row.
 
 **See what was blocked.** Each wrapped server writes its own SQLite log; the
 path is in the startup line. Rows hold rule ids, hashes and timings, never
-arguments or results:
+arguments or results. `toolgate log` prints the newest rows, reading the file
+read-only with Python's sqlite3 (no `sqlite3` command-line tool needed, which
+stock Windows lacks):
 
 ```bash
-sqlite3 "<state_dir>/audit/fetch.sqlite" "SELECT timestamp, tool_name, note FROM decision_log WHERE fused_decision = 'block' ORDER BY id DESC LIMIT 20"
+uvx --from toolgate-mcp==0.1.0a1 toolgate log --name fetch --config /absolute/path/to/fetch.yaml --blocked
 ```
+
+`--audit <file>` reads a log directly; `--limit N` shows more than 20 rows.
 
 Each direction is processed one line at a time, in order. Measured on the
 Windows dev machine with the egress rule, `rules_mcp` and `pii` enabled
