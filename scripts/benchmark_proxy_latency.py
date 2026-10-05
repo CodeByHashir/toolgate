@@ -19,6 +19,12 @@ warm-up of 50 calls per mode is discarded. Timing is wall-clock from writing
 the request to reading the full reply line, measured in this process.
 
     uv run python scripts/benchmark_proxy_latency.py [--calls 1000] [--out FILE]
+        [--network off|audit|enforce]
+
+`--network` sets the policy's network mode (default off). The fake server makes
+no HTTP requests, so with it on this measures what network mode adds to the
+stdio path (the forward proxy beside the pump, and the in-flight bookkeeping),
+not the cost of proxied connections.
 """
 
 from __future__ import annotations
@@ -58,6 +64,7 @@ tool_calls:
     bench.fetch:
       egress: ["docs.example.com"]
 audit_path: "{audit}"
+network: {network}
 """
 
 
@@ -113,6 +120,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
     parser.add_argument("--calls", type=int, default=1000)
     parser.add_argument("--out", type=Path, default=None, help="also write the results as JSON")
+    parser.add_argument("--network", choices=["off", "audit", "enforce"], default="off")
     args = parser.parse_args(argv)
 
     report: dict[str, Any] = {
@@ -120,12 +128,16 @@ def main(argv: list[str] | None = None) -> int:
         "python": platform.python_version(),
         "calls": args.calls,
         "warmup": WARMUP,
+        "network": args.network,
         "sizes": {},
     }
     with tempfile.TemporaryDirectory() as tmp:
         config = Path(tmp) / "bench.yaml"
         config.write_text(
-            POLICY.replace("{audit}", (Path(tmp) / "audit.sqlite").as_posix()), encoding="utf-8"
+            POLICY.replace("{audit}", (Path(tmp) / "audit.sqlite").as_posix()).replace(
+                "{network}", f'"{args.network}"'
+            ),
+            encoding="utf-8",
         )
         for label, size in SIZES.items():
             server = [sys.executable, str(FAKE), "--payload", str(size)]
@@ -136,7 +148,10 @@ def main(argv: list[str] | None = None) -> int:
             added = {key: through[key] - direct[key] for key in direct}
             report["sizes"][label] = {"direct": direct, "wrapped": through, "added": added}
 
-    print(f"{report['platform']}, Python {report['python']}, {args.calls} calls per mode")
+    print(
+        f"{report['platform']}, Python {report['python']}, {args.calls} calls per mode, "
+        f"network {args.network}"
+    )
     print(f"{'size':<8}{'mode':<9}{'p50 ms':>9}{'p95 ms':>9}{'p99 ms':>9}")
     for label, rows in report["sizes"].items():
         for mode in ("direct", "wrapped", "added"):
