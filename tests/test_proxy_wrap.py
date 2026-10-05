@@ -527,8 +527,13 @@ class TestNetworkMode:
     ) -> None:
         page = f"http://localhost:{sites.page_port}/redirect"
         policy = _network_policy(mode, [f"localhost:{sites.page_port}"])
+        # A parent NO_PROXY naming the loopback attacker must not exempt it.
         completed = self._run(
-            tmp_path, policy, [*SESSION[:3], _call(9, "fetch", {"url": page})], "--fetch"
+            tmp_path,
+            policy,
+            [*SESSION[:3], _call(9, "fetch", {"url": page})],
+            "--fetch",
+            NO_PROXY="localhost,127.0.0.1",
         )
         stderr = completed.stderr.decode()
         assert completed.returncode == 0, stderr
@@ -550,3 +555,17 @@ class TestNetworkMode:
         ]
         assert "is not in the egress union of server fake" in rows[1][2]
         assert all("tg:" not in str(row) for row in rows)
+
+    def test_a_proxy_ignoring_client_still_leaks(self, tmp_path: Path, sites: _Sites) -> None:
+        # Network mode is cooperative. A client that ignores proxy variables
+        # connects directly and follows the redirect: asserted, so the
+        # documentation's "not covered" stays true.
+        page = f"http://localhost:{sites.page_port}/redirect"
+        completed = self._run(
+            tmp_path,
+            _network_policy("enforce", [f"localhost:{sites.page_port}"]),
+            [*SESSION[:3], _call(9, "fetch", {"url": page})],
+            "--fetch-direct",
+        )
+        assert completed.returncode == 0, completed.stderr.decode()
+        assert sites.hits == ["/leak?d=canary"]

@@ -31,9 +31,9 @@ host means the same thing at both layers:
   reach the address it names.
 
 Network mode is cooperative: it covers clients that honour proxy variables and
-do not exempt the destination. httpx (mcp-server-fetch) sends loopback through
-the proxy; Node's built-in fetch connects to loopback directly even with
-`NODE_USE_ENV_PROXY=1` (probed). Clients that ignore the variables are not
+do not exempt the destination. httpx (mcp-server-fetch) and Node 24's built-in
+fetch with `NODE_USE_ENV_PROXY=1` both send loopback destinations through the
+proxy (tests/test_proxy_clients.py). Clients that ignore the variables are not
 covered at all.
 """
 

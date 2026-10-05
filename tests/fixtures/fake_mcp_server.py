@@ -16,6 +16,8 @@ Options (argv):
   following redirects and honouring proxy variables, as mcp-server-fetch
   does; the result is `status=<code>` or `error=<exception name>` (httpx is
   imported only in this mode);
+* `--fetch-direct` the same, but with `trust_env=False`: a client that
+  ignores proxy variables, which network mode does not cover;
 * `--payload N`    answer every tools/call with N bytes of plain filler text
   instead of the echo (for the latency benchmark).
 """
@@ -41,14 +43,15 @@ TOOLS = [
 ]
 
 
-def _fetch(message: dict[str, object]) -> str:
+def _fetch(message: dict[str, object], trust_env: bool) -> str:
     import httpx
 
     params = message.get("params")
     arguments = params.get("arguments", {}) if isinstance(params, dict) else {}
     url = arguments.get("url") if isinstance(arguments, dict) else None
     try:
-        response = httpx.get(str(url), follow_redirects=True, timeout=5.0)
+        with httpx.Client(trust_env=trust_env, follow_redirects=True, timeout=5.0) as client:
+            response = client.get(str(url))
     except httpx.HTTPError as exc:
         return f"error={type(exc).__name__}"
     return f"status={response.status_code}"
@@ -58,7 +61,8 @@ def main(argv: list[str]) -> int:
     marker = argv[argv.index("--marker") + 1] if "--marker" in argv else None
     exit_after = int(argv[argv.index("--exit-after") + 1]) if "--exit-after" in argv else None
     env_name = argv[argv.index("--env") + 1] if "--env" in argv else None
-    fetch_mode = "--fetch" in argv
+    fetch_mode = "--fetch" in argv or "--fetch-direct" in argv
+    trust_env = "--fetch-direct" not in argv
     payload_bytes = int(argv[argv.index("--payload") + 1]) if "--payload" in argv else None
     filler = ("the quick brown fox jumps over the lazy dog " * 4096)[: payload_bytes or 0]
     if marker:
@@ -80,7 +84,7 @@ def main(argv: list[str]) -> int:
         elif method == "tools/list":
             result = {"tools": TOOLS}
         elif method == "tools/call" and fetch_mode:
-            result = {"content": [{"type": "text", "text": _fetch(message)}]}
+            result = {"content": [{"type": "text", "text": _fetch(message, trust_env)}]}
         elif method == "tools/call" and payload_bytes is not None:
             result = {"content": [{"type": "text", "text": filler}]}
         elif method == "tools/call":

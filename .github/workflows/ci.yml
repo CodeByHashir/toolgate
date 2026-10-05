@@ -102,6 +102,7 @@ jobs:
           tests/test_gating_declaration_policy.py
           tests/test_demo_fixtures.py
           tests/test_proxy_process.py
+          tests/test_proxy_clients.py
           tests/test_proxy_egress.py
           tests/test_proxy_lines.py
           tests/test_proxy_netproxy.py
@@ -148,6 +149,7 @@ jobs:
           tests/test_gating_audit.py
           tests/test_demo_fixtures.py
           tests/test_proxy_process.py
+          tests/test_proxy_clients.py
           tests/test_proxy_egress.py
           tests/test_proxy_lines.py
           tests/test_proxy_netproxy.py

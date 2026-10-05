@@ -36,8 +36,8 @@ the config file's directory.
   names an upstream proxy (chaining is not supported), and gives the child a
   copy of the environment with the proxy variables pointing at it and every
   `NO_PROXY` removed. Off, the child's environment is passed through untouched
-  (`env=None`, C6). Cooperative only: clients that ignore proxy variables, and
-  Node's built-in fetch for loopback destinations, are not covered.
+  (`env=None`, C6). Cooperative only: clients that ignore proxy variables are
+  not covered, and Node needs a version that reads `NODE_USE_ENV_PROXY`.
 
 stdout carries only lines from the server or produced by the gate; every
 diagnostic goes to stderr, which hosts keep as the server's log.
