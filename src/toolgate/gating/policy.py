@@ -32,6 +32,7 @@ comparison the project exists to make.
 
 from __future__ import annotations
 
+import codecs
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -99,6 +100,22 @@ def _require(mapping: dict[str, Any], key: str, where: str) -> Any:
     return mapping[key]
 
 
+def read_config_text(path: Path) -> str:
+    """A config file's text, as UTF-8 (a leading byte-order mark is fine).
+
+    A UTF-16 file is refused with a message saying how to fix it: Windows
+    PowerShell 5's `>` writes UTF-16, so `toolgate policy suggest ... >
+    policy.yaml` would otherwise fail with a bare UnicodeDecodeError.
+    """
+    data = path.read_bytes()
+    if data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        raise ValueError(
+            f"{path} is UTF-16 (Windows PowerShell's `>` writes UTF-16); save it as "
+            "UTF-8, e.g. `toolgate policy suggest ... | Out-File -Encoding utf8 policy.yaml`"
+        )
+    return data.decode("utf-8")
+
+
 def load_policy_config(path: Path | None = None) -> PolicyConfig:
     """Read and validate the policy configuration.
 
@@ -106,7 +123,7 @@ def load_policy_config(path: Path | None = None) -> PolicyConfig:
     fails at startup rather than partway through a gated session.
     """
     policy_path = path or DEFAULT_POLICY_PATH
-    raw = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
+    raw = yaml.safe_load(read_config_text(policy_path))
     if not isinstance(raw, dict):
         raise ValueError(f"{policy_path} did not parse to a mapping")
 

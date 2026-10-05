@@ -71,7 +71,7 @@ from toolgate.gating.audit import (
     Outcome,
     default_audit_path,
 )
-from toolgate.gating.policy import PolicyConfig, load_policy_config
+from toolgate.gating.policy import PolicyConfig, load_policy_config, read_config_text
 from toolgate.gating.tool_calls import PlaceholderError, expand_placeholders, resolve_sandbox
 from toolgate.proxy.egress import (
     NetworkMode,
@@ -154,7 +154,7 @@ def load_wrap_config(
         raise WrapConfigError(f"--name {name!r} must match [A-Za-z0-9_-]+")
     try:
         policy = load_policy_config(config_path)
-        raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        raw = yaml.safe_load(read_config_text(config_path))
     except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as exc:
         raise WrapConfigError(f"invalid config {config_path}: {exc}") from exc
     assert isinstance(raw, dict)  # load_policy_config already required a mapping
