@@ -368,3 +368,25 @@ def test_unparseable_policy_file_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="did not parse to a mapping"):
         load_policy_config(bad)
+
+
+@pytest.mark.parametrize("encoding", ["utf-16", "utf-16-le", "utf-16-be"])
+def test_a_utf16_policy_file_gets_a_clear_error(tmp_path: Path, encoding: str) -> None:
+    # Windows PowerShell 5's `>` writes UTF-16, so
+    # `toolgate policy suggest ... > fetch.yaml` produced a file the loader
+    # rejected with a bare UnicodeDecodeError. Say what happened and how to fix it.
+    path = tmp_path / "policy.yaml"
+    text = "tool_calls:\n  default: block\n"
+    data = text.encode(encoding)
+    if encoding != "utf-16":
+        data = ("﻿" + text).encode(encoding)
+    path.write_bytes(data)
+    with pytest.raises(ValueError, match="UTF-16") as caught:
+        load_policy_config(path)
+    assert "Out-File -Encoding utf8" in str(caught.value)
+
+
+def test_a_utf8_policy_file_with_a_bom_loads(tmp_path: Path) -> None:
+    path = tmp_path / "policy.yaml"
+    path.write_bytes("tool_calls:\n  default: block\n".encode("utf-8-sig"))
+    assert load_policy_config(path).tool_calls.default.value == "block"
