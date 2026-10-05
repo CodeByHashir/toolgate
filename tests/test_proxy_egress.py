@@ -48,11 +48,12 @@ def _entries(*texts: str) -> tuple:
     [
         (None, NetworkMode.OFF),
         ("off", NetworkMode.OFF),
+        (False, NetworkMode.OFF),  # YAML 1.1 reads an unquoted `off` as false
         ("audit", NetworkMode.AUDIT),
         ("enforce", NetworkMode.ENFORCE),
     ],
 )
-def test_network_mode_values(value: str | None, mode: NetworkMode) -> None:
+def test_network_mode_values(value: object, mode: NetworkMode) -> None:
     assert parse_network_mode(value) is mode
 
 

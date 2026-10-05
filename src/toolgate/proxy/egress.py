@@ -91,8 +91,13 @@ class NetworkMode(enum.Enum):
 
 
 def parse_network_mode(value: Any) -> NetworkMode:
-    """Read the `network` key. Absent means off; anything unknown is an error."""
-    if value is None:
+    """Read the `network` key. Absent means off; anything unknown is an error.
+
+    YAML 1.1 reads an unquoted `off` as the boolean false, so `network: off`
+    arrives as False and is accepted as off. True (`on`, `yes`) is refused:
+    it names no mode.
+    """
+    if value is None or value is False:
         return NetworkMode.OFF
     if isinstance(value, str):
         for mode in NetworkMode:

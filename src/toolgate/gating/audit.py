@@ -76,6 +76,11 @@ class Outcome(StrEnum):
     #: verdict for a tool this log pinned months ago is a contradiction rather
     #: than a first sighting, which is what `declaration_seen()` reports.
     TOOL_DECLARATION = "tool_declaration"
+    #: A connection the wrapped server opened through the network-mode proxy
+    #: (`proxy/netproxy.py`): allowed or refused by the server's egress union
+    #: and the address check. Request-side and deterministic, like TOOL_CALL,
+    #: and kept apart from it because it judges a connection, not a call.
+    NETWORK_EGRESS = "network_egress"
 
 
 SCHEMA = """

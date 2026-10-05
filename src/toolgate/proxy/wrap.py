@@ -30,6 +30,15 @@ Config keys `wrap` reads on top of the policy schema (`gating/policy.py`):
 All three accept `~` and `${NAME}`, and a relative value is resolved against
 the config file's directory.
 
+* `network:` -- `off` (default), `audit` or `enforce` (design: network egress
+  mode). When on, `wrap` binds a forward proxy on 127.0.0.1 before the child
+  starts (a bind failure exits 1), refuses to start if the environment already
+  names an upstream proxy (chaining is not supported), and gives the child a
+  copy of the environment with the proxy variables pointing at it and every
+  `NO_PROXY` removed. Off, the child's environment is passed through untouched
+  (`env=None`, C6). Cooperative only: clients that ignore proxy variables, and
+  Node's built-in fetch for loopback destinations, are not covered.
+
 stdout carries only lines from the server or produced by the gate; every
 diagnostic goes to stderr, which hosts keep as the server's log.
 """
@@ -39,8 +48,11 @@ from __future__ import annotations
 import dataclasses
 import os
 import re
+import secrets
+import socket
 import sqlite3
 import sys
+import uuid
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
@@ -48,12 +60,28 @@ from pathlib import Path
 from typing import IO, Any
 
 import anyio
+import anyio.abc
 import yaml
 
-from toolgate.gating.audit import AuditWriter, DecisionLog, default_audit_path
+from toolgate.gating.audit import (
+    AuditWriter,
+    Decision,
+    DecisionLog,
+    DecisionRecord,
+    Outcome,
+    default_audit_path,
+)
 from toolgate.gating.policy import PolicyConfig, load_policy_config
 from toolgate.gating.tool_calls import PlaceholderError, expand_placeholders, resolve_sandbox
+from toolgate.proxy.egress import (
+    NetworkMode,
+    egress_union,
+    network_child_env,
+    parent_proxy_variables,
+    parse_network_mode,
+)
 from toolgate.proxy.lines import CHUNK_BYTES
+from toolgate.proxy.netproxy import EgressProxy, NetworkEvent
 from toolgate.proxy.process import ChildProcess, ExitCode, SessionEnd, run_proxy
 from toolgate.proxy.pump import ProxyCore, ProxySettings, run_pump
 
@@ -78,6 +106,7 @@ class WrapConfig:
     sandbox: Path | None
     state_dir: Path
     audit_path: Path
+    network: NetworkMode = NetworkMode.OFF
 
 
 def _default_state_dir() -> Path:
@@ -147,7 +176,8 @@ def load_wrap_config(
         audit_path = _path_setting(
             raw, "audit_path", base_dir=base_dir, environ=environ, home=home
         ) or default_audit_path(state_dir, name)
-    except PlaceholderError as exc:
+        network = parse_network_mode(raw.get("network"))
+    except (PlaceholderError, ValueError) as exc:
         raise WrapConfigError(f"invalid config {config_path}: {exc}") from exc
 
     return WrapConfig(
@@ -157,6 +187,7 @@ def load_wrap_config(
         sandbox=sandbox,
         state_dir=state_dir,
         audit_path=audit_path,
+        network=network,
     )
 
 
@@ -199,6 +230,68 @@ def _say(name: str, message: str) -> None:
         sys.stderr.flush()
 
 
+LAUNCHER_HINT = (
+    "the server exited before initialize with network mode on; launchers such as "
+    "uvx and npx contact their package index through the proxy. Use 'uvx --offline' "
+    "or 'npx --offline' (after one run without network mode fills the cache), or a "
+    "preinstalled server."
+)
+
+
+def _network_record(name: str, mode: NetworkMode, event: NetworkEvent) -> DecisionRecord:
+    """One audit row for a decided connection. Holds host:port, never the token."""
+    destination = f"{event.destination.host}:{event.destination.port}"
+    rule = f"{name}.network.egress"
+    if not event.allowed:
+        note = f"rule {rule}: {event.reason}"
+    elif event.reason:
+        note = f"rule {rule}: audit only, enforce would refuse: {event.reason}"
+    else:
+        note = f"rule {rule}: allowed"
+    scores: dict[str, object] = {
+        "destination": destination,
+        "address": event.address,
+        "divergence": event.divergence.value,
+        "mode": mode.value,
+    }
+    if event.suppressed:
+        scores["suppressed_before"] = event.suppressed
+    return DecisionRecord(
+        correlation_id=uuid.uuid4().hex,
+        mcp_server_id=name,
+        raw_result_hash="",
+        fused_decision=Decision.ALLOW if event.allowed else Decision.BLOCK,
+        latency_ms=0.0,
+        outcome=Outcome.NETWORK_EGRESS,
+        detector_scores=scores,
+        note=note,
+    )
+
+
+def _suppressed_record(
+    name: str, mode: NetworkMode, key: tuple[str, ...], count: int
+) -> DecisionRecord:
+    destination, decision, divergence = key
+    return DecisionRecord(
+        correlation_id=uuid.uuid4().hex,
+        mcp_server_id=name,
+        raw_result_hash="",
+        fused_decision=Decision.ALLOW if decision == "allowed" else Decision.BLOCK,
+        latency_ms=0.0,
+        outcome=Outcome.NETWORK_EGRESS,
+        detector_scores={
+            "destination": destination,
+            "divergence": divergence,
+            "mode": mode.value,
+            "suppressed": count,
+        },
+        note=(
+            f"rule {name}.network.egress: {count} further {decision} connection(s) "
+            "not logged individually (throttled)"
+        ),
+    )
+
+
 def run_wrap(
     name: str,
     config: str | None,
@@ -218,6 +311,42 @@ def run_wrap(
         _say(name, f"not started: {exc}")
         return int(ExitCode.CONFIG_ERROR)
 
+    network = settings.network
+    proxy_socket: socket.socket | None = None
+    if network is not NetworkMode.OFF:
+        upstream = parent_proxy_variables(environ)
+        if upstream:
+            _say(
+                name,
+                f"not started: network mode does not chain to an upstream proxy, and "
+                f"{', '.join(upstream)} is set; unset it or set network: off",
+            )
+            return int(ExitCode.CONFIG_ERROR)
+        try:
+            proxy_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            proxy_socket.bind(("127.0.0.1", 0))
+            proxy_socket.listen(128)
+        except OSError as exc:
+            if proxy_socket is not None:
+                proxy_socket.close()
+            _say(name, f"not started: cannot bind the network-mode proxy: {exc}")
+            return int(ExitCode.CONFIG_ERROR)
+
+    try:
+        return _run_wrapped(name, settings, command, environ, proxy_socket)
+    finally:
+        if proxy_socket is not None:
+            proxy_socket.close()
+
+
+def _run_wrapped(
+    name: str,
+    settings: WrapConfig,
+    command: Sequence[str],
+    environ: Mapping[str, str],
+    proxy_socket: socket.socket | None,
+) -> int:
+    network = settings.network
     try:
         log = DecisionLog(settings.audit_path)
     except (OSError, sqlite3.Error) as exc:
@@ -231,6 +360,7 @@ def run_wrap(
                     name=name,
                     policy=settings.policy,
                     audit_label=str(settings.audit_path),
+                    network=network is not NetworkMode.OFF,
                 )
             )
         except Exception as exc:  # noqa: BLE001 -- e.g. a detector needing an absent extra
@@ -239,12 +369,56 @@ def run_wrap(
 
         writer = AuditWriter(log)
         host = StdioHost()
+        env: dict[str, str] | None = None
+        egress_proxy: EgressProxy | None = None
+
+        def record_network(event: NetworkEvent) -> None:
+            writer.append(_network_record(name, network, event))
+
+        if proxy_socket is not None:
+            token = secrets.token_urlsafe(16)
+            port = proxy_socket.getsockname()[1]
+            entries = egress_union(settings.policy.tool_calls, name)
+            egress_proxy = EgressProxy(
+                server=name,
+                mode=network,
+                entries=entries,
+                token=token,
+                record=record_network,
+                in_flight=core.in_flight,
+            )
+            env = network_child_env(
+                environ, f"http://tg:{token}@127.0.0.1:{port}", windows=os.name == "nt"
+            )
 
         async def pump(child: ChildProcess) -> SessionEnd:
-            return await run_pump(child, host, core, audit=writer)
+            if egress_proxy is None or proxy_socket is None:
+                return await run_pump(child, host, core, audit=writer)
+            listener = await anyio.abc.SocketListener.from_socket(proxy_socket)
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(egress_proxy.serve, listener)
+                try:
+                    return await run_pump(child, host, core, audit=writer)
+                finally:
+                    tg.cancel_scope.cancel()
+            raise AssertionError("unreachable")  # pragma: no cover - for type checkers
 
         _say(name, f"policy {settings.config_path}; audit {settings.audit_path}")
-        return int(run_proxy(list(command), pump))
+        if egress_proxy is not None:
+            allows = (
+                f"allows {len(egress_proxy.entries)} egress entries"
+                if egress_proxy.entries
+                else "allows no hosts"
+            )
+            _say(name, f"network mode: cooperative ({network.value}), {allows}")
+        code = run_proxy(list(command), pump, env=env)
+        if egress_proxy is not None:
+            with suppress(Exception):
+                for key, count in egress_proxy.flush_suppressed().items():
+                    writer.append(_suppressed_record(name, network, key, count))
+            if code is ExitCode.CHILD_FAILED and not core.server_spoke:
+                _say(name, LAUNCHER_HINT)
+        return int(code)
     finally:
         with suppress(Exception):
             log.close()

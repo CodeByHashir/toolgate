@@ -465,3 +465,30 @@ async def test_repeated_refusals_are_throttled() -> None:
         for _ in range(3):
             await exchange(port, request("CONNECT evil.test:443 HTTP/1.1", "Host: x"))
     assert len(events) == 1
+
+
+async def test_a_slow_upstream_delays_only_its_own_connection() -> None:
+    # Each connection runs in its own task: one stuck on a silent upstream
+    # does not hold up another (nor the pump, which shares the event loop and
+    # never awaits the proxy).
+    upstream = Upstream(silent=True)
+    limits = ProxyLimits(max_connections=8, connect_timeout=0.5, header_timeout=0.5,
+                         header_bytes=2048, idle_timeout=3.0)  # fmt: skip
+    names = {"example.com": [PUBLIC]}
+    async with (
+        running("example.com", upstream=upstream, names=names, limits=limits) as (
+            port,
+            _,
+            _,
+        ),
+        anyio.create_task_group() as tg,
+    ):
+        tg.start_soon(exchange, port, request("GET http://example.com/slow HTTP/1.1",
+                                              "Host: x"), )  # fmt: skip
+        await anyio.sleep(0.2)
+        started = anyio.current_time()
+        reply = await exchange(port, request("CONNECT nowhere.test:443 HTTP/1.1", "Host: x"))
+        elapsed = anyio.current_time() - started
+        tg.cancel_scope.cancel()
+    assert status(reply) == 403
+    assert elapsed < 1.0

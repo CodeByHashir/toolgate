@@ -72,7 +72,13 @@ from toolgate.detectors.normalise import scan_normalised
 from toolgate.gating.audit import AuditWriter, Decision, DecisionRecord, Outcome
 from toolgate.gating.content import apply_redaction, build_block_result, extract
 from toolgate.gating.policy import PolicyConfig, PolicyEngine
-from toolgate.gating.tool_calls import ToolDecision, evaluate_tool_call, unclassified_arguments
+from toolgate.gating.tool_calls import (
+    ToolDecision,
+    _named_values,
+    evaluate_tool_call,
+    parse_destination,
+    unclassified_arguments,
+)
 from toolgate.gating.transport import build_detectors
 from toolgate.proxy.lines import (
     MAX_LINE_BYTES,
@@ -121,6 +127,9 @@ class ProxySettings:
     drain_after_host_eof_s: float = 5.0
     #: Where audit rows go, for the coverage line on stderr (C2).
     audit_label: str = "in memory (not persisted)"
+    #: Network mode is on (audit or enforce): after a `tools/list`, name the
+    #: tools with no rule, whose connections the proxy checks all the same.
+    network: bool = False
 
 
 class Kind(Enum):
@@ -138,6 +147,9 @@ class Pending:
     correlation_id: str
     started: float
     cancelled: bool = False
+    #: (host, port) of every URL argument of a call under an `egress` rule;
+    #: empty for any other call. Read by network mode for divergence.
+    destinations: frozenset[tuple[str, int]] = frozenset()
 
 
 @dataclass(slots=True)
@@ -223,12 +235,42 @@ class ProxyCore:
         #: Declared `inputSchema` per tool name, from `tools/list` replies.
         self.schemas: dict[str, Any] = {}
         self._last_coverage: tuple[int, int] | None = None
+        #: Whether any line has arrived from the server (network mode's
+        #: launcher hint: a launcher refused by the proxy exits silently).
+        self.server_spoke = False
 
     # -- helpers ----------------------------------------------------------
 
     @property
     def active_pending(self) -> int:
         return sum(1 for entry in self.pending.values() if not entry.cancelled)
+
+    def in_flight(self) -> list[frozenset[tuple[str, int]]]:
+        """Destinations of each forwarded `tools/call` awaiting its reply.
+
+        Read by the network-mode proxy when a connection opens. The proxy runs
+        in the same event loop thread and this core does no I/O, so a read
+        never sees a half-applied event and needs no lock.
+        """
+        return [
+            entry.destinations
+            for entry in self.pending.values()
+            if entry.kind is Kind.CALL and not entry.cancelled
+        ]
+
+    def _call_destinations(self, message: dict[str, Any]) -> frozenset[tuple[str, int]]:
+        params = message.get("params")
+        if not isinstance(params, dict):
+            return frozenset()
+        rule = self.settings.policy.tool_calls.rules.get(f"{self.name}.{params.get('name')}")
+        if rule is None or rule.egress is None:
+            return frozenset()
+        found = set()
+        for value in _named_values(params.get("arguments"), rule.url_names):
+            destination = parse_destination(value)
+            if destination is not None:
+                found.add((destination.host, destination.port))
+        return frozenset(found)
 
     def _record(
         self,
@@ -418,7 +460,14 @@ class ProxyCore:
             effects.messages.append(f"toolgate[{self.name}]: blocked {tool} (rule {rule})")
         else:
             effects.to_server.append(raw)
-            self.pending[key] = Pending(Kind.CALL, tool, request_id, correlation_id, started)
+            self.pending[key] = Pending(
+                Kind.CALL,
+                tool,
+                request_id,
+                correlation_id,
+                started,
+                destinations=self._call_destinations(message),
+            )
             if decision is ToolDecision.ESCALATE:
                 effects.messages.append(f"toolgate[{self.name}]: escalate {tool} (rule {rule})")
 
@@ -532,6 +581,7 @@ class ProxyCore:
         the tracked/untracked decision itself must not depend on Python's
         last-key-wins reading (R3-3).
         """
+        self.server_spoke = True
         try:
             message = loads_strict(raw)
         except StrictJsonError as exc:
@@ -685,7 +735,21 @@ class ProxyCore:
         if coverage != self._last_coverage:
             self._last_coverage = coverage
             effects.messages.append(self.coverage_line())
+            unruled = self._unruled_tools()
+            if self.settings.network and unruled:
+                effects.messages.append(
+                    f"toolgate[{self.name}]: network mode also checks tools without an "
+                    f"egress rule: {', '.join(unruled)}"
+                )
         return effects
+
+    def _unruled_tools(self) -> list[str]:
+        """Tools with no rule under `default: allow`: argument-unchecked, but
+        their connections still go through the network-mode proxy."""
+        policy = self.settings.policy.tool_calls
+        if policy.default is not ToolDecision.ALLOW:
+            return []
+        return [tool for tool in self.schemas if f"{self.name}.{tool}" not in policy.rules]
 
     def _constrained(self, tool: str) -> bool:
         """Whether a call to `tool` is checked or refused, not just passed through."""
