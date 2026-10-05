@@ -938,3 +938,56 @@ class TestCoverageLine:
         proxy.client_line(list_request(1))
         effects = proxy.server_line(tools_reply(1, [{"name": "ok"}, {"name": "x"}, {"name": "y"}]))
         assert "2 of 3 tools constrained (default: block)" in effects.messages[-1]
+
+
+class TestNetworkModeHooks:
+    """What network mode reads from the core: calls in flight, and whether the
+    server has said anything yet (design: network egress mode)."""
+
+    def test_a_forwarded_egress_call_is_in_flight_with_its_destinations(self) -> None:
+        proxy = core()
+        declare_fetch(proxy)
+        assert proxy.in_flight() == []
+        proxy.client_line(call(1, "https://docs.example.com/x"))
+        assert proxy.in_flight() == [frozenset({("docs.example.com", 443)})]
+        proxy.server_line(
+            line(
+                {"jsonrpc": "2.0", "id": 1, "result": {"content": [{"type": "text", "text": "x"}]}}
+            )
+        )
+        assert proxy.in_flight() == []
+
+    def test_a_call_without_an_egress_rule_is_in_flight_with_no_destinations(self) -> None:
+        proxy = core({"default": "allow", "rules": {}})
+        proxy.client_line(call(1, "https://anywhere.test/"))
+        assert proxy.in_flight() == [frozenset()]
+
+    def test_a_blocked_call_is_never_in_flight(self) -> None:
+        proxy = core()
+        proxy.client_line(call(1, "https://evil.test/"))
+        assert proxy.in_flight() == []
+
+    def test_server_spoke(self) -> None:
+        proxy = core()
+        assert proxy.server_spoke is False
+        proxy.server_line(line({"jsonrpc": "2.0", "method": "notifications/message"}))
+        assert proxy.server_spoke is True
+
+    def test_network_mode_names_tools_without_a_rule_after_tools_list(self) -> None:
+        proxy = core(network=True)
+        proxy.client_line(list_request(1))
+        effects = proxy.server_line(
+            tools_reply(1, [{"name": "fetch", "inputSchema": FETCH_SCHEMA}, {"name": "a"}])
+        )
+        assert (
+            "toolgate[fetch]: network mode also checks tools without an egress rule: a"
+            in effects.messages
+        )
+
+    def test_no_such_line_without_network_mode_or_with_default_block(self) -> None:
+        for proxy in (core(), core({"default": "block", "rules": {}}, network=True)):
+            proxy.client_line(list_request(1))
+            effects = proxy.server_line(
+                tools_reply(1, [{"name": "fetch", "inputSchema": FETCH_SCHEMA}, {"name": "a"}])
+            )
+            assert not any("network mode" in m for m in effects.messages)

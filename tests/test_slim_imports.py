@@ -58,14 +58,16 @@ PROXY_PATH_MODULES = (
     "toolgate.detectors.pii",
     "toolgate.detectors.normalise",
     "toolgate.cli",
+    "toolgate.proxy.egress",
     "toolgate.proxy.lines",
+    "toolgate.proxy.netproxy",
     "toolgate.proxy.pump",
     "toolgate.proxy.wrap",
 )
 
 # Distribution names the base install may pull in directly. Anything else
 # belongs in an extra.
-BASE_ALLOWLIST = {"mcp", "pydantic", "pyyaml", "anyio", "platformdirs"}
+BASE_ALLOWLIST = {"mcp", "pydantic", "pyyaml", "anyio", "platformdirs", "h11"}
 
 # Distribution names of the research stack, as uv.lock spells them.
 HEAVY_DISTRIBUTIONS = {

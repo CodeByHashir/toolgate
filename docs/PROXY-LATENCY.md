@@ -62,3 +62,23 @@ Linux.
 within 0.5 ms of the Windows figure. At 100 KB the added p99 (48.7 ms) is close to
 Windows (52.1 ms), consistent with the cost being the detectors' scan, which does
 not depend on the operating system's pipes.
+
+## Network mode, Windows dev machine, 2026-10-05
+
+Same benchmark with `--network enforce` against `--network off`, alternating,
+two runs each, 1,000 calls per mode. The fake server makes no HTTP requests,
+so this is what network mode adds to the stdio path: the forward proxy running
+beside the pump, and recording each call's destinations for the divergence
+field. It is not the cost of a proxied connection.
+
+| Run | network | 1 KB p99 added (ms) | 100 KB p99 added (ms) |
+|---|---|---|---|
+| 1 | off | 1.391 | 75.202 |
+| 2 | enforce | 1.511 | 55.358 |
+| 3 | off | 1.473 | 60.057 |
+| 4 | enforce | 1.519 | 58.977 |
+
+**At 1 KB, network mode adds 0.04-0.13 ms at p99**, inside the design's
+criterion (within 1 ms of the mode off). At 100 KB the run-to-run spread
+(55-75 ms) is larger than any difference between the modes, so no effect is
+claimed there either way.

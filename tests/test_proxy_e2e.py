@@ -15,10 +15,11 @@ and a state_dir under tmp_path so no test writes to the user's state dir.
 What this proves is the proxy, not a model: the exact calls the injection
 asks for are made, and the listener -- the only witness -- receives nothing
 for the variants the egress rule covers. The redirect variant is asserted to
-LEAK: the URL is on the allowlist and the server follows the redirect
-itself, which is outside what toolgate checks. Asserting it keeps the
-README's "not covered" line honest; if it ever stops leaking, something
-changed that the documentation must reflect.
+LEAK with network mode off: the URL is on the allowlist and the server
+follows the redirect itself, which the argument-level gate cannot see.
+Asserting it keeps the README's "not covered without network mode" line
+honest. With `network: enforce` (the last test) the redirect hop goes
+through toolgate's forward proxy and is refused.
 """
 
 from __future__ import annotations
@@ -126,3 +127,54 @@ def test_toolgate_on_refuses_every_covered_variant(tmp_path: Path) -> None:
     assert all(row[0] == "fetch" and row[1] == "tool_call" for row in blocks)
     assert all("rule fetch.fetch.egress" in row[2] for row in blocks)
     assert all("tg-7f3a9c1e5b2d4e60" not in str(row) for row in blocks)
+
+
+def test_network_mode_refuses_the_redirect(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Network mode closes the redirect variant for mcp-server-fetch (httpx).
+
+    The launcher must run offline (design premise 4): with proxy variables
+    set, `uvx` would ask PyPI through the proxy and be refused. One online
+    run first fills the cache, as the README tells users to do. A parent
+    NO_PROXY naming loopback must not exempt the loopback attacker.
+    """
+    import subprocess
+
+    subprocess.run([*FETCH_COMMAND, "--help"], capture_output=True, timeout=300, check=True)
+    offline_fetch = (FETCH_COMMAND[0], "--offline", *FETCH_COMMAND[1:])
+    monkeypatch.setenv("NO_PROXY", "localhost,127.0.0.1")
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+        monkeypatch.delenv(name, raising=False)
+        monkeypatch.delenv(name.lower(), raising=False)
+
+    page_port, attacker_port = free_port(), free_port()
+    fetch_config, filesystem_config = _configs(tmp_path, page_port)
+    fetch_config.write_text(
+        fetch_config.read_text(encoding="utf-8") + "network: enforce\n", encoding="utf-8"
+    )
+
+    result = run_scenario(
+        _wrapped("filesystem", filesystem_config, FILESYSTEM_COMMAND),
+        _wrapped("fetch", fetch_config, offline_fetch),
+        page_port=page_port,
+        attacker_port=attacker_port,
+    )
+
+    assert result.control_ok, (result.control_head, result.noise)
+    outcomes = result.by_variant()
+    for variant in ("exfil", "backslash", "other_port"):
+        assert outcomes[variant].refused, variant
+        assert outcomes[variant].listener_targets == [], variant
+    redirect = outcomes["redirect"]
+    assert not redirect.canary_at_listener, redirect.reply_head
+    assert redirect.listener_targets == [], redirect.reply_head
+
+    audit = tmp_path / "state" / "audit" / "fetch.sqlite"
+    with sqlite3.connect(audit) as db:
+        refused = db.execute(
+            "SELECT detector_scores, note FROM decision_log "
+            "WHERE outcome = 'network_egress' AND fused_decision = 'block'"
+        ).fetchall()
+    destinations = {json.loads(row[0])["destination"] for row in refused}
+    # The demo page redirects to 127.0.0.1:<attacker>.
+    assert any(d.endswith(f":{attacker_port}") for d in destinations), destinations
+    assert all("is not in the egress union of server fetch" in row[1] for row in refused)
