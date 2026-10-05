@@ -1196,6 +1196,7 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "httpx" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -1223,6 +1224,7 @@ requires-dist = [
     { name = "anyio", specifier = "==4.15.0" },
     { name = "datasketch", marker = "extra == 'research'", specifier = "==2.0.0" },
     { name = "h11", specifier = "==0.16.0" },
+    { name = "httpx", marker = "extra == 'dev'", specifier = "==0.28.1" },
     { name = "joblib", marker = "extra == 'research'", specifier = "==1.5.2" },
     { name = "mcp", specifier = "==2.1.1" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "==1.18.2" },
