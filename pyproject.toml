@@ -25,6 +25,9 @@ dependencies = [
     "anyio==4.15.0",
     # The proxy's default state directory (pins, decision log).
     "platformdirs==4.12.2",
+    # Already a dependency of mcp (through httpx); pinned directly because the
+    # network-mode proxy parses HTTP requests with it.
+    "h11==0.16.0",
 ]
 
 [project.scripts]
