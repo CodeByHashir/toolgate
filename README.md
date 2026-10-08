@@ -367,9 +367,13 @@ uvx --from toolgate-mcp==0.1.0a1 toolgate log --name fetch --config /absolute/pa
 Each direction is processed one line at a time, in order. Measured on the
 Windows dev machine with the egress rule, `rules_mcp` and `pii` enabled
 ([`docs/PROXY-LATENCY.md`](docs/PROXY-LATENCY.md)): the proxy adds 1.7 ms at
-p99 to a call with a 1 KB result, and about 52 ms at p99 with a 100 KB result.
-Almost all of the second figure is the two detectors scanning 100 KB; a
-policy without redaction or injection detectors does not pay it. The
+p99 to a call with a 1 KB result, and about 30 ms at p99 with a 100 KB result
+of the benchmark's filler text (52 ms before the v0.2 detector prefilters).
+Almost all of the second figure is the two detectors scanning 100 KB, and it
+depends on the text: the prefilters skip rules whose required words are
+absent, which saves about 60% on the filler but only 6-9% on ordinary prose
+that contains words like "response" or "model". A policy without redaction
+or injection detectors does not pay it. The
 transformer detectors, if you opt in, add around 170 ms each.
 
 ### The demo: cross-server exfiltration, toolgate off and on
