@@ -253,15 +253,22 @@ def normalise(text: str) -> Normalised:
     return Normalised(text=decoded, transforms=tuple(applied))
 
 
-def scan_normalised(detector: Detector, text: str) -> DetectorResult:
+def scan_normalised(
+    detector: Detector, text: str, canonical: Normalised | None = None
+) -> DetectorResult:
     """Score `text` both as-is and canonicalised, keeping offset-valid spans.
 
     Returns the original result unchanged when normalisation is a no-op or
     finds nothing extra, so the common path costs one extra regex sweep and
     nothing else.
+
+    `canonical` is `normalise(text)` when the caller already has it: the pump
+    and the in-process gate scan one result with several detectors and
+    normalise it once for all of them (v0.2 Track D) rather than once each.
     """
     direct = detector.score(text)
-    canonical = normalise(text)
+    if canonical is None:
+        canonical = normalise(text)
     if not canonical.changed or direct.failed:
         return direct
 

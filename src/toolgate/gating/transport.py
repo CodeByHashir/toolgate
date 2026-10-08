@@ -49,7 +49,7 @@ import mcp_types
 from mcp.shared.message import SessionMessage
 
 from toolgate.detectors.base import Detector, DetectorResult
-from toolgate.detectors.normalise import scan_normalised
+from toolgate.detectors.normalise import normalise, scan_normalised
 from toolgate.detectors.pii import PiiDetector
 from toolgate.detectors.rules import RuleDetector
 from toolgate.gating.audit import Decision, DecisionLog, DecisionRecord, Outcome
@@ -373,8 +373,11 @@ class Gate:
 
         # FR-2/FR-4: run every configured detector against the (normalised +
         # original, see scan_normalised) extracted text, then fuse.
+        # One normalisation per result, shared by every detector (Track D).
+        canonical = normalise(content.text) if self.detectors else None
         results: dict[str, DetectorResult] = {
-            key: scan_normalised(detector, content.text) for key, detector in self.detectors.items()
+            key: scan_normalised(detector, content.text, canonical)
+            for key, detector in self.detectors.items()
         }
         fusion = self.policy.decide(results)
 
