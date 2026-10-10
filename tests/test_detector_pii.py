@@ -260,7 +260,8 @@ def test_pii_detector_failure_is_contained(monkeypatch: pytest.MonkeyPatch) -> N
         (_ExplodingPattern(), 0.85),  # type: ignore[arg-type]
     )
 
-    result = PiiDetector(enabled_entities=("EMAIL_ADDRESS",)).score("anything")
+    # Contains '@' so the email prefilter (Track D) lets the pattern run.
+    result = PiiDetector(enabled_entities=("EMAIL_ADDRESS",)).score("any@thing")
 
     assert result.failed
     assert result.score is None

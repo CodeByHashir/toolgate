@@ -82,3 +82,43 @@ field. It is not the cost of a proxied connection.
 criterion (within 1 ms of the mode off). At 100 KB the run-to-run spread
 (55-75 ms) is larger than any difference between the modes, so no effect is
 claimed there either way.
+
+## Track D: cheaper detectors, Windows dev machine, 2026-10-08
+
+Two changes, both required to leave every detection unchanged
+([`tests/test_detector_prefilter.py`](../tests/test_detector_prefilter.py),
+plus the existing rule, PII and golden-set suites, all passing):
+
+- **Normalise once.** `normalise()` ran once per detector per result; it now
+  runs once per result and is shared (`scan_normalised(..., canonical)`).
+- **Literal prefilters.** Each `mcp` rule lists `requires`, words of which at
+  least one must appear for its pattern to match; the rule is skipped when
+  none does. The check runs on a fold of the text that maps the four
+  non-ASCII characters Python's `re.IGNORECASE` matches to ASCII letters
+  (I with dot, dotless i, long s, Kelvin sign; all code points checked by the
+  test), so it cannot hide a case-insensitive match. The PII email pattern is
+  skipped when the text has no `@`.
+
+**Detector cost for one 100 KB result** (`rules_mcp` + `pii`, median of 15,
+two runs, same process, old path versus new path):
+
+| Text | Old | New | Saved |
+|---|---|---|---|
+| benchmark filler ("the quick brown fox ...") | 49.7-50.1 ms | 19.8-21.2 ms | 57-60 % |
+| the repository's docs (prose) | 66.7-67.4 ms | 61.2-62.6 ms | 6-9 % |
+
+The filler is the favourable case: it contains none of the rules' required
+words, so every `mcp` rule is skipped. Ordinary prose usually contains some
+("response", "model", "http"), so most rules still run and the saving is
+mostly the shared normalisation.
+
+**Proxy benchmark** (the method above, 1,000 calls, network off, two runs):
+
+| Result size | p50 added | p95 added | p99 added |
+|---|---|---|---|
+| 1 KB | 1.002-1.022 ms | 1.321-1.387 ms | 1.458-1.904 ms |
+| 100 KB | 21.771-21.797 ms | 25.359-25.397 ms | 30.195-30.318 ms |
+
+At 100 KB, p99 added fell from 52.1 ms (2026-10-03) and 55-75 ms
+(2026-10-05) to about 30 ms on this text. At 1 KB nothing changed beyond run
+to run noise, as expected: the detectors were never the cost there.

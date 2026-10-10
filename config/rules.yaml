@@ -190,12 +190,20 @@ rules:
   # floor above zero, cheaply and without false positives.
   # ======================================================================
 
+  # `requires` (v0.2 Track D) is a prefilter, not part of the detection: at
+  # least one of the listed lowercase words must appear in the text,
+  # case-insensitively, for the pattern to be able to match, so the rule is
+  # skipped when none does. Each list is a mandatory alternation of its
+  # pattern; tests/test_detector_prefilter.py checks that skipping changes no
+  # detection.
+
   - id: MCP-001
     family: mcp
     severity: medium
     enabled: true
     description: instructs the reader to place content in its own output
     pattern: '\b(include|add|insert|integrate|append|feature|embed|place|put)\b[^.\n]{0,60}\b(in|to|into|within)\s+(your|the)\s+(response|reply|answer|output|summary|result|code|implementation)\b'
+    requires: ['response', 'reply', 'answer', 'output', 'summary', 'result', 'code', 'implementation']
 
   - id: MCP-002
     family: mcp
@@ -203,6 +211,7 @@ rules:
     enabled: true
     description: hijacks the format of the reader's own response
     pattern: '\b(encode|format|write|provide|give|present)\b[^.\n]{0,30}\byour\s+(response|answer|reply|output)\b'
+    requires: ['response', 'answer', 'reply', 'output']
 
   - id: MCP-003
     family: mcp
@@ -210,6 +219,7 @@ rules:
     enabled: true
     description: content addressed to the assistant rather than the user
     pattern: '\b(note|message|instruction)s?\s+(to|for)\s+(the\s+)?(ai|assistant|agent|model|llm)\b|(^|\n)\s*(ai\s+)?(assistant|agent|llm)\s*[:,]'
+    requires: ['ai', 'assistant', 'agent', 'model', 'llm']
 
   - id: MCP-004
     family: mcp
@@ -217,6 +227,7 @@ rules:
     enabled: true
     description: directive hidden in an HTML or markdown comment
     pattern: '<!--[^>]{0,400}?\b(ignore|instruction|assistant|ai\b|system|instead|must|should)\b|\[//\]:\s*#'
+    requires: ['<!--', '[//]:']
 
   - id: MCP-006
     family: mcp
@@ -224,6 +235,7 @@ rules:
     enabled: true
     description: directive to send data to an external address
     pattern: '\b(send|post|upload|email|forward|transmit|exfiltrate|leak)\b[^.\n]{0,60}\b(to|at)\s+(https?://|www\.|[\w.\-]+@)'
+    requires: ['http', 'www.', '@']
 
   - id: MCP-007
     family: mcp
@@ -231,3 +243,4 @@ rules:
     enabled: true
     description: instructs the reader to follow embedded content
     pattern: '\b(follow|obey|execute|comply\s+with|carry\s+out)\b[^.\n]{0,30}\b(the\s+)?(following|below|subsequent|attached|these)\b'
+    requires: ['following', 'below', 'subsequent', 'attached', 'these']

@@ -192,6 +192,13 @@ class PiiDetector(Detector):
         return tuple(e for e in self._entities if e in NER_ONLY_ENTITIES)
 
     def _score(self, text: str) -> RawScore:
+        return self._scan(text, prefilter=True)
+
+    def _score_unfiltered(self, text: str) -> RawScore:
+        """The same scan with no prefilter: the reference the tests compare against."""
+        return self._scan(text, prefilter=False)
+
+    def _scan(self, text: str, *, prefilter: bool) -> RawScore:
         if not text:
             return RawScore(score=0.0)
 
@@ -206,6 +213,10 @@ class PiiDetector(Detector):
                 continue
             pattern, confidence = entry
             if confidence < self._threshold:
+                continue
+            # The email pattern needs a literal '@' (and is case-sensitive), so
+            # a text without one cannot match it (Track D prefilter).
+            if prefilter and entity_type == "EMAIL_ADDRESS" and "@" not in text:
                 continue
 
             for match in pattern.finditer(text):

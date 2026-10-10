@@ -32,6 +32,21 @@ DEFAULT_RULES_PATH = REPO_ROOT / "config" / "rules.yaml"
 
 SEVERITIES = frozenset({"low", "medium", "high"})
 
+#: The non-ASCII characters `re.IGNORECASE` matches to an ASCII letter (Python
+#: 3.11, every code point checked in tests/test_detector_prefilter.py): dotted
+#: and dotless I, long s and the Kelvin sign. `str.lower()` alone leaves `ı`
+#: and `ſ` unchanged and turns `İ` into two characters, so a prefilter on
+#: `lower()` could hide a match the pattern would find.
+_IGNORECASE_EXTRAS = str.maketrans({"\u0130": "i", "\u0131": "i", "\u017f": "s", "\u212a": "k"})
+
+
+def fold_for_prefilter(text: str) -> str:
+    """Text in which every case-insensitive match of an ASCII word appears lowercased.
+
+    Used only to decide whether a rule can match; offsets in it mean nothing.
+    """
+    return text.translate(_IGNORECASE_EXTRAS).lower()
+
 
 @dataclass(frozen=True, slots=True)
 class Rule:
@@ -44,6 +59,10 @@ class Rule:
     #: independently and their contributions measured apart -- the INJ-* set is
     #: the comparability baseline and must not be diluted by new rules.
     family: str = "inj"
+    #: Lowercase words of which at least one must appear (case-insensitively)
+    #: for `pattern` to match at all; empty means "always scan". A prefilter,
+    #: never a detection: it only skips patterns that cannot match.
+    requires: tuple[str, ...] = ()
 
 
 def load_rules(
@@ -99,6 +118,14 @@ def load_rules(
         except re.error as exc:
             raise ValueError(f"{rules_path}: rule {rule_id} has an invalid pattern: {exc}") from exc
 
+        requires_raw = entry.get("requires", [])
+        if not isinstance(requires_raw, list) or not all(
+            isinstance(word, str) and word and word == word.lower() for word in requires_raw
+        ):
+            raise ValueError(
+                f"{rules_path}: rule {rule_id}: requires must list non-empty lowercase words"
+            )
+
         rules.append(
             Rule(
                 id=rule_id,
@@ -106,6 +133,7 @@ def load_rules(
                 pattern=compiled,
                 description=str(entry.get("description", "")),
                 family=family,
+                requires=tuple(requires_raw),
             )
         )
 
@@ -136,8 +164,14 @@ class RuleDetector(Detector):
         # the contract's type, so no matched text can reach a log through it
         # (SEC-3 / NFR-4); spans carry offsets, never content.
         detail: dict[str, float] = {}
+        folded: str | None = None
 
         for rule in self._rules:
+            if rule.requires:
+                if folded is None:
+                    folded = fold_for_prefilter(text)
+                if not any(word in folded for word in rule.requires):
+                    continue
             matched = False
             for match in rule.pattern.finditer(text):
                 spans.append(Span(start=match.start(), end=match.end(), label=rule.id))

@@ -93,6 +93,7 @@ jobs:
           tests/test_config.py
           tests/test_detector_base.py
           tests/test_detector_normalise.py
+          tests/test_detector_prefilter.py
           tests/test_detector_pii.py
           tests/test_detector_rules.py
           tests/test_gating_audit.py

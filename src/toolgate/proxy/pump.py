@@ -68,7 +68,7 @@ from typing import Any, Protocol
 import anyio
 
 from toolgate.detectors.base import Detector
-from toolgate.detectors.normalise import scan_normalised
+from toolgate.detectors.normalise import normalise, scan_normalised
 from toolgate.gating.audit import AuditWriter, Decision, DecisionRecord, Outcome
 from toolgate.gating.content import apply_redaction, build_block_result, extract
 from toolgate.gating.policy import PolicyConfig, PolicyEngine
@@ -883,8 +883,10 @@ class ProxyCore:
                     return self._forward_unscanned(raw, entry, content.malformed, roundtrip_ms)
                 return self._uninspectable(entry, content.malformed)
             assert isinstance(result, dict)
+            # One normalisation per result, shared by every detector (Track D).
+            canonical = normalise(content.text) if self.detectors else None
             scores = {
-                key: scan_normalised(detector, content.text)
+                key: scan_normalised(detector, content.text, canonical)
                 for key, detector in self.detectors.items()
             }
             fusion = self.engine.decide(scores)
