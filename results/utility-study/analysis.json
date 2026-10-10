@@ -1,0 +1,66 @@
+{
+  "claude-haiku-4-5-20251001": {
+    "off": {
+      "completion": {
+        "k": 20,
+        "n": 20,
+        "rate": 1.0,
+        "ci95": [
+          0.8388748419471804,
+          0.9999999999999999
+        ]
+      },
+      "failed_runs": 0,
+      "toolgate_blocks": 0
+    },
+    "on": {
+      "completion": {
+        "k": 20,
+        "n": 20,
+        "rate": 1.0,
+        "ci95": [
+          0.8388748419471804,
+          0.9999999999999999
+        ]
+      },
+      "failed_runs": 0,
+      "toolgate_blocks": 0
+    },
+    "pairs": 20,
+    "off_only": 0,
+    "on_only": 0,
+    "runs_found": 40
+  },
+  "claude-sonnet-5-5": {
+    "off": {
+      "completion": {
+        "k": 20,
+        "n": 20,
+        "rate": 1.0,
+        "ci95": [
+          0.8388748419471804,
+          0.9999999999999999
+        ]
+      },
+      "failed_runs": 0,
+      "toolgate_blocks": 0
+    },
+    "on": {
+      "completion": {
+        "k": 20,
+        "n": 20,
+        "rate": 1.0,
+        "ci95": [
+          0.8388748419471804,
+          0.9999999999999999
+        ]
+      },
+      "failed_runs": 0,
+      "toolgate_blocks": 0
+    },
+    "pairs": 20,
+    "off_only": 0,
+    "on_only": 0,
+    "runs_found": 40
+  }
+}
