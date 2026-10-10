@@ -82,12 +82,13 @@ def test_policy_confines_paths_to_the_workspace(tmp_path: Path) -> None:
 @pytest.mark.skipif(shutil.which("npx") is None, reason="npx is needed for the real server")
 def test_policy_classifies_every_argument_of_the_real_server(tmp_path: Path) -> None:
     from tests.fixtures.demo import FILESYSTEM_COMMAND
+    from toolgate.fs_utility_study import server_command
     from toolgate.suggest import list_tools
 
     workspace = tmp_path / "ws"
     make_workspace(workspace)
     policy = _policy(workspace)
-    tools = list_tools([*FILESYSTEM_COMMAND, str(workspace)], timeout=300)
+    tools = list_tools(server_command(FILESYSTEM_COMMAND, workspace), timeout=300)
     assert {t["name"] for t in tools} == {k.split(".", 1)[1] for k in policy.rules}
     for tool in tools:
         rule = policy.rules[f"filesystem.{tool['name']}"]
@@ -106,3 +107,20 @@ def test_classification() -> None:
         classify_run(failed=False, done=True, toolgate_blocks=0, withheld=1)
         == "done despite a false refusal"
     )
+
+
+def test_server_command_fills_the_project_placeholder(tmp_path: Path) -> None:
+    from tests.fixtures.demo import FILESYSTEM_COMMAND
+    from toolgate.fs_utility_study import server_command
+
+    command = server_command(FILESYSTEM_COMMAND, tmp_path)
+    assert str(tmp_path) in command
+    assert command.count(str(tmp_path)) == 1
+    assert not any("{project}" in part for part in command)
+
+
+def test_server_command_requires_the_placeholder(tmp_path: Path) -> None:
+    from toolgate.fs_utility_study import server_command
+
+    with pytest.raises(ValueError, match="project"):
+        server_command(("npx", "server"), tmp_path)

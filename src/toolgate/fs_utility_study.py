@@ -14,7 +14,7 @@ the agent's final answer. Standard library only; the runner is
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,6 +27,7 @@ __all__ = [
     "classify_run",
     "make_workspace",
     "policy_for",
+    "server_command",
 ]
 
 MODELS: tuple[str, ...] = ("claude-haiku-4-5-20251001", "claude-sonnet-5-5")
@@ -135,6 +136,18 @@ TASKS: tuple[Task, ...] = (
         lambda ws, answer: "meeting.md" in answer and "guide.md" in answer,
     ),
 )
+
+
+def server_command(base: Sequence[str], workspace: Path) -> list[str]:
+    """The pinned server command with its `{project}` placeholder set to `workspace`.
+
+    The pinned command (tests/fixtures/demo) names its root as `{project}`.
+    Appending the workspace instead would hand the server a second, bogus
+    root literally called `{project}`, which the agent would then see.
+    """
+    if not any("{project}" in part for part in base):
+        raise ValueError("server command has no {project} placeholder")
+    return [part.replace("{project}", str(workspace)) for part in base]
 
 
 def policy_for(workspace: Path) -> str:

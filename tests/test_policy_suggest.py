@@ -196,7 +196,9 @@ def test_reference_server_drafts_classify_every_argument(server: str, tmp_path: 
     from tests.fixtures.demo import FETCH_COMMAND, FILESYSTEM_COMMAND
 
     command = (
-        [*FILESYSTEM_COMMAND, str(tmp_path)] if server == "filesystem" else list(FETCH_COMMAND)
+        [part.replace("{project}", str(tmp_path)) for part in FILESYSTEM_COMMAND]
+        if server == "filesystem"
+        else list(FETCH_COMMAND)
     )
     tools = list_tools(command, timeout=300)
     assert tools

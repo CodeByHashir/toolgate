@@ -42,6 +42,7 @@ from toolgate.fs_utility_study import (  # noqa: E402
     classify_run,
     make_workspace,
     policy_for,
+    server_command,
 )
 
 OUT = REPO / "results" / "fs-utility-study"
@@ -104,7 +105,7 @@ def _check_frozen() -> None:
 
 
 def _server(arm: str, workspace: Path, state: Path) -> list[str]:
-    server = [*FILESYSTEM_COMMAND, str(workspace)]
+    server = server_command(FILESYSTEM_COMMAND, workspace)
     if arm == "off":
         return server
     state.mkdir(parents=True, exist_ok=True)
@@ -229,8 +230,9 @@ def analyse() -> int:
             cells[arm] = {
                 "done": rate(sum(1 for r in scored if r["done"]), len(scored)),
                 "runs_with_false_refusal": rate(len(refused), len(scored)),
-                "false_refusal_rows": sum(r["toolgate_blocks"] + r["toolgate_withheld"]
-                                          for r in scored),  # fmt: skip
+                "false_refusal_rows": sum(
+                    r["toolgate_blocks"] + r["toolgate_withheld"] for r in scored
+                ),  # fmt: skip
                 "failed_runs": sum(1 for (t, a), r in runs.items() if a == arm and r["failed"]),
                 "on_runs_without_audit_rows": sum(
                     1 for r in scored if arm == "on" and r["toolgate_audit_rows"] == 0
