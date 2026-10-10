@@ -347,6 +347,43 @@ below (headless, with an MCP config file of this shape and the source-tree
 toolgate rather than the PyPI package). Claude Desktop and Cursor snippets
 will be added once each has been run, and are not listed until then.
 
+**Tested hosts.** Each listed host has been run through `toolgate wrap` at
+least once; a host not listed has not been tried.
+
+| Host | Version | Run | Result |
+|---|---|---|---|
+| Claude Code | 2.1.288 | recorded demo ([`docs/AGENT-DEMO.md`](docs/AGENT-DEMO.md)) and 80-run utility study ([`docs/UTILITY-STUDY.md`](docs/UTILITY-STUDY.md)) | allowed calls work; 80/80 tasks completed with toolgate on |
+| Google Antigravity | 2.5.5 (Windows, agent model Gemini 3 Pro), 2026-10-10 | `fetch` behind `toolgate wrap`, egress `docs.python.org`; one allowed and one blocked call, once each | allowed fetch worked; `https://example.com/` returned `Blocked by toolgate policy: rule fetch.fetch.egress`; the block row was in `toolgate log --blocked` |
+
+Antigravity reads MCP servers from `mcp_config.json` (Agent panel `...` →
+MCP Servers → Manage MCP Servers → View raw config; on the test machine
+`%USERPROFILE%\.gemini\config\mcp_config.json`). The entry has the same
+shape as the Claude Code snippet above:
+
+```json
+{
+  "mcpServers": {
+    "fetch": {
+      "command": "uvx",
+      "args": [
+        "--from", "toolgate-mcp==0.1.0a1", "toolgate",
+        "wrap", "--name", "fetch",
+        "--config", "C:/absolute/path/to/fetch.yaml",
+        "--", "uvx", "mcp-server-fetch==2026.8.18"
+      ]
+    }
+  }
+}
+```
+
+Refresh the server list after saving, and start a new agent chat: the new
+tool is not visible to the chat that edited the config. Ask the agent to use
+the `fetch` MCP tool by name, since Antigravity also has built-in browsing
+that toolgate does not see. Network mode was not tried on Antigravity. If
+the server does not start, give `command` the full path of `uvx`: in the
+test, `uvx` was not on the PATH of Antigravity's terminal, although the MCP
+server itself started.
+
 **Exit codes**: `0` the host closed the session; `1` config missing or
 invalid, server never started (the reason is on stderr); `2` the server
 failed to start or exited first; `3` internal error, including ten audit-log
