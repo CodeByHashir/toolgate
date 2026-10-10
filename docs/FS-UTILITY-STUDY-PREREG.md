@@ -78,3 +78,25 @@ Ten tasks, one run each, two models, one host, one machine (Windows), one
 server. Ten runs per cell cannot estimate a small false-refusal rate
 precisely (0/10 has a Wilson upper bound of about 28 %); the study is built
 to find refusal causes, not to bound their rate.
+
+## Amendment 1 (2026-10-10, after 2 of 40 runs, before any analysis)
+
+**What happened.** The first frozen runner started Claude Code from an
+empty `work` directory next to the workspace. Claude Code sends its working
+directory to MCP servers as a root, and the filesystem server then uses
+that root *instead of* the directory on its command line: in both runs made
+(Haiku, task `read`, `off` and `on`), `list_allowed_directories` returned the
+empty `work` directory. In `off` the agent found no files; in `on` toolgate,
+confined to the workspace, refused the calls to `work` (3 block rows).
+
+**Change.** Claude Code is started from the workspace itself, as a user runs
+it from their project, so the host's root, the server's root and toolgate's
+sandbox are the same directory. Nothing else changes. The two runs and the
+first freeze record are kept, unanalysed, under `results/fs-utility-study/v1/`
+and reported as a deviation. The study is re-frozen with this amendment.
+
+**Finding recorded now, not re-tested later as if new:** when the host's
+working directory differs from the policy's `sandbox`, a roots-aware server
+and toolgate disagree about which directory is allowed, and toolgate refuses
+calls the server would accept. This is a configuration cause of false
+refusals, reported in the results.

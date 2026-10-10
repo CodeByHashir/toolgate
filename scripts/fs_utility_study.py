@@ -119,7 +119,6 @@ def _server(arm: str, workspace: Path, state: Path) -> list[str]:
 def _one_run(model: str, arm: str, task: Any, helpers: Any) -> dict[str, Any]:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        (root / "work").mkdir()
         workspace, state = root / "project", root / "state"
         make_workspace(workspace)
         command_line = _server(arm, workspace, state)
@@ -140,7 +139,11 @@ def _one_run(model: str, arm: str, task: Any, helpers: Any) -> dict[str, Any]:
             "--no-session-persistence",
         ]  # fmt: skip
         started = time.time()
-        done = subprocess.run(command, cwd=root / "work", capture_output=True, text=True,
+        # Run from the workspace, as a user runs Claude Code from their project:
+        # the host sends its working directory as the MCP root, and the
+        # filesystem server uses that root instead of its command-line one
+        # (amendment 1 in the pre-registration).
+        done = subprocess.run(command, cwd=workspace, capture_output=True, text=True,
                               encoding="utf-8", timeout=900, env=dict(os.environ))  # fmt: skip
         elapsed = time.time() - started
         events = []
