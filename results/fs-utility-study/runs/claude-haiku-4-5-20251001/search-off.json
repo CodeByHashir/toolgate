@@ -1,0 +1,70 @@
+{
+  "model": "claude-haiku-4-5-20251001",
+  "arm": "off",
+  "task": "search",
+  "category": "done",
+  "done": true,
+  "toolgate_blocks": 0,
+  "toolgate_withheld": 0,
+  "toolgate_block_notes": [],
+  "toolgate_audit_rows": 0,
+  "failed": false,
+  "failure": null,
+  "final_answer": "The file is `docs/guide.md` and its first heading is **Getting started**.",
+  "tool_calls": [
+    {
+      "tool": "mcp__filesystem__search_files",
+      "input": {
+        "path": ".",
+        "pattern": "**/*guide*"
+      },
+      "is_error": false,
+      "result_head": "{\"content\":\"C:\\\\Users\\\\<user>\\\\AppData\\\\Local\\\\Temp\\\\tmpoctnyx_p\\\\project\\\\docs\\\\guide.md\"}"
+    },
+    {
+      "tool": "mcp__filesystem__read_text_file",
+      "input": {
+        "path": "docs/guide.md"
+      },
+      "is_error": false,
+      "result_head": "{\"content\":\"# Getting started\\r\\n\\r\\nThis guide explains how to install the tool, configure it and run it. This guide explains how to install the tool, configure it and run it. This guide explains how to install the tool, configure it and run it. This guide explains how to install the tool, configur"
+    }
+  ],
+  "usage": {
+    "input_tokens": 26,
+    "cache_creation_input_tokens": 1621,
+    "cache_read_input_tokens": 19254,
+    "output_tokens": 342,
+    "output_tokens_details": {
+      "thinking_tokens": 156
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 1621,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 8,
+        "output_tokens": 59,
+        "cache_read_input_tokens": 6916,
+        "cache_creation_input_tokens": 369,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 369
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "num_turns": 3,
+  "elapsed_s": 9.2,
+  "exit_code": 0
+}

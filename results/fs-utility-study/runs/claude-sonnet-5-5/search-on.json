@@ -1,0 +1,70 @@
+{
+  "model": "claude-sonnet-5-5",
+  "arm": "on",
+  "task": "search",
+  "category": "done",
+  "done": true,
+  "toolgate_blocks": 0,
+  "toolgate_withheld": 0,
+  "toolgate_block_notes": [],
+  "toolgate_audit_rows": 2,
+  "failed": false,
+  "failure": null,
+  "final_answer": "The file is `docs\\guide.md`, and its first heading is **\"Getting started\"**.",
+  "tool_calls": [
+    {
+      "tool": "mcp__filesystem__search_files",
+      "input": {
+        "path": "<tmp>\\project",
+        "pattern": "**/*guide*"
+      },
+      "is_error": false,
+      "result_head": "{\"content\":\"C:\\\\Users\\\\<user>\\\\AppData\\\\Local\\\\Temp\\\\tmp5sw2qk93\\\\project\\\\docs\\\\guide.md\"}"
+    },
+    {
+      "tool": "mcp__filesystem__read_text_file",
+      "input": {
+        "path": "<tmp>\\project\\docs\\guide.md"
+      },
+      "is_error": false,
+      "result_head": "{\"content\":\"# Getting started\\r\\n\\r\\nThis guide explains how to install the tool, configure it and run it. This guide explains how to install the tool, configure it and run it. This guide explains how to install the tool, configure it and run it. This guide explains how to install the tool, configur"
+    }
+  ],
+  "usage": {
+    "input_tokens": 6,
+    "cache_creation_input_tokens": 1020,
+    "cache_read_input_tokens": 16327,
+    "output_tokens": 244,
+    "output_tokens_details": {
+      "thinking_tokens": 0
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 1020,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 30,
+        "cache_read_input_tokens": 5723,
+        "cache_creation_input_tokens": 380,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 380
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "num_turns": 3,
+  "elapsed_s": 10.5,
+  "exit_code": 0
+}
