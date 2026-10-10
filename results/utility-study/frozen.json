@@ -1,0 +1,33 @@
+{
+  "frozen_at": "2026-10-10T12:12:29Z",
+  "claude_code_version": "2.1.288 (Claude Code)",
+  "sha256": {
+    "docs/UTILITY-STUDY-PREREG.md": "4dd06d430e8bf532828a3fd8e1f86854495a13b89b6a62dc05ab523880b12eb8",
+    "src/toolgate/utility_study.py": "1abd1d488ba7aa9babc2ece04eb3914e7993d02d78881b4aed8db1dc40518d54",
+    "scripts/utility_study.py": "0949b5c8666736a3f8459934ed17db3406cec1ae9cafd7a6ab740c88ad299245",
+    "tests/fixtures/agent_study/mail_server.py": "eb7ec1ccbfdfde4d13d9fa3640d844eeb607b7cd2b846f9ebffd82f1d0518da4"
+  },
+  "emails": {
+    "benign_ordinary/00": "1aeb205048c039d41529ef32b2792bb739ae39429f520e7c04395a781facd74a",
+    "benign_ordinary/01": "30c704e9d36a78f35e8b7958315d132151f2e34b81f074a742179ad96e7236df",
+    "benign_ordinary/02": "043700716ecf55515b15e6a0b30ee74028fccf7caf9da6923ad3caa904e50f06",
+    "benign_ordinary/03": "c793e3a0d55da9f8ed8b45434c401a7360bedc977b566497e2d0abece2b5d6f0",
+    "benign_ordinary/04": "feadf0eedea0d10305cca8c326a040e7ffc33df693910dfeb7bec33c5998a2de",
+    "benign_ordinary/05": "83e21d0c23c9f827b7c344b8782493a80883b222bfd9dcdb78fa30d13c6645e0",
+    "benign_ordinary/06": "9d839c3e293c454c112876b2cfa4c311e8ec20879db34dc2b615d85561b9f005",
+    "benign_ordinary/07": "fe40921f805182a7e540b00d1c693fdfc22ca8134810bcb192e967e99523fa1b",
+    "benign_ordinary/08": "a4250b512b45482ed4f7f410389bfad33eba0eef032e8fd096c6b1762a460171",
+    "benign_ordinary/09": "9f51837773f582f31753647395665641e4858deccec96fd5f0ecf80dd8889796",
+    "benign_ordinary/10": "4b665f4039943e9f39827e6bac3c6e04ca8d326238ff6b90ac3d98a651191671",
+    "benign_ordinary/11": "1087c967b6f85a64e6bd14022727311bf9871baf844ef66f1a6337063e85ce7e",
+    "benign_stress/00": "1ad05c03ab291e205fc8c4c29b6a776b7e69e8821757fe045578e0c1e3d368dd",
+    "benign_stress/01": "a8222f796e86e0d233d9e727f188a8d8b58c0db35690bf814809683669a9eb8b",
+    "benign_stress/02": "253d2534edefedf3fe7fac7ad369a6836a2b484175cecdab4bb78ef05c728324",
+    "benign_stress/03": "06c26bd1dc824e8d07961dc1f154f773201efa15da6d47a8bcfaf8746b15f460",
+    "benign_stress/04": "0c892e03ac629800defdbdc604b3b69ab402798f675504538a615041bc6abe20",
+    "benign_stress/05": "6d65dedc39badd93f6ca1ad48415395afd50f1811a6f204e48d1741e627198ea",
+    "benign_stress/06": "78795edfddd9ff21865db56f78a692ebe538856e8be4254f2bb596ca1764b230",
+    "benign_stress/07": "a6474602e2acd9fb0b2748a69aad9843a6ceed85a7f281bd86a7721985822b0b"
+  },
+  "runs_planned": 80
+}
