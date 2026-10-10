@@ -1,0 +1,61 @@
+{
+  "model": "claude-sonnet-5-5",
+  "arm": "on",
+  "task": "list",
+  "category": "done",
+  "done": true,
+  "toolgate_blocks": 0,
+  "toolgate_withheld": 0,
+  "toolgate_block_notes": [],
+  "toolgate_audit_rows": 1,
+  "failed": false,
+  "failure": null,
+  "final_answer": "2",
+  "tool_calls": [
+    {
+      "tool": "mcp__filesystem__directory_tree",
+      "input": {
+        "path": "<tmp>\\project"
+      },
+      "is_error": false,
+      "result_head": "{\"content\":\"[\\n  {\\n    \\\"name\\\": \\\"data\\\",\\n    \\\"type\\\": \\\"directory\\\",\\n    \\\"children\\\": [\\n      {\\n        \\\"name\\\": \\\"sales.csv\\\",\\n        \\\"type\\\": \\\"file\\\"\\n      }\\n    ]\\n  },\\n  {\\n    \\\"name\\\": \\\"docs\\\",\\n    \\\"type\\\": \\\"directory\\\",\\n    \\\"children\\\": [\\n      {\\n        \\\"name\\\": \\\"g"
+    }
+  ],
+  "usage": {
+    "input_tokens": 4,
+    "cache_creation_input_tokens": 913,
+    "cache_read_input_tokens": 10594,
+    "output_tokens": 94,
+    "output_tokens_details": {
+      "thinking_tokens": 0
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 913,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 3,
+        "cache_read_input_tokens": 5516,
+        "cache_creation_input_tokens": 475,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 475
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "num_turns": 2,
+  "elapsed_s": 8.5,
+  "exit_code": 0
+}

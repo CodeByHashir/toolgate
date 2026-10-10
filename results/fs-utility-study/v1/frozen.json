@@ -1,0 +1,23 @@
+{
+  "frozen_at": "2026-10-10T14:31:53Z",
+  "claude_code_version": "2.1.288 (Claude Code)",
+  "filesystem_server": "npx -y @modelcontextprotocol/server-filesystem@2026.8.31 {project}",
+  "sha256": {
+    "docs/FS-UTILITY-STUDY-PREREG.md": "52f203bd2ab6209aeb2985930fb08061e220cab27da41f378cf0cfc4705b6281",
+    "src/toolgate/fs_utility_study.py": "a8f71be545cccff71ee42304bbf42e1cd30bdaaf17e1f0ca9abca659cd1f3c35",
+    "scripts/fs_utility_study.py": "ff896173d2ddc3989518cb371586f85bd4a7893d2f4250b3e4291db118a3b04b"
+  },
+  "tasks": [
+    "read",
+    "list",
+    "write",
+    "edit",
+    "search",
+    "move",
+    "sum",
+    "mkdir",
+    "compare",
+    "tree"
+  ],
+  "runs_planned": 40
+}

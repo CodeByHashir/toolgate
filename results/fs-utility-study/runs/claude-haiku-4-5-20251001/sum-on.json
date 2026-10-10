@@ -1,0 +1,90 @@
+{
+  "model": "claude-haiku-4-5-20251001",
+  "arm": "on",
+  "task": "sum",
+  "category": "failed after a false refusal",
+  "done": false,
+  "toolgate_blocks": 4,
+  "toolgate_withheld": 0,
+  "toolgate_block_notes": [
+    "rule filesystem.read_text_file.paths: a path argument resolved outside the allowed globs",
+    "rule filesystem.read_file.paths: a path argument resolved outside the allowed globs",
+    "rule filesystem.list_directory.paths: a path argument resolved outside the allowed globs",
+    "rule filesystem.directory_tree.paths: a path argument resolved outside the allowed globs"
+  ],
+  "toolgate_audit_rows": 4,
+  "failed": false,
+  "failure": null,
+  "final_answer": "I need permission to access the files in your project directory. Please approve access to the filesystem tools so I can read and calculate the total from data/sales.csv.",
+  "tool_calls": [
+    {
+      "tool": "mcp__filesystem__read_text_file",
+      "input": {
+        "path": "data/sales.csv"
+      },
+      "is_error": true,
+      "result_head": "Blocked by toolgate policy: rule filesystem.read_text_file.paths"
+    },
+    {
+      "tool": "mcp__filesystem__read_file",
+      "input": {
+        "path": "data/sales.csv"
+      },
+      "is_error": true,
+      "result_head": "Blocked by toolgate policy: rule filesystem.read_file.paths"
+    },
+    {
+      "tool": "mcp__filesystem__list_directory",
+      "input": {
+        "path": "."
+      },
+      "is_error": true,
+      "result_head": "Blocked by toolgate policy: rule filesystem.list_directory.paths"
+    },
+    {
+      "tool": "mcp__filesystem__directory_tree",
+      "input": {
+        "path": "."
+      },
+      "is_error": true,
+      "result_head": "Blocked by toolgate policy: rule filesystem.directory_tree.paths"
+    }
+  ],
+  "usage": {
+    "input_tokens": 42,
+    "cache_creation_input_tokens": 1710,
+    "cache_read_input_tokens": 33464,
+    "output_tokens": 503,
+    "output_tokens_details": {
+      "thinking_tokens": 211
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 1710,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 8,
+        "output_tokens": 86,
+        "cache_read_input_tokens": 7202,
+        "cache_creation_input_tokens": 172,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 172
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "num_turns": 5,
+  "elapsed_s": 15.9,
+  "exit_code": 0
+}

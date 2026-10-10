@@ -1,0 +1,62 @@
+{
+  "model": "claude-haiku-4-5-20251001",
+  "arm": "on",
+  "task": "tree",
+  "category": "done",
+  "done": true,
+  "toolgate_blocks": 0,
+  "toolgate_withheld": 0,
+  "toolgate_block_notes": [],
+  "toolgate_audit_rows": 1,
+  "failed": false,
+  "failure": null,
+  "final_answer": "Here are all the markdown files in your project:\n\n1. **docs/guide.md**\n2. **notes/meeting.md**",
+  "tool_calls": [
+    {
+      "tool": "mcp__filesystem__search_files",
+      "input": {
+        "path": "<tmp>\\project",
+        "pattern": "**/*.md"
+      },
+      "is_error": false,
+      "result_head": "{\"content\":\"C:\\\\Users\\\\<user>\\\\AppData\\\\Local\\\\Temp\\\\tmpem_7u_f8\\\\project\\\\docs\\\\guide.md\\nC:\\\\Users\\\\<user>\\\\AppData\\\\Local\\\\Temp\\\\tmpem_7u_f8\\\\project\\\\notes\\\\meeting.md\"}"
+    }
+  ],
+  "usage": {
+    "input_tokens": 18,
+    "cache_creation_input_tokens": 1292,
+    "cache_read_input_tokens": 12337,
+    "output_tokens": 259,
+    "output_tokens_details": {
+      "thinking_tokens": 119
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 1292,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 8,
+        "output_tokens": 93,
+        "cache_read_input_tokens": 6673,
+        "cache_creation_input_tokens": 283,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 283
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "num_turns": 2,
+  "elapsed_s": 9.4,
+  "exit_code": 0
+}

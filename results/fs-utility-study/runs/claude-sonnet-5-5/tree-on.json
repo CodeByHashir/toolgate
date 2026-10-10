@@ -1,0 +1,62 @@
+{
+  "model": "claude-sonnet-5-5",
+  "arm": "on",
+  "task": "tree",
+  "category": "done",
+  "done": true,
+  "toolgate_blocks": 0,
+  "toolgate_withheld": 0,
+  "toolgate_block_notes": [],
+  "toolgate_audit_rows": 1,
+  "failed": false,
+  "failure": null,
+  "final_answer": "I found two markdown files in your project:\n\n- `docs/guide.md` (folder: `docs`)\n- `notes/meeting.md` (folder: `notes`)\n\nBoth paths are relative to `<tmp>\\project`.",
+  "tool_calls": [
+    {
+      "tool": "mcp__filesystem__search_files",
+      "input": {
+        "path": "<tmp>\\project",
+        "pattern": "**/*.md"
+      },
+      "is_error": false,
+      "result_head": "{\"content\":\"C:\\\\Users\\\\<user>\\\\AppData\\\\Local\\\\Temp\\\\tmpnhjs9az3\\\\project\\\\docs\\\\guide.md\\nC:\\\\Users\\\\<user>\\\\AppData\\\\Local\\\\Temp\\\\tmpnhjs9az3\\\\project\\\\notes\\\\meeting.md\"}"
+    }
+  ],
+  "usage": {
+    "input_tokens": 4,
+    "cache_creation_input_tokens": 691,
+    "cache_read_input_tokens": 10595,
+    "output_tokens": 214,
+    "output_tokens_details": {
+      "thinking_tokens": 0
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 691,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 99,
+        "cache_read_input_tokens": 5516,
+        "cache_creation_input_tokens": 254,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 254
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "num_turns": 2,
+  "elapsed_s": 9.0,
+  "exit_code": 0
+}

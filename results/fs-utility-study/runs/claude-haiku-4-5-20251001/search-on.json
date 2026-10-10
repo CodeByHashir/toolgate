@@ -1,0 +1,87 @@
+{
+  "model": "claude-haiku-4-5-20251001",
+  "arm": "on",
+  "task": "search",
+  "category": "done",
+  "done": true,
+  "toolgate_blocks": 0,
+  "toolgate_withheld": 0,
+  "toolgate_block_notes": [],
+  "toolgate_audit_rows": 4,
+  "failed": false,
+  "failure": null,
+  "final_answer": "The file is `docs/guide.md` and its first heading is **\"Getting started\"**.",
+  "tool_calls": [
+    {
+      "tool": "mcp__filesystem__search_files",
+      "input": {
+        "path": "<tmp>\\project",
+        "pattern": "*guide*"
+      },
+      "is_error": false,
+      "result_head": "{\"content\":\"No matches found\"}"
+    },
+    {
+      "tool": "mcp__filesystem__list_directory",
+      "input": {
+        "path": "<tmp>\\project"
+      },
+      "is_error": false,
+      "result_head": "{\"content\":\"[DIR] data\\n[DIR] docs\\n[DIR] notes\\n[DIR] out\"}"
+    },
+    {
+      "tool": "mcp__filesystem__search_files",
+      "input": {
+        "path": "<tmp>\\project",
+        "pattern": "**/*guide*"
+      },
+      "is_error": false,
+      "result_head": "{\"content\":\"C:\\\\Users\\\\<user>\\\\AppData\\\\Local\\\\Temp\\\\tmpv4wr265t\\\\project\\\\docs\\\\guide.md\"}"
+    },
+    {
+      "tool": "mcp__filesystem__read_text_file",
+      "input": {
+        "path": "<tmp>\\project\\docs\\guide.md"
+      },
+      "is_error": false,
+      "result_head": "{\"content\":\"# Getting started\\r\\n\\r\\nThis guide explains how to install the tool, configure it and run it. This guide explains how to install the tool, configure it and run it. This guide explains how to install the tool, configure it and run it. This guide explains how to install the tool, configur"
+    }
+  ],
+  "usage": {
+    "input_tokens": 42,
+    "cache_creation_input_tokens": 2064,
+    "cache_read_input_tokens": 33697,
+    "output_tokens": 651,
+    "output_tokens_details": {
+      "thinking_tokens": 208
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 2064,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 8,
+        "output_tokens": 54,
+        "cache_read_input_tokens": 7335,
+        "cache_creation_input_tokens": 393,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 393
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "num_turns": 5,
+  "elapsed_s": 16.8,
+  "exit_code": 0
+}
