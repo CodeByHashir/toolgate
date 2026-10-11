@@ -19,7 +19,9 @@ Options (argv):
 * `--fetch-direct` the same, but with `trust_env=False`: a client that
   ignores proxy variables, which network mode does not cover;
 * `--payload N`    answer every tools/call with N bytes of plain filler text
-  instead of the echo (for the latency benchmark).
+  instead of the echo (for the latency benchmark);
+* `--description TEXT`  declare `fetch` with TEXT as its description, so a
+  test can change a declaration between sessions (declaration pinning).
 """
 
 from __future__ import annotations
@@ -65,6 +67,10 @@ def main(argv: list[str]) -> int:
     trust_env = "--fetch-direct" not in argv
     payload_bytes = int(argv[argv.index("--payload") + 1]) if "--payload" in argv else None
     filler = ("the quick brown fox jumps over the lazy dog " * 4096)[: payload_bytes or 0]
+    tools = TOOLS
+    if "--description" in argv:
+        text = argv[argv.index("--description") + 1]
+        tools = [{**TOOLS[0], "description": text}, *TOOLS[1:]]
     if marker:
         Path(marker).write_text("started", encoding="utf-8")
 
@@ -82,7 +88,7 @@ def main(argv: list[str]) -> int:
                 "serverInfo": {"name": "fake", "version": "0"},
             }
         elif method == "tools/list":
-            result = {"tools": TOOLS}
+            result = {"tools": tools}
         elif method == "tools/call" and fetch_mode:
             result = {"content": [{"type": "text", "text": _fetch(message, trust_env)}]}
         elif method == "tools/call" and payload_bytes is not None:
