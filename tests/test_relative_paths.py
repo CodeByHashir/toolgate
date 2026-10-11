@@ -13,6 +13,8 @@ leading separator) is matched as written, which keeps it fail-closed.
 from __future__ import annotations
 
 import json
+import shutil
+import sys
 from pathlib import Path
 
 import pytest
@@ -175,3 +177,43 @@ def _call(request_id: int, path: str) -> bytes:
 
 def _reply_text(raw: bytes) -> str:
     return str(json.loads(raw)["result"]["content"][0]["text"])
+
+
+@pytest.mark.live_servers
+@pytest.mark.skipif(shutil.which("npx") is None, reason="npx is needed for the real server")
+def test_a_relative_path_reaches_the_real_filesystem_server(tmp_path: Path) -> None:
+    """End to end: `wrap` in the workspace, the pinned server-filesystem behind it.
+
+    The calls the study saw refused (`notes/meeting.md`, `.`) now reach the
+    server and succeed; a relative path climbing out is still refused, with
+    the hint, before the server sees it.
+    """
+    from tests.fixtures.demo import FILESYSTEM_COMMAND
+    from tests.fixtures.demo.mcp_client import StdioMcpClient, is_tool_error, result_text
+    from toolgate.fs_utility_study import MEETING, make_workspace, policy_for, server_command
+
+    workspace = tmp_path / "ws"
+    make_workspace(workspace)
+    config = tmp_path / "filesystem.yaml"
+    config.write_text(
+        policy_for(workspace) + f'state_dir: "{(tmp_path / "state").as_posix()}"\n',
+        encoding="utf-8",
+    )
+    server = server_command(FILESYSTEM_COMMAND, workspace)
+    command = [sys.executable, "-m", "toolgate", "wrap", "--name", "filesystem",
+               "--config", str(config), "--", *server]  # fmt: skip
+    with StdioMcpClient(command, cwd=workspace, timeout=300) as client:
+        client.initialize()
+        client.list_tools()
+        read = client.call_tool("read_text_file", {"path": "notes/meeting.md"})
+        assert not is_tool_error(read), result_text(read)
+        assert MEETING.strip().splitlines()[0] in result_text(read)
+        listing = client.call_tool("list_directory", {"path": "."})
+        assert not is_tool_error(listing), result_text(listing)
+        assert "notes" in result_text(listing)
+        refused = client.call_tool("read_text_file", {"path": "../filesystem.yaml"})
+        assert is_tool_error(refused)
+        assert result_text(refused).startswith(
+            "Blocked by toolgate policy: rule filesystem.read_text_file.paths"
+        )
+        assert "absolute path" in result_text(refused)
