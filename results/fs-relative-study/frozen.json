@@ -1,0 +1,28 @@
+{
+  "frozen_at": "2026-10-11T20:06:16Z",
+  "claude_code_version": "2.1.288 (Claude Code)",
+  "toolgate_commit": "e779eccaa2b45393f5d794574e9656c52a5fb70a",
+  "filesystem_server": "npx -y @modelcontextprotocol/server-filesystem@2026.8.31 {project}",
+  "sha256": {
+    "docs/FS-RELATIVE-STUDY-PREREG.md": "d94a001b2055cbd2c0ce7bfd0f9ac80d44a54a583602998cfc238670924a24b0",
+    "src/toolgate/fs_relative_study.py": "32afda5ea0ea992a624becc8dd186b8d31502a2b4a1005f5731e83f292c1b2ed",
+    "src/toolgate/fs_utility_study.py": "a8f71be545cccff71ee42304bbf42e1cd30bdaaf17e1f0ca9abca659cd1f3c35",
+    "scripts/fs_relative_study.py": "8f253ec153dc16e1026746b2a4e731422b0ba1bbab7798277a38503c8bf16cd2",
+    "src/toolgate/gating/tool_calls.py": "a801537cde6c8a375e5d4e626dd0cc8de0af5016145f8840f7e3859e5f637e3f",
+    "src/toolgate/proxy/pump.py": "1400b50dbbc7faf043192d0758d023a5a30f6a625dce0a93181ede8ef2c5eb3c",
+    "src/toolgate/proxy/wrap.py": "a33bc92db586b62eecbfac3045ff747a3266fb84874e5871e960fc6befe50da0"
+  },
+  "tasks": [
+    "count",
+    "attendees",
+    "append",
+    "copy",
+    "largest",
+    "rename",
+    "size",
+    "nested",
+    "folder",
+    "row"
+  ],
+  "runs_planned": 40
+}

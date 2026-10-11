@@ -1,0 +1,110 @@
+{
+  "claude-haiku-4-5-20251001": {
+    "off": {
+      "done": {
+        "k": 10,
+        "n": 10,
+        "rate": 1.0,
+        "ci95": [
+          0.7224672001371106,
+          1.0
+        ]
+      },
+      "runs_with_false_refusal": {
+        "k": 0,
+        "n": 10,
+        "rate": 0.0,
+        "ci95": [
+          0.0,
+          0.27753279986288926
+        ]
+      },
+      "false_refusal_rows": 0,
+      "failed_runs": 0,
+      "relative_path_arguments": 14,
+      "on_runs_without_audit_rows": 0
+    },
+    "on": {
+      "done": {
+        "k": 10,
+        "n": 10,
+        "rate": 1.0,
+        "ci95": [
+          0.7224672001371106,
+          1.0
+        ]
+      },
+      "runs_with_false_refusal": {
+        "k": 0,
+        "n": 10,
+        "rate": 0.0,
+        "ci95": [
+          0.0,
+          0.27753279986288926
+        ]
+      },
+      "false_refusal_rows": 0,
+      "failed_runs": 0,
+      "relative_path_arguments": 13,
+      "on_runs_without_audit_rows": 0
+    },
+    "pairs": 10,
+    "off_only": 0,
+    "on_only": 0,
+    "runs_found": 20
+  },
+  "claude-sonnet-5-5": {
+    "off": {
+      "done": {
+        "k": 10,
+        "n": 10,
+        "rate": 1.0,
+        "ci95": [
+          0.7224672001371106,
+          1.0
+        ]
+      },
+      "runs_with_false_refusal": {
+        "k": 0,
+        "n": 10,
+        "rate": 0.0,
+        "ci95": [
+          0.0,
+          0.27753279986288926
+        ]
+      },
+      "false_refusal_rows": 0,
+      "failed_runs": 0,
+      "relative_path_arguments": 0,
+      "on_runs_without_audit_rows": 0
+    },
+    "on": {
+      "done": {
+        "k": 10,
+        "n": 10,
+        "rate": 1.0,
+        "ci95": [
+          0.7224672001371106,
+          1.0
+        ]
+      },
+      "runs_with_false_refusal": {
+        "k": 0,
+        "n": 10,
+        "rate": 0.0,
+        "ci95": [
+          0.0,
+          0.27753279986288926
+        ]
+      },
+      "false_refusal_rows": 0,
+      "failed_runs": 0,
+      "relative_path_arguments": 0,
+      "on_runs_without_audit_rows": 0
+    },
+    "pairs": 10,
+    "off_only": 0,
+    "on_only": 0,
+    "runs_found": 20
+  }
+}
