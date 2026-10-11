@@ -224,6 +224,28 @@ class StdioHost:
         await anyio.to_thread.run_sync(self._write, data)
 
 
+def working_dir_warning(sandbox: Path | None, cwd: Path) -> str | None:
+    """The startup warning for a working directory outside the policy's `sandbox`.
+
+    The server inherits `wrap`'s working directory and resolves relative
+    paths against it; `paths` rules now do the same, so outside the sandbox
+    every relative path is refused. The filesystem study also found the
+    second effect: a host that sends its working directory as an MCP root
+    (Claude Code does) moves a roots-aware server there, and the server and
+    toolgate then disagree about which directory is allowed. Both are
+    configuration, so this is a warning, not a refusal to start. None when
+    there is no sandbox or the working directory is the sandbox or under it.
+    """
+    if sandbox is None or cwd == sandbox or sandbox in cwd.parents:
+        return None
+    return (
+        f"warning: working directory {cwd} is outside sandbox {sandbox}; relative path "
+        "arguments resolve against the working directory and will be refused, and a host "
+        "that sends its working directory as an MCP root may move the server there. "
+        "Start the host from the sandbox, or point sandbox at the working directory"
+    )
+
+
 def _say(name: str, message: str) -> None:
     with suppress(OSError, ValueError, AttributeError):
         sys.stderr.write(f"toolgate[{name}]: {message}\n")
@@ -347,6 +369,8 @@ def _run_wrapped(
     proxy_socket: socket.socket | None,
 ) -> int:
     network = settings.network
+    # The child is started without `cwd=`, so it shares this directory.
+    cwd = Path.cwd().resolve()
     try:
         log = DecisionLog(settings.audit_path)
     except (OSError, sqlite3.Error) as exc:
@@ -361,6 +385,7 @@ def _run_wrapped(
                     policy=settings.policy,
                     audit_label=str(settings.audit_path),
                     network=network is not NetworkMode.OFF,
+                    working_dir=str(cwd),
                 )
             )
         except Exception as exc:  # noqa: BLE001 -- e.g. a detector needing an absent extra
@@ -404,6 +429,9 @@ def _run_wrapped(
             raise AssertionError("unreachable")  # pragma: no cover - for type checkers
 
         _say(name, f"policy {settings.config_path}; audit {settings.audit_path}")
+        warning = working_dir_warning(settings.sandbox, cwd)
+        if warning is not None:
+            _say(name, warning)
         if egress_proxy is not None:
             allows = (
                 f"allows {len(egress_proxy.entries)} egress entries"
@@ -433,4 +461,5 @@ __all__ = [
     "load_wrap_config",
     "resolve_config_path",
     "run_wrap",
+    "working_dir_warning",
 ]

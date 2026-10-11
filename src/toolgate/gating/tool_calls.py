@@ -382,6 +382,9 @@ class ToolVerdict:
     #: Which rule produced it, for the audit row. Never an argument value.
     rule: str
     reason: str
+    #: What the caller can change, for the refusal sent back to the model.
+    #: Fixed text, never an argument value; empty when there is nothing to say.
+    hint: str = ""
 
     @property
     def blocked(self) -> bool:
@@ -423,7 +426,24 @@ def _matches_any(value: str, patterns: tuple[str, ...]) -> bool:
     return any(fnmatch.fnmatch(value, pattern) for pattern in patterns)
 
 
-def _path_allowed(value: str, patterns: tuple[str, ...]) -> bool:
+def is_relative_path(value: str) -> bool:
+    """True only when `value` is a relative path on every platform a server may run on.
+
+    Deliberately narrow, because a relative path is joined to the working
+    directory and may then match a glob it would not match as written. So
+    anything a server could read as something else is NOT relative and is
+    matched as written (and, against absolute globs, refused):
+
+    * a leading `/` or backslash (absolute on POSIX; root of the current
+      drive, or UNC, on Windows);
+    * a leading `~`, which servers expand to the home directory;
+    * any `:`, which covers drives (`C:/x`, drive-relative `C:x`) and URIs
+      (`file:///x`); Windows forbids `:` in file names anyway.
+    """
+    return not (value.startswith(("/", "\\", "~")) or ":" in value)
+
+
+def _path_allowed(value: str, patterns: tuple[str, ...], working_dir: str | None = None) -> bool:
     """Match the NORMALISED path only.
 
     An earlier version also tried the raw string, which defeated the whole
@@ -431,12 +451,29 @@ def _path_allowed(value: str, patterns: tuple[str, ...]) -> bool:
     matched `workspace/**` verbatim and a sandbox escape was allowed through.
     Caught by a smoke test before this shipped; the regression is pinned in
     `tests/test_tool_calls.py`.
+
+    With `working_dir`, a relative path (`is_relative_path`) is first joined
+    to it, as the server resolves it: `wrap` starts the server in its own
+    working directory, so the two agree on what `notes/a.md` names. The join
+    happens before normalising, so `..` climbing out of the working
+    directory lands outside it and is refused like any other path. Without
+    it, a relative path is matched as written (the in-process path, and
+    every release before the filesystem false-refusal study).
     """
+    if working_dir is not None and is_relative_path(value):
+        value = f"{working_dir}/{value}"
     normalised, escaped = _normalise_path(value)
     if escaped:
         return False
     return _matches_any(normalised, patterns)
 
+
+#: Sent back with a `paths` refusal so the model can correct the call. Fixed
+#: text: it never names the argument or the allowed directory.
+PATHS_HINT = (
+    "path arguments must stay inside the allowed directories; use an absolute path "
+    "there (a relative path is resolved against the server's working directory)"
+)
 
 #: Ports a bare allowlist entry stands for. Only these two schemes are ever
 #: allowed through an egress rule, so the table is also the scheme allowlist.
@@ -838,6 +875,7 @@ def evaluate_tool_call(
     arguments: Any,
     *,
     schema: Any = _NO_SCHEMA,
+    working_dir: str | None = None,
 ) -> ToolVerdict:
     """Decide whether one `tools/call` may proceed.
 
@@ -853,6 +891,10 @@ def evaluate_tool_call(
     declare, and arguments that are not an object are all refused. Leaving
     `schema` out is the in-process path's contract, unchanged: values are
     checked, names are not.
+
+    `working_dir` is the directory the server runs in; `paths` checks
+    resolve a relative path argument against it (`_path_allowed`). Passing
+    it is not I/O: it is a string fixed when the proxy starts.
     """
     key = f"{server}.{tool}"
     rule = policy.rules.get(key)
@@ -898,14 +940,20 @@ def evaluate_tool_call(
 
     if rule.paths is not None:
         for value in _named_values(arguments, rule.path_names):
-            if not isinstance(value, str) or not _path_allowed(value, rule.paths):
+            if not isinstance(value, str) or not _path_allowed(value, rule.paths, working_dir):
+                relative = isinstance(value, str) and is_relative_path(value)
                 return ToolVerdict(
                     ToolDecision.BLOCK,
                     rule=f"{key}.paths",
                     # The offending value is deliberately absent: a path
                     # argument can carry exactly the sensitive data this
                     # project refuses to log (SEC-3).
-                    reason="a path argument resolved outside the allowed globs",
+                    reason=(
+                        "a relative path argument resolved outside the allowed globs"
+                        if relative
+                        else "a path argument resolved outside the allowed globs"
+                    ),
+                    hint=PATHS_HINT,
                 )
 
     if rule.egress is not None:
@@ -1054,6 +1102,7 @@ def load_tool_call_policy(raw: Any) -> ToolCallPolicy:
 __all__ = [
     "ANY_PORT",
     "DEFAULT_PORTS",
+    "PATHS_HINT",
     "PATH_ARGUMENT_NAMES",
     "URL_ARGUMENT_NAMES",
     "Destination",
@@ -1066,6 +1115,7 @@ __all__ = [
     "ToolVerdict",
     "evaluate_tool_call",
     "expand_placeholders",
+    "is_relative_path",
     "load_tool_call_policy",
     "parse_destination",
     "parse_egress_entry",
