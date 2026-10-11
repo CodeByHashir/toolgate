@@ -10,6 +10,10 @@
 > zero false refusals was not met. This is a toolgate bug, to be fixed in a
 > later version; this study is not re-run after the fix.**
 
+**Follow-up (2026-10-11):** the fix landed in v0.3 and was measured with
+ten new tasks in [`FS-RELATIVE-STUDY.md`](FS-RELATIVE-STUDY.md). This
+document is unchanged otherwise.
+
 Pre-registration: [`FS-UTILITY-STUDY-PREREG.md`](FS-UTILITY-STUDY-PREREG.md),
 including Amendment 1 (see section 6). Frozen 2026-10-10 after the
 amendment; every run and the analysis checked the hashes unchanged.

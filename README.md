@@ -201,9 +201,13 @@ is never echoed and never logged.
   value that is not plainly relative (`~`, a drive, a URI, a leading
   separator) is matched as written. This fixes the false refusals measured
   in [`docs/FS-UTILITY-STUDY.md`](docs/FS-UTILITY-STUDY.md) (Haiku 4.5 lost
-  2 of 10 file tasks, every refusal a relative path); a new study of the
-  fix is pending, so its effect on agents is not yet measured. It only
-  helps when the host runs in the sandbox: then relative paths land inside
+  2 of 10 file tasks, every refusal a relative path). A pre-registered
+  follow-up with ten new tasks
+  ([`docs/FS-RELATIVE-STUDY.md`](docs/FS-RELATIVE-STUDY.md)) measured
+  Haiku 4.5 at 10 of 10 with toolgate on and off, 13 relative path
+  arguments and no refusal; Sonnet 5.5 also 10 of 10, using absolute paths
+  only. Ten runs per cell cannot rule out a small refusal rate. The fix
+  only helps when the host runs in the sandbox: then relative paths land inside
   it, and the host's working directory, which it sends to the server as an
   MCP root (a roots-aware server such as `server-filesystem` uses it
   instead of its command-line directory), agrees with the policy. When
