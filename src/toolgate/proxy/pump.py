@@ -130,6 +130,10 @@ class ProxySettings:
     #: Network mode is on (audit or enforce): after a `tools/list`, name the
     #: tools with no rule, whose connections the proxy checks all the same.
     network: bool = False
+    #: The directory the server runs in (it inherits `wrap`'s). `paths` rules
+    #: resolve a relative path argument against it, as the server does. None
+    #: keeps relative paths matched as written.
+    working_dir: str | None = None
 
 
 class Kind(Enum):
@@ -172,14 +176,21 @@ def error_reply(request_id: Any, code: int, message: str) -> bytes:
     return encode({"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}})
 
 
-def blocked_reply(request_id: Any, rule: str) -> bytes:
-    """The local answer to a refused `tools/call`. Never echoes an argument."""
+def blocked_reply(request_id: Any, rule: str, hint: str = "") -> bytes:
+    """The local answer to a refused `tools/call`. Never echoes an argument.
+
+    `hint` is the verdict's fixed advice (a `paths` refusal says how to name
+    an allowed path), so a model can correct the call instead of guessing.
+    """
+    text = f"Blocked by toolgate policy: rule {rule}"
+    if hint:
+        text = f"{text}. Hint: {hint}"
     return encode(
         {
             "jsonrpc": "2.0",
             "id": request_id,
             "result": {
-                "content": [{"type": "text", "text": f"Blocked by toolgate policy: rule {rule}"}],
+                "content": [{"type": "text", "text": text}],
                 "isError": True,
             },
         }
@@ -409,12 +420,12 @@ class ProxyCore:
             or len(self.pending) >= self.settings.max_pending * 4
         )
 
-    def _judge_call(self, message: dict[str, Any]) -> tuple[str, str, ToolDecision, str]:
-        """Return (tool, rule, decision, reason) for one `tools/call` message."""
+    def _judge_call(self, message: dict[str, Any]) -> tuple[str, str, ToolDecision, str, str]:
+        """Return (tool, rule, decision, reason, hint) for one `tools/call` message."""
         params = message.get("params")
         name = params.get("name") if isinstance(params, dict) else None
         if not isinstance(name, str):
-            return "*", f"{self.name}.*.args", ToolDecision.BLOCK, "params.name is not a string"
+            return "*", f"{self.name}.*.args", ToolDecision.BLOCK, "params.name is not a string", ""
         arguments = params.get("arguments", {}) if isinstance(params, dict) else None
         if not isinstance(arguments, dict):
             return (
@@ -422,6 +433,7 @@ class ProxyCore:
                 f"{self.name}.{name}.args",
                 ToolDecision.BLOCK,
                 "arguments is not an object",
+                "",
             )
         try:
             verdict = evaluate_tool_call(
@@ -430,6 +442,7 @@ class ProxyCore:
                 name,
                 arguments,
                 schema=self.schemas.get(name),
+                working_dir=self.settings.working_dir,
             )
         except Exception as exc:  # noqa: BLE001 -- fail closed on any gate error
             return (
@@ -437,15 +450,16 @@ class ProxyCore:
                 f"{self.name}.{name}.args",
                 ToolDecision.BLOCK,
                 f"internal error in the gate ({type(exc).__name__})",
+                "",
             )
-        return name, verdict.rule, verdict.decision, verdict.reason
+        return name, verdict.rule, verdict.decision, verdict.reason, verdict.hint
 
     def _client_call(self, raw: bytes, message: dict[str, Any], key: IdKey) -> Effects:
         effects = Effects()
         started = self._clock()
         request_id = message["id"]
         correlation_id = uuid.uuid4().hex
-        tool, rule, decision, reason = self._judge_call(message)
+        tool, rule, decision, reason, hint = self._judge_call(message)
 
         if decision is not ToolDecision.BLOCK and self._full():
             rule, decision, reason = (
@@ -456,7 +470,7 @@ class ProxyCore:
 
         if decision is ToolDecision.BLOCK:
             self.answered.add(key)
-            effects.to_client.append(blocked_reply(request_id, rule))
+            effects.to_client.append(blocked_reply(request_id, rule, hint))
             effects.messages.append(f"toolgate[{self.name}]: blocked {tool} (rule {rule})")
         else:
             effects.to_server.append(raw)
@@ -490,7 +504,7 @@ class ProxyCore:
     def _client_call_notification(self, raw: bytes, message: dict[str, Any]) -> Effects:
         """A `tools/call` with no id. Nothing can be replied; gate it anyway."""
         effects = Effects()
-        tool, rule, decision, reason = self._judge_call(message)
+        tool, rule, decision, reason, _hint = self._judge_call(message)
         if decision is ToolDecision.BLOCK:
             effects.messages.append(
                 f"toolgate[{self.name}]: dropped {tool} sent without an id (rule {rule})"

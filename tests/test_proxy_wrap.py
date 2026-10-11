@@ -241,6 +241,25 @@ class TestSession:
         assert "exit status 7" in completed.stderr.decode()
 
 
+class TestWorkingDirectory:
+    """The server shares wrap's working directory; a sandbox elsewhere is warned about."""
+
+    def test_a_working_directory_outside_the_sandbox_is_warned_about(self, tmp_path: Path) -> None:
+        (tmp_path / "project").mkdir()
+        config = _write_policy(tmp_path, POLICY + 'sandbox: "project"\n')
+        completed = _wrap(tmp_path, SESSION[:3], config=config)
+        stderr = completed.stderr.decode()
+        assert completed.returncode == 0, stderr
+        assert "warning: working directory" in stderr
+        assert "outside sandbox" in stderr
+
+    def test_no_warning_when_the_working_directory_is_the_sandbox(self, tmp_path: Path) -> None:
+        config = _write_policy(tmp_path, POLICY + 'sandbox: "."\n')
+        completed = _wrap(tmp_path, SESSION[:3], config=config)
+        assert completed.returncode == 0, completed.stderr.decode()
+        assert "warning: working directory" not in completed.stderr.decode()
+
+
 class TestStartupFailures:
     """Exit 1 before the child starts; stdout stays empty (design: no pass-through)."""
 

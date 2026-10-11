@@ -195,17 +195,19 @@ is never echoed and never logged.
   traffic from a client that honours proxy variables.
 - **PII redaction covers `tools/call` results only.** `resources/read`,
   `prompts/get` and notifications pass unredacted.
-- **Relative paths are refused under `paths` rules (a false refusal).**
-  The rule matches absolute globs, so `notes/todo.txt` or `.` is refused
-  even when the server would resolve it inside the sandbox. Measured with
-  Claude Code ([`docs/FS-UTILITY-STUDY.md`](docs/FS-UTILITY-STUDY.md)):
-  Haiku 4.5, which often passes relative paths, lost 2 of 10 file tasks
-  with toolgate on; Sonnet 5.5, which passed absolute paths, lost none. A
-  fix is planned. Also keep the policy's `sandbox` equal to the directory
-  the host runs in: the host sends its working directory to the server as
-  an MCP root, a roots-aware server such as `server-filesystem` uses it
-  instead of its command-line directory, and if the two differ toolgate
-  refuses calls the server would accept.
+- **A working directory outside the `sandbox` causes false refusals.**
+  `wrap` resolves a relative path argument (`notes/todo.txt`, `.`) against
+  its working directory, which the server shares, as the server does. A
+  value that is not plainly relative (`~`, a drive, a URI, a leading
+  separator) is matched as written. This fixes the false refusals measured
+  in [`docs/FS-UTILITY-STUDY.md`](docs/FS-UTILITY-STUDY.md) (Haiku 4.5 lost
+  2 of 10 file tasks, every refusal a relative path); a new study of the
+  fix is pending, so its effect on agents is not yet measured. It only
+  helps when the host runs in the sandbox: then relative paths land inside
+  it, and the host's working directory, which it sends to the server as an
+  MCP root (a roots-aware server such as `server-filesystem` uses it
+  instead of its command-line directory), agrees with the policy. When
+  they differ, `wrap` warns at startup and those calls are refused.
 - **Paths are compared as text.** Symlinks are not resolved, so a symlink
   inside an allowed directory pointing outside it is not caught here
   (`server-filesystem` resolves real paths itself).
