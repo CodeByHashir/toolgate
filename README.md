@@ -303,42 +303,54 @@ What else it does, and what it costs:
 
 ### Quickstart (Claude Code)
 
-The PyPI package is `toolgate-mcp` (the name `toolgate` on PyPI belongs to an
-unrelated project); the command it installs is `toolgate`. v0.1 is not on PyPI
-yet. Until `0.1.0a1` is published, install from git and replace
-`toolgate-mcp==0.1.0a1` below with
-`git+https://github.com/CodeByHashir/toolgate`.
+toolgate is not on PyPI yet, so every command below installs it from this
+repository with `uvx`, pinned to one commit. You need
+[`uv`](https://docs.astral.sh/uv/) and Claude Code; nothing else is
+installed by hand. (When it is published, the package will be `toolgate-mcp`,
+since the name `toolgate` on PyPI belongs to an unrelated project, and
+`toolgate-mcp==<version>` will replace the `git+https://...` part.) The
+example wraps the reference `fetch` server and lets it reach one site.
 
-1. Draft a policy from the server's own tool list. `policy suggest` starts the
-   server, reads its `tools/list` and prints a draft to stdout (it writes no
-   file):
+1. **Draft a policy** from the server's own tool list. `policy suggest`
+   starts the server, reads its `tools/list` and prints a draft; nothing
+   else is written. In bash or zsh:
 
    ```bash
-   uvx --from toolgate-mcp==0.1.0a1 toolgate policy suggest --name fetch -- uvx mcp-server-fetch==2026.8.18 > fetch.yaml
+   uvx --from git+https://github.com/CodeByHashir/toolgate@72b6b5d2a49d3c6bca0607777afdc3b4edfab57f toolgate policy suggest --name fetch -- uvx mcp-server-fetch==2026.8.18 > fetch.yaml
    ```
 
-   In Windows PowerShell 5, `>` writes UTF-16, which toolgate refuses with a
-   message; pipe through `| Out-File -Encoding utf8 fetch.yaml` instead.
+   In Windows PowerShell, where `>` would write UTF-16 (which toolgate
+   refuses with a message), write the file as UTF-8 instead:
 
-   The draft has `default: block` and one rule per tool, with each argument
-   sorted into `url_args`, `path_args` or `ignore_args` by its name and schema
-   format. Every rule is a guess marked `# review`. The placeholders
-   (`example.invalid`, `/replace/with/allowed/dir/**`) allow nothing, so
-   replace them with what the tool may reach, and check each sorted argument:
+   ```powershell
+   uvx --from git+https://github.com/CodeByHashir/toolgate@72b6b5d2a49d3c6bca0607777afdc3b4edfab57f toolgate policy suggest --name fetch -- uvx mcp-server-fetch==2026.8.18 | Out-File -Encoding utf8 fetch.yaml
+   ```
+
+   The first run downloads and builds toolgate and the server (about 15
+   seconds on the dev machine); later runs start from the cache.
+
+2. **Say where the tool may go.** The draft has `default: block` and one rule
+   per tool, each argument sorted into `url_args`, `path_args` or
+   `ignore_args` by its name and schema format, every guess marked
+   `# review`. Its placeholders (`example.invalid`,
+   `/replace/with/allowed/dir/**`) allow nothing. For this example, change
+   the `egress` line in `fetch.yaml` to:
 
    ```yaml
    tool_calls:
      default: block
      rules:
        fetch.fetch:
-         egress: ["docs.python.org", "api.internal.example:8443"]
+         egress: ["docs.python.org"]
          url_args: ["url"]
    ```
 
    [`examples/`](examples) has finished policies to compare against.
 
-2. Put `toolgate wrap` in front of the server, pinned to a version, in
-   `.mcp.json`:
+3. **Put `toolgate wrap` in front of the server** in a `.mcp.json` file in
+   the folder you start Claude Code from. Replace the `--config` value with
+   the absolute path of your `fetch.yaml` (on Windows, forward slashes work:
+   `C:/Users/you/project/fetch.yaml`):
 
    ```json
    {
@@ -346,7 +358,7 @@ yet. Until `0.1.0a1` is published, install from git and replace
        "fetch": {
          "command": "uvx",
          "args": [
-           "--from", "toolgate-mcp==0.1.0a1", "toolgate",
+           "--from", "git+https://github.com/CodeByHashir/toolgate@72b6b5d2a49d3c6bca0607777afdc3b4edfab57f", "toolgate",
            "wrap", "--name", "fetch",
            "--config", "/absolute/path/to/fetch.yaml",
            "--", "uvx", "mcp-server-fetch==2026.8.18"
@@ -356,15 +368,25 @@ yet. Until `0.1.0a1` is published, install from git and replace
    }
    ```
 
-   Pin the version: unpinned, a broken release could stop every wrapped
-   server the next time the host starts. Upgrade by changing the version in
-   the snippet.
+   Keep the version pinned (here, the commit after `@`): unpinned, a broken
+   change could stop every wrapped server the next time the host starts.
 
-3. `--name` becomes the `<server>` in rule keys (`fetch.fetch` is server
-   `fetch`, tool `fetch`). The config comes from `--config` or
-   `$TOOLGATE_CONFIG`, never from the working directory. In a policy file,
-   `sandbox:`, `state_dir:` and `audit_path:` accept `~` and `${NAME}`;
-   relative values are resolved against the config file.
+4. **Check it works.** Start Claude Code in that folder, approve the `fetch`
+   server if asked, and ask it to *fetch https://docs.python.org/3/ and give
+   the page title*: the page comes back. Then ask it to *fetch
+   https://example.com/*: the reply is
+   `Blocked by toolgate policy: rule fetch.fetch.egress`. The refusal is in
+   the audit log:
+
+   ```bash
+   uvx --from git+https://github.com/CodeByHashir/toolgate@72b6b5d2a49d3c6bca0607777afdc3b4edfab57f toolgate log --name fetch --config /absolute/path/to/fetch.yaml --blocked
+   ```
+
+`--name` becomes the `<server>` in rule keys (`fetch.fetch` is server
+`fetch`, tool `fetch`). The config comes from `--config` or
+`$TOOLGATE_CONFIG`, never from the working directory. In a policy file,
+`sandbox:`, `state_dir:` and `audit_path:` accept `~` and `${NAME}`;
+relative values are resolved against the config file.
 
 To remove toolgate, delete everything up to and including the `--` from the
 args. The snippet is written for Claude Code, the host the demo targets, and
@@ -392,7 +414,7 @@ shape as the Claude Code snippet above:
     "fetch": {
       "command": "uvx",
       "args": [
-        "--from", "toolgate-mcp==0.1.0a1", "toolgate",
+        "--from", "git+https://github.com/CodeByHashir/toolgate@72b6b5d2a49d3c6bca0607777afdc3b4edfab57f", "toolgate",
         "wrap", "--name", "fetch",
         "--config", "C:/absolute/path/to/fetch.yaml",
         "--", "uvx", "mcp-server-fetch==2026.8.18"
@@ -422,7 +444,7 @@ read-only with Python's sqlite3 (no `sqlite3` command-line tool needed, which
 stock Windows lacks):
 
 ```bash
-uvx --from toolgate-mcp==0.1.0a1 toolgate log --name fetch --config /absolute/path/to/fetch.yaml --blocked
+uvx --from git+https://github.com/CodeByHashir/toolgate@72b6b5d2a49d3c6bca0607777afdc3b4edfab57f toolgate log --name fetch --config /absolute/path/to/fetch.yaml --blocked
 ```
 
 `--audit <file>` reads a log directly; `--limit N` shows more than 20 rows.
