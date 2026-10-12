@@ -71,6 +71,7 @@ from toolgate.gating.audit import (
     Outcome,
     default_audit_path,
 )
+from toolgate.gating.pins import PinStore, PinStoreCorrupt
 from toolgate.gating.policy import PolicyConfig, load_policy_config, read_config_text
 from toolgate.gating.tool_calls import PlaceholderError, expand_placeholders, resolve_sandbox
 from toolgate.proxy.egress import (
@@ -369,6 +370,15 @@ def _run_wrapped(
     proxy_socket: socket.socket | None,
 ) -> int:
     network = settings.network
+    pins: PinStore | None = None
+    pin_error: str | None = None
+    if settings.policy.tool_declarations.enabled:
+        # Loaded before the child starts. A pin file that will not load is
+        # not replaced by an empty store: that would trust every tool again.
+        try:
+            pins = PinStore.load(name, directory=settings.state_dir / "pins")
+        except PinStoreCorrupt as exc:
+            pin_error = str(exc)
     # The child is started without `cwd=`, so it shares this directory.
     cwd = Path.cwd().resolve()
     try:
@@ -386,6 +396,8 @@ def _run_wrapped(
                     audit_label=str(settings.audit_path),
                     network=network is not NetworkMode.OFF,
                     working_dir=str(cwd),
+                    pins=pins,
+                    pin_error=pin_error,
                 )
             )
         except Exception as exc:  # noqa: BLE001 -- e.g. a detector needing an absent extra
@@ -429,6 +441,11 @@ def _run_wrapped(
             raise AssertionError("unreachable")  # pragma: no cover - for type checkers
 
         _say(name, f"policy {settings.config_path}; audit {settings.audit_path}")
+        if pins is not None:
+            _say(name, f"tool declarations pinned in {pins.path}")
+        elif pin_error is not None:
+            action = settings.policy.tool_declarations.on_pin_error.value
+            _say(name, f"pin store unreadable ({pin_error}); on_pin_error: {action}")
         warning = working_dir_warning(settings.sandbox, cwd)
         if warning is not None:
             _say(name, warning)

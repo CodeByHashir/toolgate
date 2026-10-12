@@ -55,6 +55,7 @@ rule ids, fixed reasons, hashes, timings.
 
 from __future__ import annotations
 
+import dataclasses
 import sys
 import time
 import uuid
@@ -66,11 +67,20 @@ from enum import Enum
 from typing import Any, Protocol
 
 import anyio
+import mcp_types
+from pydantic import ValidationError
 
 from toolgate.detectors.base import Detector
 from toolgate.detectors.normalise import normalise, scan_normalised
 from toolgate.gating.audit import AuditWriter, Decision, DecisionRecord, Outcome
 from toolgate.gating.content import apply_redaction, build_block_result, extract
+from toolgate.gating.declaration_policy import (
+    DeclarationAction,
+    DeclarationDecision,
+    evaluate_declaration,
+)
+from toolgate.gating.declarations import hash_declaration
+from toolgate.gating.pins import DeclarationVerdict, PinStore
 from toolgate.gating.policy import PolicyConfig, PolicyEngine
 from toolgate.gating.tool_calls import (
     ToolDecision,
@@ -109,6 +119,14 @@ INTERNAL_ERROR = -32603
 #: Implementation-defined server error, used for "too many requests in flight".
 SERVER_BUSY = -32000
 
+#: How a declaration action is written to the shared decision log (the same
+#: mapping as the in-process `DeclarationGate`).
+_DECLARATION_DECISION: dict[DeclarationAction, Decision] = {
+    DeclarationAction.ALLOW: Decision.ALLOW,
+    DeclarationAction.ESCALATE: Decision.ESCALATE,
+    DeclarationAction.BLOCK: Decision.BLOCK,
+}
+
 
 @dataclass(frozen=True, slots=True)
 class ProxySettings:
@@ -134,6 +152,13 @@ class ProxySettings:
     #: resolve a relative path argument against it, as the server does. None
     #: keeps relative paths matched as written.
     working_dir: str | None = None
+    #: This server's pin store, when the policy has a `tool_declarations`
+    #: block. Held in memory; `run_pump` saves it when `Effects.persist_pins`
+    #: says a listing pinned something new.
+    pins: PinStore | None = None
+    #: Why the pin store could not be loaded, when it could not. Then every
+    #: declaration gets `tool_declarations.on_pin_error` (default: withheld).
+    pin_error: str | None = None
 
 
 class Kind(Enum):
@@ -164,12 +189,15 @@ class Effects:
     to_client: list[bytes] = field(default_factory=list)
     records: list[DecisionRecord] = field(default_factory=list)
     messages: list[str] = field(default_factory=list)
+    #: A listing pinned a first-seen declaration: save the pin store.
+    persist_pins: bool = False
 
     def extend(self, other: Effects) -> None:
         self.to_server += other.to_server
         self.to_client += other.to_client
         self.records += other.records
         self.messages += other.messages
+        self.persist_pins = self.persist_pins or other.persist_pins
 
 
 def error_reply(request_id: Any, code: int, message: str) -> bytes:
@@ -245,6 +273,9 @@ class ProxyCore:
         self.closed = _BoundedSet(settings.max_pending * 4)
         #: Declared `inputSchema` per tool name, from `tools/list` replies.
         self.schemas: dict[str, Any] = {}
+        #: Tools the latest listing withheld under `tool_declarations`; their
+        #: calls are refused (rule `<server>.<tool>.declaration`).
+        self.declaration_withheld: set[str] = set()
         self._last_coverage: tuple[int, int] | None = None
         #: Whether any line has arrived from the server (network mode's
         #: launcher hint: a launcher refused by the proxy exits silently).
@@ -433,6 +464,14 @@ class ProxyCore:
                 f"{self.name}.{name}.args",
                 ToolDecision.BLOCK,
                 "arguments is not an object",
+                "",
+            )
+        if name in self.declaration_withheld:
+            return (
+                name,
+                f"{self.name}.{name}.declaration",
+                ToolDecision.BLOCK,
+                "the tool's declaration was withheld by the tool_declarations policy",
                 "",
             )
         try:
@@ -693,8 +732,9 @@ class ProxyCore:
         """Classify every declared tool; withhold the ones the policy cannot vouch for.
 
         Pagination needs nothing special (R2-10): classification is a property
-        of each declaration, so each page is handled on its own. Declaration
-        pinning is not done here in v0.1 (eng review D1; TODOS.md).
+        of each declaration, so each page is handled on its own. With a
+        `tool_declarations` block, each declaration is also checked against
+        its pin (`_check_declaration`) and may be withheld for that reason.
         """
         effects = Effects()
         if "error" in message and "result" not in message:
@@ -716,6 +756,8 @@ class ProxyCore:
             name = tool["name"]
             schema = tool.get("inputSchema")
             self.schemas[name] = schema
+            if not self._check_declaration(tool, entry, effects):
+                continue
             rule = policy.rules.get(f"{self.name}.{name}")
             unclassified = unclassified_arguments(rule, schema) if rule is not None else ()
             if not unclassified:
@@ -756,6 +798,81 @@ class ProxyCore:
                     f"egress rule: {', '.join(unruled)}"
                 )
         return effects
+
+    def _check_declaration(self, tool: dict[str, Any], entry: Pending, effects: Effects) -> bool:
+        """Check one declaration against its pin; return whether to forward it.
+
+        Off unless the policy has a `tool_declarations` block. Then: a
+        first-seen declaration is pinned (trust on first use, `persist_pins`
+        set so `run_pump` saves it), a changed one is never re-pinned (the
+        evidence would be gone), and `evaluate_declaration` decides between
+        allow, escalate (log, forward) and block (withhold, refuse calls).
+        One audit row per tool per listing, digests and field names only.
+
+        `shadowed` never holds here: one `wrap` process sees one server, so
+        a name declared by two servers is invisible to it. A declaration the
+        pinned SDK cannot read, or a pin store that would not load, cannot be
+        verified and gets `on_pin_error`, which withholds by default.
+        """
+        policy = self.settings.policy.tool_declarations
+        if not policy.enabled:
+            return True
+        name = tool["name"]
+        store = self.settings.pins
+        reason = f"pin store unreadable: {self.settings.pin_error or 'not loaded'}"
+        hashes = None
+        if store is not None:
+            try:
+                hashes = hash_declaration(mcp_types.Tool.model_validate(tool))
+            except (ValidationError, ValueError, TypeError) as exc:
+                reason = f"declaration could not be read ({type(exc).__name__})"
+        combined = ""
+        if hashes is None or store is None:
+            decision = DeclarationDecision(action=policy.on_pin_error, condition="pin_error")
+            note = f"not verified: {reason}; on_pin_error {policy.on_pin_error.value}"
+        else:
+            verdict = store.verify_hashes(name, hashes)
+            if verdict.verdict is DeclarationVerdict.NEW:
+                store.record_hashes(name, hashes)
+                effects.persist_pins = True
+            decision = evaluate_declaration(
+                policy,
+                self.name,
+                name,
+                verdict=verdict.verdict.value,
+                shadowed=False,
+                concealed=bool(verdict.concealed),
+            )
+            note = verdict.verdict.value
+            if verdict.changed:
+                note += f" changed={','.join(verdict.changed)}"
+            if verdict.concealed:
+                note += f" concealed={','.join(verdict.concealed)}"
+            if decision.condition:
+                note += f" action={decision.action.value}:{decision.condition}"
+            combined = verdict.combined
+        if decision.action is not DeclarationAction.ALLOW:
+            effects.messages.append(
+                f"toolgate[{self.name}]: tool {name!r} declaration {note} "
+                f"(rule {self.name}.{name}.declaration)"
+            )
+        if decision.blocked:
+            self.declaration_withheld.add(name)
+        else:
+            self.declaration_withheld.discard(name)
+        record = self._record(
+            decision=_DECLARATION_DECISION[decision.action],
+            outcome=Outcome.TOOL_DECLARATION,
+            note=f"rule {self.name}.{name}.declaration: {note}",
+            tool=name,
+            request_id=entry.request_id,
+            correlation_id=entry.correlation_id,
+        )
+        # A digest, not content: the column's meaning in the in-process gate.
+        effects.records.append(
+            dataclasses.replace(record, raw_result_hash=combined) if combined else record
+        )
+        return not decision.blocked
 
     def _unruled_tools(self) -> list[str]:
         """Tools with no rule under `default: allow`: argument-unchecked, but
@@ -1081,6 +1198,14 @@ async def run_pump(
         if audit is not None:
             for record in effects.records:
                 audit.append(record)
+        if effects.persist_pins and core.settings.pins is not None:
+            try:
+                core.settings.pins.save()
+            except OSError as exc:
+                # Loud, not fatal: the listing was already checked. Unsaved
+                # pins mean the next session trusts these tools on first use
+                # again, which is what an operator must be told.
+                report(f"toolgate[{core.name}]: could not save pins: {exc}")
 
     async with anyio.create_task_group() as tg:
 

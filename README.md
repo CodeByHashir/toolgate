@@ -215,8 +215,14 @@ is never echoed and never logged.
 - **Paths are compared as text.** Symlinks are not resolved, so a symlink
   inside an allowed directory pointing outside it is not caught here
   (`server-filesystem` resolves real paths itself).
-- **Tool descriptions are not pinned in the proxy yet.** Declaration pinning
-  exists in the in-process path (below) but not in `wrap` v0.1.
+- **Declaration pinning in `wrap` is per server.** With a
+  `tool_declarations` block (below), `wrap` pins each tool on first sight
+  and checks every later listing, but one `wrap` process sees one server,
+  so `shadowed` (two servers declaring the same name) is never reported
+  there. Pinning is trust on first use: a server poisoned before its first
+  session is pinned as it is. To accept a legitimate change after an
+  upgrade, delete `<state_dir>/pins/<name>.json`, which re-pins every tool
+  of that server on the next session.
 
 **Ports are part of every entry.** `example.com` allows only port 80 for
 `http` and 443 for `https` (an explicit `:443` counts the same). Write
@@ -486,6 +492,16 @@ Declarations are hashed per field on first sight (`pins/<server>.json`, digests
 only, never content) and re-checked on every listing. A change names the field
 that moved. A declaration the policy refuses is dropped from the list handed to
 the model, so the poisoned text never reaches it.
+
+`toolgate wrap` does the same for the server it wraps when its policy file
+has a `tool_declarations` block: pins live in `<state_dir>/pins/<name>.json`,
+every `tools/list` reply is checked (including the re-list a host makes after
+`notifications/tools/list_changed`, the mid-session rug-pull), each verdict is
+an audit row (`toolgate log`) and a stderr line, and a withheld tool's calls
+are refused with rule `<server>.<tool>.declaration`. Tested with a scripted
+server that changes its description between sessions, and against the real
+`server-filesystem`, whose declarations came back `unchanged` on a second
+session ([`tests/test_proxy_pins.py`](tests/test_proxy_pins.py)).
 
 **The claim is narrower than it sounds.** Pinning cannot tell you a server is
 malicious. A server that ships a poisoned description at install time is pinned
