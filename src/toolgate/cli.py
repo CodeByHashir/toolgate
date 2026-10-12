@@ -638,9 +638,10 @@ def main(argv: list[str] | None = None) -> int:
         description=(
             "Proxy one stdio MCP server: `toolgate wrap --name N --config C -- <command>`. "
             "tools/call requests are checked against the policy's capability rules "
-            "before they reach the server; tools/call results get PII redaction when "
-            "the policy enables it. Only tools/call results are redacted: "
-            "resources/read, prompts/get and notifications pass unredacted."
+            "before they reach the server; tools/call and resources/read results get "
+            "PII redaction when the policy enables it; prompts/get and notifications "
+            "pass unredacted. With a tool_declarations block, tool declarations are "
+            "pinned and checked on every tools/list."
         ),
     )
     wrap.add_argument(
@@ -697,7 +698,47 @@ def main(argv: list[str] | None = None) -> int:
     log.add_argument("--blocked", action="store_true", help="only rows with decision block")
     log.add_argument("--limit", type=int, default=20, help="rows to show (default 20)")
 
+    pins = subparsers.add_parser(
+        "pins",
+        help="review (status) or accept a wrapped server's tool declaration changes",
+        description=(
+            "Start the server, read its tools/list and compare each tool with the pin "
+            "`wrap` stored for it. `status` prints the verdicts and writes nothing; "
+            "`accept` re-pins new and changed tools (only --tool ones, if given). "
+            "Review a change before accepting it: accept pins what the server serves now."
+        ),
+    )
+    pins_commands = pins.add_subparsers(dest="action", required=True)
+    for action, help_text in (
+        ("status", "print each tool's verdict against its pin; writes nothing"),
+        ("accept", "re-pin new and changed tools to what the server serves now"),
+    ):
+        sub = pins_commands.add_parser(action, help=help_text)
+        sub.add_argument("--name", required=True, help="server name, as given to `wrap --name`")
+        sub.add_argument(
+            "--config",
+            default=None,
+            help="the server's policy file; defaults to $TOOLGATE_CONFIG",
+        )
+        if action == "accept":
+            sub.add_argument(
+                "--tool", action="append", default=None, help="only this tool (repeatable)"
+            )
+        sub.add_argument(
+            "--timeout",
+            type=float,
+            default=120.0,
+            help="seconds to wait for the server (default 120)",
+        )
+        sub.add_argument(
+            "server_command",
+            nargs=argparse.REMAINDER,
+            help="the server command and its arguments, after --",
+        )
+
     args = parser.parse_args(argv)
+    if args.command == "pins":
+        return _pins(args)
     if args.command == "wrap":
         return _wrap(args)
     if args.command == "policy":
@@ -759,6 +800,65 @@ def _log(args: argparse.Namespace) -> int:
         print(f"toolgate log: no audit log at {audit}", file=sys.stderr)
         return 1
     sys.stdout.write(format_rows(rows))
+    return 0
+
+
+def _pins(args: argparse.Namespace) -> int:
+    import os
+
+    from toolgate.gating.pins import PinStore, PinStoreCorrupt
+    from toolgate.pins_command import accept_tools, check_tools, format_rows
+    from toolgate.proxy.wrap import (
+        WrapConfigError,
+        load_wrap_config,
+        pin_directory,
+        resolve_config_path,
+    )
+    from toolgate.suggest import SuggestError, list_tools
+
+    def fail(message: str) -> int:
+        print(f"toolgate pins: {message}", file=sys.stderr)
+        return 1
+
+    try:
+        config = resolve_config_path(args.config, os.environ)
+        settings = load_wrap_config(args.name, config, environ=os.environ, home=Path.home())
+    except WrapConfigError as exc:
+        return fail(str(exc))
+    try:
+        store = PinStore.load(args.name, directory=pin_directory(settings.state_dir))
+    except PinStoreCorrupt as exc:
+        # Never overwritten here: whether to delete it is the operator's call.
+        return fail(f"{exc}; delete it to start over (every tool is then pinned anew)")
+    if not settings.policy.tool_declarations.enabled:
+        print(
+            "toolgate pins: note: the policy has no tool_declarations block, so `wrap` "
+            "does not check these pins",
+            file=sys.stderr,
+        )
+    command = list(args.server_command)
+    if command and command[0] == "--":
+        command = command[1:]
+    try:
+        tools = list_tools(command, timeout=args.timeout)
+    except SuggestError as exc:
+        return fail(f"could not read the server's tools: {exc}")
+    sys.stdout.write(format_rows(check_tools(store, tools)))
+    if args.action == "status":
+        return 0
+    declared = {str(tool.get("name")) for tool in tools}
+    only = getattr(args, "tool", None)
+    missing = sorted(set(only or ()) - declared)
+    if missing:
+        return fail(f"the server does not declare {', '.join(missing)}; nothing re-pinned")
+    accepted = accept_tools(store, tools, only)
+    if accepted:
+        store.save()
+    print(
+        f"toolgate pins: re-pinned {len(accepted)} tool(s): {', '.join(accepted) or '-'} "
+        f"({store.path})",
+        file=sys.stderr,
+    )
     return 0
 
 

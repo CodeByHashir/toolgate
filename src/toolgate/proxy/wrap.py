@@ -225,6 +225,11 @@ class StdioHost:
         await anyio.to_thread.run_sync(self._write, data)
 
 
+def pin_directory(state_dir: Path) -> Path:
+    """Where `wrap` keeps `<name>.json` pin files (and `toolgate pins` finds them)."""
+    return state_dir / "pins"
+
+
 def working_dir_warning(sandbox: Path | None, cwd: Path) -> str | None:
     """The startup warning for a working directory outside the policy's `sandbox`.
 
@@ -376,7 +381,7 @@ def _run_wrapped(
         # Loaded before the child starts. A pin file that will not load is
         # not replaced by an empty store: that would trust every tool again.
         try:
-            pins = PinStore.load(name, directory=settings.state_dir / "pins")
+            pins = PinStore.load(name, directory=pin_directory(settings.state_dir))
         except PinStoreCorrupt as exc:
             pin_error = str(exc)
     # The child is started without `cwd=`, so it shares this directory.
@@ -476,6 +481,7 @@ __all__ = [
     "WrapConfig",
     "WrapConfigError",
     "load_wrap_config",
+    "pin_directory",
     "resolve_config_path",
     "run_wrap",
     "working_dir_warning",

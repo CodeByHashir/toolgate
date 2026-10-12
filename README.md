@@ -224,9 +224,8 @@ is never echoed and never logged.
   and checks every later listing, but one `wrap` process sees one server,
   so `shadowed` (two servers declaring the same name) is never reported
   there. Pinning is trust on first use: a server poisoned before its first
-  session is pinned as it is. To accept a legitimate change after an
-  upgrade, delete `<state_dir>/pins/<name>.json`, which re-pins every tool
-  of that server on the next session.
+  session is pinned as it is. `toolgate pins accept` re-pins what the
+  server serves now, so review the change first (`toolgate pins status`).
 
 **Ports are part of every entry.** `example.com` allows only port 80 for
 `http` and 443 for `https` (an explicit `:443` counts the same). Write
@@ -506,6 +505,17 @@ are refused with rule `<server>.<tool>.declaration`. Tested with a scripted
 server that changes its description between sessions, and against the real
 `server-filesystem`, whose declarations came back `unchanged` on a second
 session ([`tests/test_proxy_pins.py`](tests/test_proxy_pins.py)).
+
+After an upgrade that legitimately changes a tool, review and accept it.
+Both commands start the server once, like `policy suggest`; `status` writes
+nothing, and `accept` re-pins only new and changed tools (`--tool` narrows
+it to the ones you name). Output is tool names, verdicts and field names,
+never a description.
+
+```bash
+toolgate pins status --name fetch --config /absolute/path/to/fetch.yaml -- uvx mcp-server-fetch==2026.8.18
+toolgate pins accept --name fetch --config /absolute/path/to/fetch.yaml --tool fetch -- uvx mcp-server-fetch==2026.8.18
+```
 
 **The claim is narrower than it sounds.** Pinning cannot tell you a server is
 malicious. A server that ships a poisoned description at install time is pinned
