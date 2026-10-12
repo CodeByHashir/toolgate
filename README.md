@@ -193,8 +193,12 @@ is never echoed and never logged.
 - **Traffic a server originates on its own**, and shell or exec tools whose
   network access is not an argument, except, with network mode on, HTTP
   traffic from a client that honours proxy variables.
-- **PII redaction covers `tools/call` results only.** `resources/read`,
-  `prompts/get` and notifications pass unredacted.
+- **PII redaction covers `tools/call` and `resources/read` results only.**
+  In `wrap`, a `resources/read` reply goes through the same detectors and
+  redaction as a tool result: text contents are scanned and masked, a
+  `blob` passes unscanned, an unreadable reply is refused when redaction is
+  on, and the URI is never logged. `prompts/get` and notifications pass
+  unredacted.
 - **A working directory outside the `sandbox` causes false refusals.**
   `wrap` resolves a relative path argument (`notes/todo.txt`, `.`) against
   its working directory, which the server shares, as the server does. A
