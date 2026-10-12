@@ -110,6 +110,7 @@ from toolgate.proxy.process import ChildProcess, SessionEnd
 
 TOOLS_CALL = "tools/call"
 TOOLS_LIST = "tools/list"
+RESOURCES_READ = "resources/read"
 CANCELLED = "notifications/cancelled"
 
 # JSON-RPC error codes.
@@ -118,6 +119,8 @@ INVALID_REQUEST = -32600
 INTERNAL_ERROR = -32603
 #: Implementation-defined server error, used for "too many requests in flight".
 SERVER_BUSY = -32000
+#: Implementation-defined server error: a `resources/read` reply was refused.
+RESOURCE_REFUSED = -32001
 
 #: How a declaration action is written to the shared decision log (the same
 #: mapping as the in-process `DeclarationGate`).
@@ -164,6 +167,7 @@ class ProxySettings:
 class Kind(Enum):
     CALL = "tools/call"
     LIST = "tools/list"
+    RESOURCE = "resources/read"
 
 
 @dataclass(slots=True)
@@ -439,7 +443,39 @@ class ProxyCore:
             return self._client_call(raw, message, key)
         if method == TOOLS_LIST:
             return self._client_list(raw, request_id, key)
+        if method == RESOURCES_READ and self.detectors:
+            return self._client_resource(raw, request_id, key)
         effects.to_server.append(raw)
+        return effects
+
+    def _client_resource(self, raw: bytes, request_id: Any, key: IdKey) -> Effects:
+        """Track a `resources/read` so its reply is inspected like a tool result.
+
+        Only when detectors are configured: with none there is nothing the
+        proxy would change, so the request and its reply pass untracked. The
+        URI is never recorded (SEC-3): it names a file and can be sensitive.
+        """
+        effects = Effects()
+        if self._full():
+            rule = f"{self.name}.resources.capacity"
+            effects.to_client.append(
+                error_reply(request_id, SERVER_BUSY, "toolgate: too many requests in flight")
+            )
+            effects.records.append(
+                self._record(
+                    decision=Decision.BLOCK,
+                    outcome=Outcome.RESULT,
+                    note=f"rule {rule}: too many requests in flight",
+                    tool=RESOURCES_READ,
+                    request_id=request_id,
+                )
+            )
+            effects.messages.append(f"toolgate[{self.name}]: refused resources/read (rule {rule})")
+            return effects
+        effects.to_server.append(raw)
+        self.pending[key] = Pending(
+            Kind.RESOURCE, RESOURCES_READ, request_id, uuid.uuid4().hex, self._clock()
+        )
         return effects
 
     def _full(self) -> bool:
@@ -645,7 +681,7 @@ class ProxyCore:
                 if key is not None and key in self.pending:
                     entry = self.pending.pop(key)
                     reason = f"reply failed strict parsing ({exc})"
-                    if entry.kind is Kind.CALL and not self.settings.policy.redaction_detectors:
+                    if entry.kind is not Kind.LIST and not self.settings.policy.redaction_detectors:
                         return self._forward_unscanned(
                             raw, entry, reason, (self._clock() - entry.started) * 1000.0
                         )
@@ -684,6 +720,8 @@ class ProxyCore:
         entry = self.pending.pop(key)
         if entry.kind is Kind.LIST:
             return self._tools_list_reply(raw, message, entry)
+        if entry.kind is Kind.RESOURCE:
+            return self._resource_reply(raw, message, entry)
         return self._tools_call_reply(raw, message, entry)
 
     # -- dropped server lines (D8) ------------------------------------------
@@ -946,20 +984,32 @@ class ProxyCore:
         if entry.kind is Kind.LIST:
             return self._unreadable_tools_list(entry, reason)
         effects = Effects()
-        effects.to_client.append(
-            encode(
-                {
-                    "jsonrpc": "2.0",
-                    "id": entry.request_id,
-                    "result": {
-                        "content": [
-                            {"type": "text", "text": "result could not be inspected by toolgate"}
-                        ],
-                        "isError": True,
-                    },
-                }
+        if entry.kind is Kind.RESOURCE:
+            effects.to_client.append(
+                error_reply(
+                    entry.request_id,
+                    RESOURCE_REFUSED,
+                    "resource could not be inspected by toolgate",
+                )
             )
-        )
+        else:
+            effects.to_client.append(
+                encode(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": entry.request_id,
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "result could not be inspected by toolgate",
+                                }
+                            ],
+                            "isError": True,
+                        },
+                    }
+                )
+            )
         effects.records.append(
             self._record(
                 decision=Decision.BLOCK,
@@ -980,9 +1030,9 @@ class ProxyCore:
         """Inspect one tool result: detectors, policy, redaction (as the in-process Gate).
 
         A late reply to a cancelled call is inspected exactly like any other
-        before it is forwarded (D12). Redaction covers `tools/call` results
-        only; resources/read, prompts/get and notifications pass unredacted
-        (D11, stated in the README).
+        before it is forwarded (D12). `resources/read` replies take the same
+        path (`_resource_reply`); prompts/get and notifications pass
+        unredacted (D11, stated in the README).
         """
         started = self._clock()
         roundtrip_ms = (started - entry.started) * 1000.0
@@ -1071,6 +1121,53 @@ class ProxyCore:
                 note=note,
             )
         )
+        return effects
+
+    def _resource_reply(self, raw: bytes, message: dict[str, Any], entry: Pending) -> Effects:
+        """Inspect a `resources/read` reply exactly as a tool result.
+
+        The `contents` items are viewed as embedded-resource blocks, which
+        `extract` and `apply_redaction` already handle (text scanned and
+        span-clipped, `blob` passed unscanned), then mapped back, so one
+        detection and redaction path serves both. A block decision answers
+        with a JSON-RPC error: `resources/read` has no `isError` result.
+        """
+        if "error" in message and "result" not in message:
+            return Effects(to_client=[raw])
+        result = message.get("result")
+        contents = result.get("contents") if isinstance(result, dict) else None
+        if not isinstance(contents, list):
+            reason = "resources/read result has no contents array"
+            if not self.settings.policy.redaction_detectors:
+                return self._forward_unscanned(
+                    raw, entry, reason, (self._clock() - entry.started) * 1000.0
+                )
+            return self._uninspectable(entry, reason)
+        assert isinstance(result, dict)
+        blocks = [
+            {"type": "resource", "resource": item} if isinstance(item, dict) else item
+            for item in contents
+        ]
+        view = {"content": blocks}
+        effects = self._tools_call_reply(raw, {**message, "result": view}, entry)
+        if effects.to_client == [raw]:
+            return effects  # unchanged: forward the server's own bytes
+        (out,) = effects.to_client
+        decoded = loads_strict(out)
+        if "error" in decoded:
+            return effects  # already an error reply (uninspectable)
+        shown = decoded.get("result")
+        if not isinstance(shown, dict) or shown.get("isError") or "content" not in shown:
+            # Blocked, or replaced as uninspectable: never forward the original.
+            effects.to_client = [
+                error_reply(entry.request_id, RESOURCE_REFUSED, "Blocked by toolgate policy")
+            ]
+            return effects
+        redacted = [
+            block["resource"] if isinstance(block, dict) and "resource" in block else block
+            for block in shown["content"]
+        ]
+        effects.to_client = [encode({**message, "result": {**result, "contents": redacted}})]
         return effects
 
     def _forward_unscanned(
